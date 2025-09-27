@@ -1,0 +1,15 @@
+.DS_Store
+/.vscode
+/.build
+/Packages
+/**/xcshareddata/
+/**/Package.resolved
+xcuserdata/
+DerivedData/
+.swiftpm/xcode/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+/SharedApp/Secrets.env
+/SharedApp/.swiftpm/xcode/
+/SharedApp/.build

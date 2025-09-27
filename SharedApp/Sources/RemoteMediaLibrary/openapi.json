@@ -1,0 +1,975 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "弹弹play “远程访问” API",
+    "description": "弹弹play“远程访问”功能在播放器内部建立一个微型web服务，允许第三方app或浏览器通过RESTful API接口来控制播放器。\n\n所有接口都以 `/api/v1` 开头，且均通过 HTTP GET 方法访问。\n\n当`tokenRequired`为true时，所有需要验证的接口都需要提供API密钥。可以通过 `Authorization: Bearer {token}` 请求头或 `token={token}` URL查询参数进行验证。",
+    "version": "v1"
+  },
+  "servers": [],
+  "tags": [
+    {
+      "name": "通用",
+      "description": "通用信息接口"
+    },
+    {
+      "name": "播放器控制",
+      "description": "控制播放器的播放行为"
+    },
+    {
+      "name": "播放器状态",
+      "description": "获取播放器当前状态和信息"
+    },
+    {
+      "name": "媒体库",
+      "description": "访问和管理媒体库中的视频"
+    },
+    {
+      "name": "弹幕",
+      "description": "获取弹幕相关信息"
+    },
+    {
+      "name": "下载管理",
+      "description": "管理下载任务"
+    },
+    {
+      "name": "字幕",
+      "description": "获取字幕文件信息"
+    }
+  ],
+  "paths": {
+    "/api/v1/welcome": {
+      "get": {
+        "tags": ["通用"],
+        "summary": "获取欢迎信息",
+        "description": "获取播放器版本、时间和API密钥要求等基本信息。无需API密钥即可调用。",
+        "operationId": "getWelcomeMessage",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WelcomeResponse"
+                },
+                "example": {
+                  "message": "Hello dandanplay user!",
+                  "version": "9.4.7.517",
+                  "time": "05/19/2019 11:45:45",
+                  "tokenRequired": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/control/volume/{volume}": {
+      "get": {
+        "tags": ["播放器控制"],
+        "summary": "控制播放器调整音量",
+        "operationId": "setVolume",
+        "parameters": [
+          {
+            "name": "volume",
+            "in": "path",
+            "required": true,
+            "description": "音量值",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作已发送"
+          }
+        }
+      }
+    },
+    "/api/v1/control/seek/{time}": {
+      "get": {
+        "tags": ["播放器控制"],
+        "summary": "控制播放器跳转进度",
+        "operationId": "seekPlayer",
+        "parameters": [
+          {
+            "name": "time",
+            "in": "path",
+            "required": true,
+            "description": "跳转到的时间点，单位为毫秒",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作已发送"
+          }
+        }
+      }
+    },
+    "/api/v1/control/{method}": {
+      "get": {
+        "tags": ["播放器控制"],
+        "summary": "控制播放器当前的播放状态",
+        "operationId": "controlPlayerState",
+        "parameters": [
+          {
+            "name": "method",
+            "in": "path",
+            "required": true,
+            "description": "播放器要执行的动作",
+            "schema": {
+              "type": "string",
+              "enum": ["play", "stop", "pause", "next", "previous"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作已发送"
+          }
+        }
+      }
+    },
+    "/api/v1/current/video": {
+      "get": {
+        "tags": ["播放器状态"],
+        "summary": "获取当前正在播放的视频信息",
+        "operationId": "getCurrentVideoInfo",
+        "responses": {
+          "200": {
+            "description": "成功获取当前视频信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentVideoInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/current/comment": {
+      "get": {
+        "tags": ["弹幕"],
+        "summary": "获取当前视频的弹幕列表",
+        "operationId": "getCurrentComments",
+        "responses": {
+          "200": {
+            "description": "成功获取弹幕列表",
+            "content": {
+              "application/xml": {
+                "example": "<?xml version=\"1.0\"?><ArrayOfVisualDmItem xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"><VisualDmItem ID=\"6216430746861568\" UserID=\"[BiliBili]a74890bc\" Time=\"36.126\" Mode=\"Normal\" Color=\"16777215\" Size=\"25\" Timestamp=\"1538999075\" Pool=\"0\">没什么 人气</VisualDmItem></ArrayOfVisualDmItem>"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlist": {
+      "get": {
+        "tags": ["播放器状态"],
+        "summary": "获取当前播放列表内容",
+        "operationId": "getPlaylist",
+        "responses": {
+          "200": {
+            "description": "成功获取播放列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "视频在本机硬盘上的完整路径"
+                  }
+                },
+                "example": [
+                  "Y:\\不受欢迎者之家\\[HYSUB]Himote House[01][GB_MP4][1280X720].mp4"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "获取媒体库中的所有内容",
+        "operationId": "getLibrary",
+        "responses": {
+          "200": {
+            "description": "成功获取媒体库内容",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryVideoInfo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/image/{hash}": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "获取视频缩略图 (通过Hash)",
+        "operationId": "getImageByHash",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "description": "视频特征码",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "视频缩略图",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/image/id/{id}": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "获取视频缩略图 (通过ID)",
+        "operationId": "getImageById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "视频文件的唯一编号 (GUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "视频缩略图",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/load/{hash}": {
+      "get": {
+        "tags": ["播放器控制"],
+        "summary": "加载指定文件进行播放 (通过Hash)",
+        "operationId": "loadFileByHash",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "description": "视频特征码",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "加载指令已发送"
+          }
+        }
+      }
+    },
+    "/api/v1/load/id/{id}": {
+      "get": {
+        "tags": ["播放器控制"],
+        "summary": "加载指定文件进行播放 (通过ID)",
+        "operationId": "loadFileById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "视频文件的唯一编号 (GUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "加载指令已发送"
+          }
+        }
+      }
+    },
+    "/api/v1/comment/{hash}": {
+      "get": {
+        "tags": ["弹幕"],
+        "summary": "获取指定视频的弹幕 (通过Hash)",
+        "operationId": "getCommentByHash",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "description": "视频特征码",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取弹幕",
+            "content": {
+              "application/xml": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/comment/id/{id}": {
+      "get": {
+        "tags": ["弹幕"],
+        "summary": "获取指定视频的弹幕 (通过ID)",
+        "operationId": "getCommentById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "视频文件的唯一编号 (GUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取弹幕",
+            "content": {
+              "application/xml": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stream/{hash}": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "串流视频 (通过Hash)",
+        "operationId": "streamByHash",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "description": "视频特征码",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "视频文件流，支持 range 请求",
+            "content": {
+              "video/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stream/id/{id}": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "串流视频 (通过ID)",
+        "operationId": "streamById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "视频文件的唯一编号 (GUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "视频文件流，支持 range 请求",
+            "content": {
+              "video/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/download/tasks": {
+      "get": {
+        "tags": ["下载管理"],
+        "summary": "获取下载任务列表",
+        "operationId": "getDownloadTasks",
+        "responses": {
+          "200": {
+            "description": "成功获取下载任务列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DownloadTask"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/download/tasks/{taskId}": {
+      "get": {
+        "tags": ["下载管理"],
+        "summary": "获取某一下载任务的信息",
+        "operationId": "getDownloadTaskById",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "description": "下载任务的ID (BT Hash)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取任务信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadTask"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/download/tasks/add": {
+      "get": {
+        "tags": ["下载管理"],
+        "summary": "添加下载任务",
+        "operationId": "addDownloadTask",
+        "parameters": [
+          {
+            "name": "magnet",
+            "in": "query",
+            "required": true,
+            "description": "需要添加下载的磁力链接 (需要Url编码)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务创建/更新成功，如果失败则返回null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "$ref": "#/components/schemas/DownloadTask"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/download/tasks/{taskId}/{method}": {
+      "get": {
+        "tags": ["下载管理"],
+        "summary": "控制下载任务",
+        "operationId": "controlDownloadTask",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "description": "下载任务的ID (BT Hash)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "method",
+            "in": "path",
+            "required": true,
+            "description": "需要进行的操作",
+            "schema": {
+              "type": "string",
+              "enum": ["start", "pause", "delete"]
+            }
+          },
+          {
+            "name": "remove",
+            "in": "query",
+            "description": "删除任务时是否删除对应的视频文件 (仅在 method=delete 时有效)",
+            "schema": {
+              "type": "integer",
+              "enum": [0, 1]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作成功，返回任务的最新信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadTask"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/scan": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "扫描媒体库文件夹中的文件改动",
+        "description": "异步执行扫描操作，请求将马上返回。",
+        "operationId": "scanLibrary",
+        "responses": {
+          "200": {
+            "description": "扫描任务已开始"
+          }
+        }
+      }
+    },
+    "/api/v1/library/refreshmatch": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "更新媒体库所有视频的关联信息",
+        "description": "异步执行刷新操作，请求将马上返回。",
+        "operationId": "refreshLibraryMatches",
+        "responses": {
+          "200": {
+            "description": "刷新任务已开始"
+          }
+        }
+      }
+    },
+    "/api/v1/subtitle/info/{id}": {
+      "get": {
+        "tags": ["字幕"],
+        "summary": "获取视频文件对应的字幕文件列表",
+        "operationId": "getSubtitleInfo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "视频文件的唯一编号 (GUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取字幕列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubtitleInfoResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subtitle/file/{id}": {
+      "get": {
+        "tags": ["字幕"],
+        "summary": "获取字幕文件内容",
+        "operationId": "getSubtitleFile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "视频文件的唯一编号 (GUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fileName",
+            "in": "query",
+            "required": true,
+            "description": "字幕文件的文件名 (不包含路径)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "字幕文件内容",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "如果用户开启了API密钥验证，请在此处提供密钥。也可以通过URL查询参数 `token=YOUR_TOKEN` 提供。"
+      }
+    },
+    "schemas": {
+      "WelcomeResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "欢迎信息"
+          },
+          "version": {
+            "type": "string",
+            "description": "弹弹play当前的版本号"
+          },
+          "time": {
+            "type": "string",
+            "description": "播放器所在主机的当前时间"
+          },
+          "tokenRequired": {
+            "type": "boolean",
+            "description": "表示当前是否开启了API验证"
+          }
+        }
+      },
+      "CurrentVideoInfo": {
+        "type": "object",
+        "properties": {
+          "EpisodeId": {
+            "type": "string",
+            "nullable": true,
+            "description": "弹幕库编号"
+          },
+          "AnimeTitle": {
+            "type": "string",
+            "description": "主标题"
+          },
+          "EpisodeTitle": {
+            "type": "string",
+            "description": "子标题"
+          },
+          "Duration": {
+            "type": "integer",
+            "description": "视频长度（毫秒）"
+          },
+          "Position": {
+            "type": "number",
+            "format": "float",
+            "description": "当前进度，范围0.0-1.0",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "Seekable": {
+            "type": "boolean",
+            "description": "当前视频是否支持跳转进度"
+          },
+          "Volume": {
+            "type": "integer",
+            "description": "当前播放器声音大小，范围0-100",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "Playing": {
+            "type": "boolean",
+            "description": "是否正在播放"
+          }
+        }
+      },
+      "LibraryVideoInfo": {
+        "type": "object",
+        "properties": {
+          "Id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "此视频文件的唯一编号"
+          },
+          "AnimeId": {
+            "type": "integer",
+            "description": "动画编号"
+          },
+          "EpisodeId": {
+            "type": "integer",
+            "description": "弹幕库编号"
+          },
+          "AnimeTitle": {
+            "type": "string",
+            "description": "主标题"
+          },
+          "EpisodeTitle": {
+            "type": "string",
+            "description": "子标题"
+          },
+          "Hash": {
+            "type": "string",
+            "description": "此视频的特征码"
+          },
+          "Name": {
+            "type": "string",
+            "description": "此视频的文件名"
+          },
+          "Path": {
+            "type": "string",
+            "description": "此视频在硬盘上的完整路径"
+          },
+          "Size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "文件体积，单位为Byte"
+          },
+          "Rate": {
+            "type": "integer",
+            "description": "用户对此视频内容的打分"
+          },
+          "IsStandalone": {
+            "type": "boolean",
+            "description": "是否为独立文件"
+          },
+          "Created": {
+            "type": "string",
+            "format": "date-time",
+            "description": "媒体库收录此视频的时间"
+          },
+          "LastMatch": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "LastPlay": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "上次播放此视频的时间"
+          },
+          "LastThumbnail": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "上次生成缩略图的时间"
+          },
+          "Duration": {
+            "type": "integer",
+            "description": "视频时长，单位为秒"
+          }
+        }
+      },
+      "DownloadTaskFile": {
+        "type": "object",
+        "properties": {
+          "FileIndex": {
+            "type": "integer",
+            "description": "文件索引，从0开始"
+          },
+          "FileName": {
+            "type": "string",
+            "description": "文件名称"
+          },
+          "FilePath": {
+            "type": "string",
+            "description": "文件完整路径"
+          },
+          "Progress": {
+            "type": "number",
+            "format": "float",
+            "description": "文件下载进度，范围是 0.0-1.0",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "FileSize": {
+            "type": "integer",
+            "format": "int64",
+            "description": "文件体积，单位是 Byte"
+          }
+        }
+      },
+      "DownloadTask": {
+        "type": "object",
+        "properties": {
+          "Id": {
+            "type": "string",
+            "description": "下载任务ID，即BT Hash"
+          },
+          "Progress": {
+            "type": "number",
+            "format": "float",
+            "description": "下载进度，范围是0.0-1.0"
+          },
+          "IsDownloadFinished": {
+            "type": "boolean"
+          },
+          "Title": {
+            "type": "string",
+            "description": "下载任务标题"
+          },
+          "State": {
+            "type": "integer",
+            "description": "下载状态（已弃用，请使用StateText）"
+          },
+          "StateText": {
+            "type": "string",
+            "description": "下载状态",
+            "enum": ["WaitingForStart", "Downloading", "Paused", "Seeding", "Stopping", "Stopped", "Hashing", "Metadata", "Error"]
+          },
+          "TotalBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "DownloadedBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "DownloadSpeed": {
+            "type": "integer",
+            "description": "下载速度 (Byte/s)"
+          },
+          "UploadSpeed": {
+            "type": "integer",
+            "description": "上传速度 (Byte/s)"
+          },
+          "RemainTime": {
+            "type": "integer",
+            "description": "剩余时间 (秒)，-1表示无法估算"
+          },
+          "SavePath": {
+            "type": "string"
+          },
+          "Ignore": {
+            "type": "string"
+          },
+          "CreatedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "FirstFinishTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "UpdatedTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "EnableAcceleration": {
+            "type": "boolean"
+          },
+          "EnteredAcceleration": {
+            "type": "boolean"
+          },
+          "IsDeleted": {
+            "type": "boolean"
+          },
+          "LazyLoad": {
+            "type": "boolean"
+          },
+          "Files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DownloadTaskFile"
+            }
+          },
+          "ContainingFolder": {
+            "type": "string"
+          }
+        }
+      },
+      "SubtitleInfoResponse": {
+        "type": "object",
+        "properties": {
+          "subtitles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fileName": {
+                  "type": "string"
+                },
+                "fileSize": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ]
+}
