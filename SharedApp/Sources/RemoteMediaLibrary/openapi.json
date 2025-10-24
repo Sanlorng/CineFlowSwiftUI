@@ -605,6 +605,229 @@
         }
       }
     },
+    "/api/v1/library/v2/bangumi/list/nav:lastplay": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按最近播放获取番剧列表",
+        "description": "返回按照最近播放时间排序的番剧列表。",
+        "operationId": "listBangumiByLastPlay",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/list/nav:lastupdate": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按最近更新获取番剧列表",
+        "description": "返回按照最近更新时间排序的番剧列表。",
+        "operationId": "listBangumiByLastUpdate",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/list/nav:lastadd": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按最近关注获取番剧列表",
+        "description": "返回最近添加到关注列表中的番剧。",
+        "operationId": "listBangumiByLastAdd",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/list/nav:season": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按季度获取番剧列表",
+        "description": "返回按照季度分组的番剧列表。",
+        "operationId": "listBangumiBySeason",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/list/nav:name": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按名称获取番剧列表",
+        "description": "返回按照首字母分组的番剧列表。",
+        "operationId": "listBangumiByName",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/list/nav:category": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按分类获取番剧列表",
+        "description": "返回按照分类分组的番剧列表。",
+        "operationId": "listBangumiByCategory",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/list/nav:rating": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "按评分获取番剧列表",
+        "description": "返回按照评分分组的番剧列表。",
+        "operationId": "listBangumiByRating",
+        "responses": {
+          "200": {
+            "description": "成功获取番剧列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryBangumiSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/bangumi/details/{animeId}": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "获取番剧详情",
+        "description": "返回指定番剧的集数信息以及本地匹配文件列表。",
+        "operationId": "getBangumiDetails",
+        "parameters": [
+          {
+            "name": "animeId",
+            "in": "path",
+            "required": true,
+            "description": "番剧的编号",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取番剧详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryBangumiDetailsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/v2/filelist/nav": {
+      "get": {
+        "tags": ["媒体库"],
+        "summary": "获取导航文件列表",
+        "description": "根据导航名称返回对应的文件列表，例如“最近收录”或“未识别”等。",
+        "operationId": "listLibraryNavFiles",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "description": "导航名称，例如 最近收录、未识别 等。",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取文件列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFileListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/subtitle/info/{id}": {
       "get": {
         "tags": ["字幕"],
@@ -786,6 +1009,10 @@
             "type": "string",
             "description": "此视频在硬盘上的完整路径"
           },
+          "dirPath": {
+            "type": "string",
+            "description": "此视频在硬盘上的完整路径"
+          },
           "Size": {
             "type": "integer",
             "format": "int64",
@@ -820,9 +1047,403 @@
             "nullable": true,
             "description": "上次生成缩略图的时间"
           },
+          "ThumbFailed": {
+            "type": "integer",
+            "description": "视频时长，单位为秒"
+          },
           "Duration": {
             "type": "integer",
             "description": "视频时长，单位为秒"
+          }
+        }
+      },
+      "LibraryBangumiSummary": {
+        "type": "object",
+        "properties": {
+          "IsFavoriteStatusAbandoned": {
+            "type": "boolean",
+            "description": "表示是否已放弃关注状态"
+          },
+          "AllEpisodesWatched": {
+            "type": "boolean",
+            "description": "是否已看完全部剧集"
+          },
+          "AnimeId": {
+            "type": "integer",
+            "description": "番剧编号"
+          },
+          "Cover": {
+            "type": "string",
+            "description": "封面图片地址"
+          },
+          "Title": {
+            "type": "string",
+            "description": "番剧标题"
+          },
+          "Details": {
+            "type": "string",
+            "description": "导航项展示的补充信息"
+          },
+          "LastPlay": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近播放时间"
+          },
+          "Created": {
+            "type": "string",
+            "format": "date-time",
+            "description": "加入媒体库的时间"
+          },
+          "OnAirDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "开播日期"
+          },
+          "Rating": {
+            "type": "number",
+            "format": "float",
+            "description": "全站评分"
+          },
+          "UserRating": {
+            "type": "number",
+            "format": "float",
+            "description": "用户评分"
+          },
+          "IsFavorited": {
+            "type": "boolean",
+            "description": "是否已关注"
+          },
+          "FavoriteStatus": {
+            "type": "integer",
+            "nullable": true,
+            "description": "关注状态"
+          },
+          "EpisodeTotal": {
+            "type": "integer",
+            "description": "剧集总数"
+          },
+          "EpisodeWatched": {
+            "type": "integer",
+            "description": "已观看剧集数"
+          },
+          "LastUpdate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近更新时间"
+          },
+          "TypeId": {
+            "type": "integer",
+            "description": "番剧类型编号"
+          },
+          "TypeDescription": {
+            "type": "string",
+            "description": "番剧类型描述"
+          },
+          "GroupName": {
+            "type": "string",
+            "description": "导航分组名称"
+          },
+          "VideoFileCount": {
+            "type": "integer",
+            "description": "关联视频文件数量"
+          }
+        }
+      },
+      "LibraryBangumiDetailsResponse": {
+        "type": "object",
+        "properties": {
+          "AnimeId": {
+            "type": "integer",
+            "description": "番剧编号"
+          },
+          "Title": {
+            "type": "string",
+            "description": "番剧标题"
+          },
+          "Episodes": {
+            "type": "array",
+            "description": "番剧的剧集列表",
+            "items": {
+              "$ref": "#/components/schemas/LibraryBangumiEpisode"
+            }
+          }
+        }
+      },
+      "LibraryBangumiEpisode": {
+        "type": "object",
+        "properties": {
+          "SeasonId": {
+            "type": "integer",
+            "nullable": true,
+            "description": "季度编号"
+          },
+          "EpisodeId": {
+            "type": "integer",
+            "description": "剧集编号"
+          },
+          "EpisodeTitle": {
+            "type": "string",
+            "description": "剧集标题"
+          },
+          "EpisodeNumber": {
+            "type": "string",
+            "description": "剧集顺序编号"
+          },
+          "LastWatched": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近观看时间"
+          },
+          "LastWatchedCloud": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "云端最近观看时间"
+          },
+          "IsLatestWatched": {
+            "type": "boolean",
+            "description": "是否为最近观看剧集"
+          },
+          "AirDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "放送日期"
+          },
+          "DisplayTitle": {
+            "type": "string",
+            "description": "用于显示的剧集标题"
+          },
+          "AirStatus": {
+            "type": "integer",
+            "description": "放送状态"
+          },
+          "LocalMatchedExists": {
+            "type": "boolean",
+            "description": "是否存在本地匹配文件"
+          },
+          "LocalMatchedFiles": {
+            "type": "array",
+            "description": "本地匹配文件列表",
+            "items": {
+              "$ref": "#/components/schemas/LibraryBangumiMatchedFile"
+            }
+          },
+          "CanMarkAsWatched": {
+            "type": "boolean",
+            "description": "是否允许标记为已观看"
+          }
+        }
+      },
+      "LibraryBangumiMatchedFile": {
+        "type": "object",
+        "properties": {
+          "AnimeId": {
+            "type": "integer",
+            "description": "番剧编号"
+          },
+          "EpisodeId": {
+            "type": "integer",
+            "description": "剧集编号"
+          },
+          "AnimeTitle": {
+            "type": "string",
+            "description": "番剧标题"
+          },
+          "EpisodeTitle": {
+            "type": "string",
+            "description": "剧集标题"
+          },
+          "Id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "文件唯一编号"
+          },
+          "Hash": {
+            "type": "string",
+            "description": "文件特征码"
+          },
+          "Name": {
+            "type": "string",
+            "description": "文件名"
+          },
+          "Path": {
+            "type": "string",
+            "description": "文件路径"
+          },
+          "DirPath": {
+            "type": "string",
+            "description": "文件所在目录"
+          },
+          "Size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "文件大小（字节）"
+          },
+          "Rate": {
+            "type": "integer",
+            "description": "用户评分"
+          },
+          "IsStandalone": {
+            "type": "boolean",
+            "description": "是否为独立文件"
+          },
+          "Created": {
+            "type": "string",
+            "format": "date-time",
+            "description": "加入媒体库时间"
+          },
+          "LastMatch": {
+            "type": "string",
+            "format": "date-time",
+            "description": "上次匹配时间"
+          },
+          "IncludeTime": {
+            "type": "string",
+            "format": "date-time",
+            "description": "收录时间"
+          },
+          "LastPlay": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近播放时间"
+          },
+          "LastThumbnail": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近生成缩略图时间"
+          },
+          "ThumbFailed": {
+            "type": "integer",
+            "description": "缩略图生成失败次数"
+          },
+          "Duration": {
+            "type": "integer",
+            "nullable": true,
+            "description": "媒体时长（秒）"
+          }
+        }
+      },
+      "LibraryFileListResponse": {
+        "type": "object",
+        "properties": {
+          "RootPath": {
+            "type": "string",
+            "description": "导航根路径"
+          },
+          "CurrentPath": {
+            "type": "string",
+            "description": "当前路径"
+          },
+          "DirectorySeparatorChar": {
+            "type": "string",
+            "description": "目录分隔符"
+          },
+          "Files": {
+            "type": "array",
+            "description": "文件列表",
+            "items": {
+              "$ref": "#/components/schemas/LibraryFileEntry"
+            }
+          }
+        }
+      },
+      "LibraryFileEntry": {
+        "type": "object",
+        "properties": {
+          "Id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "文件或目录的唯一编号"
+          },
+          "Name": {
+            "type": "string",
+            "description": "显示名称"
+          },
+          "FullPath": {
+            "type": "string",
+            "description": "完整路径"
+          },
+          "DirectoryPath": {
+            "type": "string",
+            "description": "所在目录路径"
+          },
+          "Description": {
+            "type": "string",
+            "description": "尺寸和时长等描述"
+          },
+          "Hash": {
+            "type": "string",
+            "description": "文件特征码"
+          },
+          "Size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "文件大小（字节）"
+          },
+          "Extension": {
+            "type": "string",
+            "description": "文件扩展名"
+          },
+          "AnimeId": {
+            "type": "integer",
+            "description": "关联番剧编号"
+          },
+          "EpisodeId": {
+            "type": "integer",
+            "description": "关联剧集编号"
+          },
+          "AnimeTitle": {
+            "type": "string",
+            "nullable": true,
+            "description": "关联番剧标题"
+          },
+          "EpisodeTitle": {
+            "type": "string",
+            "nullable": true,
+            "description": "关联剧集标题"
+          },
+          "IsDirectory": {
+            "type": "boolean",
+            "description": "是否为目录"
+          },
+          "IsFile": {
+            "type": "boolean",
+            "description": "是否为文件"
+          },
+          "IsShortcut": {
+            "type": "boolean",
+            "description": "是否为快捷方式"
+          },
+          "IsLocalFile": {
+            "type": "boolean",
+            "description": "是否为本地文件"
+          },
+          "LastPlay": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近播放时间"
+          },
+          "Duration": {
+            "type": "integer",
+            "nullable": true,
+            "description": "媒体时长（秒）"
+          },
+          "IncludeTime": {
+            "type": "string",
+            "format": "date-time",
+            "description": "收录时间"
+          },
+          "ImageUrl": {
+            "type": "string",
+            "description": "封面或缩略图地址"
           }
         }
       },

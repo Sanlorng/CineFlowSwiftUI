@@ -1,5 +1,6 @@
 .DS_Store
 /.vscode
+/.idea
 /.build
 /Packages
 /**/xcshareddata/
@@ -10,6 +11,3 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
-/SharedApp/Secrets.env
-/SharedApp/.swiftpm/xcode/
-/SharedApp/.build

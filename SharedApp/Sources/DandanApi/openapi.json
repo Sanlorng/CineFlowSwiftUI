@@ -1578,7 +1578,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "bangumiList": {
                 "type": "array",
@@ -1594,7 +1594,7 @@
       },
       "BangumiIntro": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -1647,7 +1647,7 @@
       },
       "ResponseBase": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "errorCode": {
             "type": "integer",
@@ -1672,7 +1672,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "seasons": {
                 "type": "array",
@@ -1688,7 +1688,7 @@
       },
       "BangumiSeason": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "year": {
             "type": "integer",
@@ -1714,7 +1714,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "hasMore": {
                 "type": "boolean",
@@ -1734,7 +1734,7 @@
       },
       "BangumiQueueIntroV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -1780,7 +1780,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "bangumiList": {
                 "type": "array",
@@ -1804,7 +1804,7 @@
       },
       "BangumiQueueDetailsV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -1848,7 +1848,7 @@
       },
       "BangumiQueueEpisodeV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "episodeId": {
             "type": "integer",
@@ -1875,7 +1875,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "bangumi": {
                 "description": "番剧详情",
@@ -1897,7 +1897,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "type": {
                 "description": "作品类型",
@@ -2065,7 +2065,7 @@
       },
       "BangumiTitle": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "language": {
             "type": "string",
@@ -2081,7 +2081,7 @@
       },
       "BangumiEpisodeSeason": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "string",
@@ -2113,7 +2113,7 @@
       },
       "BangumiEpisode": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "seasonId": {
             "type": "string",
@@ -2165,7 +2165,7 @@
       },
       "BangumiTag": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "integer",
@@ -2186,7 +2186,7 @@
       },
       "BangumiOnlineDatabase": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "name": {
             "type": "string",
@@ -2202,7 +2202,7 @@
       },
       "BangumiTrailer": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "integer",
@@ -2234,7 +2234,7 @@
       "CommentResponseV2": {
         "type": "object",
         "description": "弹幕列表",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "count": {
             "type": "integer",
@@ -2253,7 +2253,7 @@
       },
       "CommentData": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "cid": {
             "type": "integer",
@@ -2279,7 +2279,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "cid": {
                 "type": "integer",
@@ -2292,7 +2292,7 @@
       },
       "SendCommentRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "time": {
             "type": "number",
@@ -2323,7 +2323,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "favorites": {
                 "type": "array",
@@ -2339,7 +2339,7 @@
       },
       "UserFavoriteItem": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -2433,13 +2433,13 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
       "UserAddFavoriteRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -2474,7 +2474,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
@@ -2485,7 +2485,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "banners": {
                 "type": "array",
@@ -2525,7 +2525,7 @@
       },
       "BannerPageItem": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "integer",
@@ -2561,7 +2561,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "banners": {
                 "type": "array",
@@ -2582,7 +2582,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "registerRequired": {
                 "type": "boolean",
@@ -2666,7 +2666,7 @@
       },
       "PayConfig": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "providerId": {
             "type": "string",
@@ -2690,7 +2690,7 @@
       },
       "PayConfigItem": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "id": {
             "type": "string",
@@ -2717,7 +2717,7 @@
       "UserPrivileges": {
         "type": "object",
         "description": "用户各类权益到期时间",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "member": {
             "type": "string",
@@ -2736,7 +2736,7 @@
       "LoginRequest": {
         "type": "object",
         "description": "请求用户登录",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "userName",
           "password",
@@ -2783,7 +2783,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "isMatched": {
                 "type": "boolean",
@@ -2803,7 +2803,7 @@
       },
       "MatchResultV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "episodeId": {
             "type": "integer",
@@ -2852,7 +2852,7 @@
       },
       "MatchRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "fileName": {
             "type": "string",
@@ -2906,7 +2906,7 @@
           {
             "type": "object",
             "description": "批量匹配的结果",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "results": {
                 "type": "array",
@@ -2922,7 +2922,7 @@
       },
       "BatchMatchResponseItem": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "success": {
             "type": "boolean"
@@ -2944,7 +2944,7 @@
       "BatchMatchRequest": {
         "type": "object",
         "description": "批量匹配的请求",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "requests": {
             "type": "array",
@@ -2963,7 +2963,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "playHistoryAnimes": {
                 "type": "array",
@@ -2978,7 +2978,7 @@
       },
       "UserPlayHistoryAnime": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -3024,13 +3024,13 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
       "UserAddPlayHistoryRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "episodeIdList": {
             "type": "array",
@@ -3054,7 +3054,7 @@
       },
       "RegisterRequestV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "appId",
           "userName",
@@ -3110,13 +3110,13 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
       "ResetPasswordRequestV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "appId",
           "userName",
@@ -3161,13 +3161,13 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
       "FindMyIdRequestV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "appId",
           "email",
@@ -3207,7 +3207,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "relateds": {
                 "type": "array",
@@ -3223,7 +3223,7 @@
       },
       "RelatedItemV2": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "url": {
             "type": "string",
@@ -3244,13 +3244,13 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
       "UserAddRelatedRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "episodeId": {
             "type": "integer",
@@ -3276,7 +3276,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       },
@@ -3287,7 +3287,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "animes": {
                 "type": "array",
@@ -3303,7 +3303,7 @@
       },
       "SearchAnimeDetails": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -3367,7 +3367,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "hasMore": {
                 "type": "boolean",
@@ -3387,7 +3387,7 @@
       },
       "SearchEpisodesAnime": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "animeId": {
             "type": "integer",
@@ -3424,7 +3424,7 @@
       },
       "SearchEpisodeDetails": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "episodeId": {
             "type": "integer",
@@ -3445,7 +3445,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "bangumis": {
                 "type": "array",
@@ -3466,7 +3466,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "rank": {
                 "type": "integer",
@@ -3503,7 +3503,7 @@
           {
             "type": "object",
             "description": "高级搜索配置项",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "types": {
                 "type": "array",
@@ -3545,7 +3545,7 @@
       },
       "ConfigKey": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "key": {
             "type": "integer",
@@ -3566,7 +3566,7 @@
           },
           {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "updateScreenName": {
                 "type": "string",
@@ -3582,7 +3582,7 @@
       },
       "UserUpdatePasswordRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "oldPassword",
           "newPassword"
@@ -3604,7 +3604,7 @@
       },
       "UserUpdateProfileRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "screenName": {
             "type": "string",
@@ -3622,7 +3622,7 @@
       },
       "UserUpdateEmailRequest": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "oldEmail",
           "newEmail"
