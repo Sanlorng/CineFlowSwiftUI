@@ -12,136 +12,100 @@ struct LibraryContentView: View {
     let store: StoreOf<LibraryPresenter>
     
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            NavigationStack {
-                VStack(spacing: 0) {
-                    topControls(viewStore)
-                    Divider()
-                    libraryList(viewStore)
-                }
-                .navigationTitle("远程媒体库")
-                .toolbar {
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        Button {
-                            viewStore.send(.refresh)
-                        } label: {
-                            Label("刷新", systemImage: "arrow.clockwise")
-                        }
-                        .disabled(viewStore.selectedConfigurationID == nil || viewStore.isLoadingLibrary)
-                        
-                        Button {
-                            viewStore.send(.setIsShowingForm(true))
-                        } label: {
-                            Label("新增", systemImage: "plus")
-                        }
+        NavigationStackStore(
+            store.scope(state: \.path, action: \.path)
+        ) {
+            WithViewStore(store, observe: { $0 }) { viewStore in
+                mainContent(viewStore)
+                    .sheet(
+                        isPresented: Binding(
+                            get: { viewStore.isShowingForm },
+                            set: { viewStore.send(.setIsShowingForm($0)) }
+                        )
+                    ) {
+                        ConfigurationFormView(store: store)
                     }
-                }
-                .onAppear {
-                    viewStore.send(.onAppear)
-                }
             }
-            .sheet(
-                isPresented: Binding(
-                    get: { viewStore.isShowingForm },
-                    set: { viewStore.send(.setIsShowingForm($0)) }
-                )
-            ) {
-                ConfigurationFormView(store: store)
-            }
+        } destination: { destination in
+            IfLetStore(
+                destination.scope(
+                    state: /LibraryPresenter.Path.State.bangumiDetail,
+                    action: { .bangumiDetail($0) }
+                ),
+                then: BangumiDetailView.init(store:)
+            )
         }
     }
     
     @ViewBuilder
-    private func topControls(_ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>) -> some View {
-        let selectedConfiguration = viewStore.selectedConfigurationID.flatMap { id in
-            viewStore.configurations.first(where: { $0.id == id })
+    private func mainContent(_ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>) -> some View {
+        VStack(spacing: 0) {
+            libraryList(viewStore)
         }
-        VStack(alignment: .leading, spacing: 12) {
-            if viewStore.configurations.isEmpty {
+        .navigationTitle("远程媒体库")
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                
+
                 Button {
                     viewStore.send(.setIsShowingForm(true))
                 } label: {
-                    Label("添加远程媒体库", systemImage: "plus")
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                    Label("新增", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
-            } else {
-                Menu {
-                    ForEach(Array(viewStore.configurations)) { configuration in
-                        Button {
-                            viewStore.send(.selectConfiguration(configuration.id))
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(configuration.name)
-                                    if configuration.isDefault {
-                                        Text("默认")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                Text(configuration.url)
-                                    .font(.footnote)
+                Picker(
+                    selection: Binding<UUID?>(
+                        get: { viewStore.selectedConfigurationID },
+                        set: { id in
+                            if (id != nil) {
+                                viewStore.send(.selectConfiguration(id!)) 
                             }
                         }
+                    ),
+                ) {
+                    ForEach(viewStore.configurations) { configuration in
+                        Text(configuration.name)
+                            .tag(configuration.id)
                     }
+
+                    if viewStore.configurations.isEmpty {
+                        Text("无可用媒体库")
+                            .tag(UUID?.none)
+                    }
+                    
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(selectedConfiguration?.name ?? "选择媒体库")
-                                .font(.headline)
-                            if let url = selectedConfiguration?.url {
-                                Text(url)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.down")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.secondary.opacity(0.12))
-                    )
+                    Label("选择媒体库", systemImage: "externaldrive")
                 }
-            }
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+
+                let hasSelectedConfiguration = viewStore.selectedConfigurationID != nil
+
+                Picker(
+                    selection: Binding(
+                        get: { viewStore.selectedSort },
+                        set: { viewStore.send(.setSort($0)) }
+                    ),
+                ) {
                     ForEach(LibraryPresenter.SortOption.allCases, id: \.self) { sort in
-                        let isSelected = sort == viewStore.selectedSort
-                        Button {
-                            viewStore.send(.setSort(sort))
-                        } label: {
-                            Text(sort.displayName)
-                                .font(.subheadline)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 1)
-                                )
-                                .foregroundColor(isSelected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(viewStore.configurations.isEmpty)
+                        Text(sort.displayName)
+                            .tag(sort)
                     }
+                    
+                } label: {
+                    Label("选择排序方式", systemImage: "square.grid.3x1.below.line.grid.1x2")
                 }
-                .padding(.bottom, 4)
+                .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
+
+                Button {
+                    viewStore.send(.refresh)
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+                .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
+                
             }
         }
-        .padding(.horizontal)
-        .padding(.top)
+        .onAppear {
+            viewStore.send(.onAppear)
+        }
     }
     
     @ViewBuilder
@@ -158,6 +122,17 @@ struct LibraryContentView: View {
                     .multilineTextAlignment(.center)
                     .foregroundColor(.secondary)
                     .padding()
+                if viewStore.configurations.isEmpty {
+
+                    Button {
+                        viewStore.send(.setIsShowingForm(true))
+                    } label: {
+                        Label("添加远程媒体库", systemImage: "plus")
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             } else if viewStore.bangumiItems.isEmpty {
                 Text("没有可显示的动漫内容。")
                     .foregroundColor(.secondary)
@@ -204,7 +179,9 @@ private struct LibraryGrid: View {
                         Section {
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(group.items) { item in
-                                    LibraryCard(item: item)
+                                    LibraryCard(item: item) {
+                                        viewStore.send(.bangumiTapped(item))
+                                    }
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -280,8 +257,16 @@ private struct LibraryGrid: View {
 
 private struct LibraryCard: View {
     let item: LibraryPresenter.State.BangumiItem
+    let onTap: () -> Void
     
     var body: some View {
+        Button(action: onTap) {
+            cardContent
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private var cardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             coverView
                 .frame(height: 200)

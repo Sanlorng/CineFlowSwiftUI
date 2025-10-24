@@ -100,6 +100,7 @@ struct LibraryPresenter {
         }
         
         var configurations: IdentifiedArrayOf<Configuration> = []
+        var path = StackState<Path.State>()
         var selectedConfigurationID: UUID?
         var bangumiItems: IdentifiedArrayOf<BangumiItem> = []
         var selectedSort: SortOption = .lastPlay
@@ -183,14 +184,44 @@ struct LibraryPresenter {
         case setFormPort(String)
         case setFormToken(String)
         case setSort(SortOption)
+        case bangumiTapped(State.BangumiItem)
+        case path(StackAction<Path.State, Path.Action>)
     }
     
     @Dependency(\.remoteLibraryConfigurationOperation) var configurationOperation
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
+
+    @Reducer
+    struct Path {
+        enum State: Equatable {
+            case bangumiDetail(BangumiDetailPresenter.State)
+        }
+
+        enum Action: Equatable {
+            case bangumiDetail(BangumiDetailPresenter.Action)
+        }
+
+        var body: some ReducerOf<Self> {
+            Scope(state: /State.bangumiDetail, action: /Action.bangumiDetail) {
+                BangumiDetailPresenter()
+            }
+        }
+    }
     
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
+            case let .bangumiTapped(item):
+                guard let configurationID = state.selectedConfigurationID,
+                      let configuration = state.configurations[id: configurationID] else {
+                    return .none
+                }
+                state.path.append(.bangumiDetail(.init(summary: item, configuration: configuration)))
+                return .none
+
+            case .path:
+                return .none
+
             case let .setFormName(name):
                 state.formName = name
                 state.formError = nil
@@ -357,6 +388,9 @@ struct LibraryPresenter {
                 return triggerFetchLibraryEffect(id)
             }
         }
+        .forEach(\.path, action: /Action.path) {
+            Path()
+        }
     }
     
     private func loadConfigurationsEffect() -> Effect<Action> {
@@ -515,6 +549,7 @@ struct RemoteMediaLibraryClient {
     
     var fetchWelcome: @Sendable (_ baseURL: URL, _ token: String?) async throws -> Welcome
     var fetchBangumiList: @Sendable (_ baseURL: URL, _ token: String?, _ sort: LibraryPresenter.SortOption) async throws -> [Components.Schemas.LibraryBangumiSummary]
+    var fetchBangumiDetail: @Sendable (_ baseURL: URL, _ token: String?, _ animeId: Int) async throws -> Components.Schemas.LibraryBangumiDetailsResponse
 }
 
 extension RemoteMediaLibraryClient: DependencyKey {
@@ -563,6 +598,12 @@ extension RemoteMediaLibraryClient: DependencyKey {
                         try await api.listBangumiByRating(.init())
                     }
                 }
+            },
+            fetchBangumiDetail: { baseURL, token, animeId in
+                let api = try makeClient(baseURL: baseURL, token: token)
+                return try await api.fetch {
+                    try await api.getBangumiDetails(.init(path: .init(animeId: animeId)))
+                }
             }
         )
     }
@@ -597,6 +638,44 @@ extension RemoteMediaLibraryClient: DependencyKey {
                         videoFileCount: 10
                     )
                 ]
+            },
+            fetchBangumiDetail: { _, _, animeId in
+                Components.Schemas.LibraryBangumiDetailsResponse(
+                    animeId: animeId,
+                    title: "Preview Anime Detail",
+                    episodes: [
+                        .init(
+                            seasonId: 1,
+                            episodeId: 1,
+                            episodeTitle: "第1集",
+                            episodeNumber: "01",
+                            lastWatched: nil,
+                            lastWatchedCloud: nil,
+                            isLatestWatched: true,
+                            airDate: Date(),
+                            displayTitle: "Episode 1",
+                            airStatus: 1,
+                            localMatchedExists: true,
+                            localMatchedFiles: [],
+                            canMarkAsWatched: true
+                        ),
+                        .init(
+                            seasonId: 1,
+                            episodeId: 2,
+                            episodeTitle: "第2集",
+                            episodeNumber: "02",
+                            lastWatched: nil,
+                            lastWatchedCloud: nil,
+                            isLatestWatched: false,
+                            airDate: Date(),
+                            displayTitle: "Episode 2",
+                            airStatus: 1,
+                            localMatchedExists: false,
+                            localMatchedFiles: [],
+                            canMarkAsWatched: true
+                        )
+                    ]
+                )
             }
         )
     }
@@ -606,7 +685,10 @@ extension RemoteMediaLibraryClient: DependencyKey {
             fetchWelcome: { _, _ in
                 .init(message: nil, version: nil, tokenRequired: false)
             },
-            fetchBangumiList: { _, _, _ in [] }
+            fetchBangumiList: { _, _, _ in [] },
+            fetchBangumiDetail: { _, _, _ in
+                Components.Schemas.LibraryBangumiDetailsResponse()
+            }
         )
     }
     
@@ -846,6 +928,28 @@ extension Operations.ListBangumiByRating.Output: SuccessExtractable {
 }
 
 extension Operations.ListBangumiByRating.Output: UndocumentedCase {
+    public var statusCode: Int {
+        guard case let .undocumented(statusCode, _) = self else { return -1 }
+        return statusCode
+    }
+}
+
+extension Operations.GetBangumiDetails.Output.Ok: SuccessfulResponse {}
+
+extension Operations.GetBangumiDetails.Output.Ok.Body: SuccessResponseBody {
+    public var model: Components.Schemas.LibraryBangumiDetailsResponse? {
+        try? self.json
+    }
+}
+
+extension Operations.GetBangumiDetails.Output: SuccessExtractable {
+    public var successModel: Components.Schemas.LibraryBangumiDetailsResponse? {
+        guard case let .ok(response) = self else { return nil }
+        return response.body.model
+    }
+}
+
+extension Operations.GetBangumiDetails.Output: UndocumentedCase {
     public var statusCode: Int {
         guard case let .undocumented(statusCode, _) = self else { return -1 }
         return statusCode

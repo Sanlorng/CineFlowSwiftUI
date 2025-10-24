@@ -21,6 +21,9 @@ struct MainContentView: View {
             Tab("Library", systemImage: "rectangle.stack", value: .Library) {
                 LibraryContentView(store: libraryStore)
             }
+            Tab("Player", systemImage: "play.rectangle.on.rectangle", value: .Player) {
+                PlayerContentView()
+            }
         }.tabViewStyle(.automatic)
     }
 }
