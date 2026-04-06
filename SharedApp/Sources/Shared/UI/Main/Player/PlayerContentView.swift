@@ -1,6 +1,7 @@
 import SwiftUI
 import ComposableArchitecture
 import RemoteMediaLibrary
+import SubtitleRendererCore
 
 struct PlayerContentView: View {
     let store: StoreOf<PlayerPresenter>?
@@ -29,6 +30,7 @@ struct PlayerContentView: View {
 private struct PlayerContentMainView: View {
     let store: StoreOf<PlayerPresenter>
     @StateObject private var coordinator = FSVideoPlayer.Coordinator()
+    @State private var playbackTime: TimeInterval = 0
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -37,37 +39,51 @@ private struct PlayerContentMainView: View {
                     let options = makeOptions(
                         for: stream
                     )
-                    let externalSubtitle = viewStore.activeSubtitle.map {
-                        FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.fsPlayerContent)
-                    }
-                    FSVideoPlayer(
-                        coordinator: coordinator,
-                        url: stream.url,
-                        options: options,
-                        externalSubtitle: externalSubtitle,
-                        allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed,
-                        selectedEmbeddedSubtitleStreamIndex: viewStore.selectedSubtitle == nil ?
-                            viewStore.selectedEmbeddedSubtitleStreamIndex :
-                            nil
+                    let customSubtitleDocument = makeCustomSubtitleDocument(
+                        from: viewStore.activeSubtitle,
+                        isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                        .onStateChanged { _, state in
-                            switch state {
-                            case .error(let message):
-                                viewStore.send(.setPlaybackError(message ?? "播放失败。"))
-                            case .playing, .completed:
-                                viewStore.send(.setPlaybackError(nil))
-                            case .buffering, .preparing, .paused, .stopped, .idle:
-                                break
+                    let externalSubtitle = customSubtitleDocument == nil ? viewStore.activeSubtitle.map {
+                        FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.fsPlayerContent)
+                    } : nil
+                    ZStack {
+                        FSVideoPlayer(
+                            coordinator: coordinator,
+                            url: stream.url,
+                            options: options,
+                            externalSubtitle: externalSubtitle,
+                            allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed,
+                            selectedEmbeddedSubtitleStreamIndex: viewStore.selectedSubtitle == nil ?
+                                viewStore.selectedEmbeddedSubtitleStreamIndex :
+                                nil
+                        )
+                            .onStateChanged { _, state in
+                                switch state {
+                                case .error(let message):
+                                    viewStore.send(.setPlaybackError(message ?? "播放失败。"))
+                                case .playing, .completed:
+                                    viewStore.send(.setPlaybackError(nil))
+                                case .buffering, .preparing, .paused, .stopped, .idle:
+                                    break
+                                }
                             }
-                        }
-                        .onFinish { _, error in
-                            if let error {
-                                viewStore.send(.setPlaybackError(error.localizedDescription))
+                            .onFinish { _, error in
+                                if let error {
+                                    viewStore.send(.setPlaybackError(error.localizedDescription))
+                                }
                             }
-                        }
-                        .onEmbeddedSubtitleTracksChanged { _, tracks, selectedStreamIndex in
-                            viewStore.send(.embeddedSubtitleTracksChanged(tracks, selectedStreamIndex))
-                        }
+                            .onPlaybackTimeChanged { _, time in
+                                playbackTime = time
+                            }
+                            .onEmbeddedSubtitleTracksChanged { _, tracks, selectedStreamIndex in
+                                viewStore.send(.embeddedSubtitleTracksChanged(tracks, selectedStreamIndex))
+                            }
+                        SubtitleRendererOverlay(
+                            document: customSubtitleDocument,
+                            playbackTime: playbackTime
+                        )
+                        .allowsHitTesting(false)
+                    }
                         .frame(minHeight: 240)
                         .onAppear {
                             viewStore.send(.onAppear)
@@ -75,9 +91,11 @@ private struct PlayerContentMainView: View {
                         }
                         .onChange(of: viewStore.currentItem?.stream) { _, newStream in
                             guard newStream != nil else { return }
+                            playbackTime = 0
                             viewStore.send(.setPlaybackError(nil))
                         }
                         .onDisappear {
+                            playbackTime = 0
                             coordinator.resetPlayer()
                         }
                 } else {
@@ -403,6 +421,16 @@ private func subtitleMenuTitle(
         return embeddedSubtitle
     }
     return "选择字幕"
+}
+
+private func makeCustomSubtitleDocument(
+    from subtitle: PlayerPresenter.State.LoadedSubtitle?,
+    isSuppressed: Bool
+) -> SubtitleDocument? {
+    guard !isSuppressed, let subtitle else { return nil }
+    let ext = (subtitle.fileName as NSString).pathExtension.lowercased()
+    guard ext == "ass" || ext == "ssa" else { return nil }
+    return .ass(subtitle.rawContent, fileName: subtitle.fileName)
 }
 
 private extension Color {
