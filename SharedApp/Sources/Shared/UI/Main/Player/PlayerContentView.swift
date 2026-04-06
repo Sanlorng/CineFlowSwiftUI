@@ -42,6 +42,7 @@ private struct PlayerContentMainView: View {
     @State private var isSubtitlePopoverPresented = false
     @State private var isSpeedPopoverPresented = false
     @State private var isEpisodePopoverPresented = false
+    @State private var isDanmakuPopoverPresented = false
     @State private var observedWindow: NSWindow?
     @State private var isFullscreen = false
     @State private var isCursorHidden = false
@@ -50,6 +51,10 @@ private struct PlayerContentMainView: View {
     @State private var isSubtitleRendererReady = false
     @State private var selectedEpisodePageIndex = 0
     @State private var hideControlsTask: Task<Void, Never>?
+    @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
+    @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
+    @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
+    @AppStorage("player.danmaku.speed") private var danmakuSpeed = 1.0
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -141,6 +146,9 @@ private struct PlayerContentMainView: View {
         .onChange(of: isEpisodePopoverPresented) { _, _ in
             scheduleControlBarVisibilityUpdate()
         }
+        .onChange(of: isDanmakuPopoverPresented) { _, _ in
+            scheduleControlBarVisibilityUpdate()
+        }
     }
 
     @ViewBuilder
@@ -193,7 +201,8 @@ private struct PlayerContentMainView: View {
                 .allowsHitTesting(false)
                 DanmakuRenderOverlay(
                     loadedDanmaku: viewStore.activeDanmaku,
-                    controller: playerController
+                    controller: playerController,
+                    settings: currentDanmakuSettings
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
@@ -365,14 +374,15 @@ private struct PlayerContentMainView: View {
                     HStack(spacing: 8) {
                         if isFullscreen {
                             episodeMenu(viewStore: viewStore)
-                        }
-                        glassIconButton("gobackward.10") {
-                            playerController.seekBy(-10)
-                        }
-                        speedMenu()
-                        glassIconButton("goforward.10") {
-                            playerController.seekBy(10)
-                        }
+                    }
+                    glassIconButton("gobackward.10") {
+                        playerController.seekBy(-10)
+                    }
+                    danmakuMenu()
+                    speedMenu()
+                    glassIconButton("goforward.10") {
+                        playerController.seekBy(10)
+                    }
                         audioMenu(viewStore: viewStore)
                         subtitleMenu(viewStore: viewStore)
 #if os(macOS)
@@ -482,6 +492,49 @@ private struct PlayerContentMainView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func danmakuMenu() -> some View {
+        Button {
+            isDanmakuPopoverPresented.toggle()
+            revealControls()
+        } label: {
+            glassCapsuleLabel(
+                title: isDanmakuVisible ? "弹幕" : "弹幕关闭",
+                systemImage: "text.bubble"
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isDanmakuPopoverPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 14) {
+                Toggle("显示弹幕", isOn: $isDanmakuVisible)
+                    .toggleStyle(.switch)
+
+                danmakuSettingRow(
+                    title: "字号",
+                    value: "\(Int((danmakuFontScale * 100).rounded()))%"
+                ) {
+                    Slider(value: $danmakuFontScale, in: 1.0...2.5, step: 0.1)
+                }
+
+                danmakuSettingRow(
+                    title: "透明度",
+                    value: "\(Int((danmakuOpacity * 100).rounded()))%"
+                ) {
+                    Slider(value: $danmakuOpacity, in: 0.2...1.0, step: 0.05)
+                }
+
+                danmakuSettingRow(
+                    title: "速度",
+                    value: String(format: "%.1fx", danmakuSpeed)
+                ) {
+                    Slider(value: $danmakuSpeed, in: 0.5...2.0, step: 0.1)
+                }
+            }
+            .padding(14)
+            .frame(width: 260, alignment: .leading)
         }
     }
 
@@ -859,7 +912,20 @@ private struct PlayerContentMainView: View {
     }
 
     private var isAnyControlPopoverPresented: Bool {
-        isAudioPopoverPresented || isSubtitlePopoverPresented || isSpeedPopoverPresented || isEpisodePopoverPresented
+        isAudioPopoverPresented
+            || isSubtitlePopoverPresented
+            || isSpeedPopoverPresented
+            || isEpisodePopoverPresented
+            || isDanmakuPopoverPresented
+    }
+
+    private var currentDanmakuSettings: DanmakuRenderSettings {
+        .init(
+            isVisible: isDanmakuVisible,
+            fontScale: danmakuFontScale,
+            opacity: danmakuOpacity,
+            speed: danmakuSpeed
+        )
     }
 
     private func subtitleOverlayViewportSize(in containerSize: CGSize) -> CGSize {
@@ -1286,6 +1352,27 @@ private func playbackRateTitle(_ rate: Double) -> String {
         return "\(Int(rate.rounded()))x"
     }
     return String(format: "%.2fx", rate)
+}
+
+@MainActor
+@ViewBuilder
+private func danmakuSettingRow<Content: View>(
+    title: String,
+    value: String,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+        HStack {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Text(value)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        content()
+    }
 }
 
 @MainActor

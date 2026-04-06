@@ -1,6 +1,13 @@
 import SwiftUI
 import Combine
 
+struct DanmakuRenderSettings: Equatable, Sendable {
+    var isVisible: Bool
+    var fontScale: Double
+    var opacity: Double
+    var speed: Double
+}
+
 #if canImport(DanmakuRender) && os(macOS)
 import AppKit
 import DanmakuRender
@@ -8,6 +15,7 @@ import DanmakuRender
 struct DanmakuRenderOverlay: NSViewRepresentable {
     let loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?
     let controller: PlayerController
+    let settings: DanmakuRenderSettings
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -23,7 +31,8 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         context.coordinator.update(
             view: view,
             loadedDanmaku: loadedDanmaku,
-            controller: controller
+            controller: controller,
+            settings: settings
         )
     }
 
@@ -37,11 +46,13 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         private weak var controller: PlayerController?
         private var currentDanmakuID: UUID?
         private var currentPayload: DanmakuPayload?
+        private var currentSettings = DanmakuRenderSettings(isVisible: true, fontScale: 1.5, opacity: 0.9, speed: 1)
         private var lastPlaybackTime: TimeInterval = 0
         private var lastEnqueuedSecond: UInt?
         private var isEngineStarted = false
         private var timelineCancellable: AnyCancellable?
         private var stateCancellable: AnyCancellable?
+        private var playbackRateCancellable: AnyCancellable?
 
         func attach(to view: DanmakuCanvasHostView) {
             engine.speed = 1
@@ -56,6 +67,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             isEngineStarted = false
             timelineCancellable = nil
             stateCancellable = nil
+            playbackRateCancellable = nil
             controller = nil
             currentDanmakuID = nil
             currentPayload = nil
@@ -66,13 +78,25 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         func update(
             view: DanmakuCanvasHostView,
             loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?,
-            controller: PlayerController
+            controller: PlayerController,
+            settings: DanmakuRenderSettings
         ) {
             bind(to: controller)
+            apply(settings: settings, to: view)
             let clampedTime = max(controller.timeline.currentTime, 0)
             let payload = loadedDanmaku?.payload
+            let settingsChanged = currentSettings != settings
+            currentSettings = settings
 
-            if currentDanmakuID != loadedDanmaku?.id {
+            guard settings.isVisible else {
+                if isEngineStarted {
+                    engine.pause()
+                    isEngineStarted = false
+                }
+                return
+            }
+
+            if settingsChanged || currentDanmakuID != loadedDanmaku?.id {
                 currentDanmakuID = loadedDanmaku?.id
                 replacePayload(payload, at: clampedTime)
                 return
@@ -90,8 +114,8 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
 
             engine.start()
             isEngineStarted = true
-            engine.speed = 1
             engine.layoutStyle = .nonOverlapping
+            updateEngineSpeed()
             engine.time = playbackTime
             let currentSecond = max(Int(playbackTime.rounded(.towardZero)), 0)
             enqueueSecondBuckets(
@@ -112,6 +136,11 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             stateCancellable = controller.$playbackState.sink { [weak self] state in
                 Task { @MainActor in
                     self?.updateEnginePlaybackState(state)
+                }
+            }
+            playbackRateCancellable = controller.$playbackRate.sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.updateEngineSpeed()
                 }
             }
         }
@@ -139,12 +168,20 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         }
 
         private func updateEnginePlaybackState(_ playbackState: PlayerPlaybackState) {
+            guard currentSettings.isVisible else {
+                if isEngineStarted {
+                    engine.pause()
+                    isEngineStarted = false
+                }
+                return
+            }
             switch playbackState {
             case .playing, .buffering:
                 if !isEngineStarted {
                     engine.start()
                     isEngineStarted = true
                 }
+                updateEngineSpeed()
             case .paused, .stopped, .completed, .idle, .error:
                 if isEngineStarted {
                     engine.pause()
@@ -153,6 +190,15 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             case .preparing:
                 break
             }
+        }
+
+        private func updateEngineSpeed() {
+            let playbackRate = max(controller?.playbackRate ?? 1, 0.25)
+            engine.speed = currentSettings.speed * playbackRate
+        }
+
+        private func apply(settings: DanmakuRenderSettings, to view: DanmakuCanvasHostView) {
+            view.alphaValue = settings.isVisible ? settings.opacity : 0
         }
 
         private func enqueueSecondBuckets(
@@ -177,7 +223,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
 
         private func makeDanmaku(from comment: DanmakuPayload.Comment) -> BaseDanmaku? {
             let color = nsColor(from: comment.colorRGB)
-            let fontSize = max(14, min(comment.fontSize * 0.72, 26))
+            let fontSize = max(14, min(comment.fontSize * 0.72 * currentSettings.fontScale, 39))
             let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
 
             let danmaku: BaseDanmaku
@@ -253,6 +299,7 @@ final class DanmakuCanvasHostView: NSView {
 struct DanmakuRenderOverlay: View {
     let loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?
     let controller: PlayerController
+    let settings: DanmakuRenderSettings
 
     var body: some View {
         Color.clear
