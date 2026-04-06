@@ -49,7 +49,6 @@ private struct PlayerContentMainView: View {
     @State private var lastPointerMovementAt: ContinuousClock.Instant?
     @State private var isSubtitleRendererReady = false
     @State private var selectedEpisodePageIndex = 0
-    @State private var pointerSettleTask: Task<Void, Never>?
     @State private var hideControlsTask: Task<Void, Never>?
     
     var body: some View {
@@ -397,7 +396,7 @@ private struct PlayerContentMainView: View {
             isPointerInsideControls = inside
             if isFullscreen {
                 if inside {
-                    cancelFullscreenPointerTasks()
+                    cancelControlBarAutoHide()
                     revealControlsIfNeeded()
                 }
             } else {
@@ -889,11 +888,11 @@ private struct PlayerContentMainView: View {
 #if os(macOS)
         if isFullscreen {
             if isAnyControlPopoverPresented || isPointerInsideControls {
-                cancelPointerSettleTask()
                 revealControlsIfNeeded()
+                cancelControlBarAutoHide()
                 return
             }
-            scheduleFullscreenHideCountdown()
+            resetFullscreenHideCountdown()
             return
         }
 
@@ -943,18 +942,8 @@ private struct PlayerContentMainView: View {
             }
             if !isControlBarVisible {
                 revealControls()
-            } else {
-                cancelControlBarAutoHide()
             }
-            cancelPointerSettleTask()
-            pointerSettleTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(120))
-                pointerSettleTask = nil
-                guard isFullscreen,
-                      !isPointerInsideControls,
-                      !isAnyControlPopoverPresented else { return }
-                scheduleFullscreenHideCountdown()
-            }
+            resetFullscreenHideCountdown()
             return
         }
         revealControlsIfNeeded()
@@ -966,17 +955,11 @@ private struct PlayerContentMainView: View {
         hideControlsTask = nil
     }
 
-    private func cancelPointerSettleTask() {
-        pointerSettleTask?.cancel()
-        pointerSettleTask = nil
-    }
-
     private func cancelFullscreenPointerTasks() {
-        cancelPointerSettleTask()
         cancelControlBarAutoHide()
     }
 
-    private func scheduleFullscreenHideCountdown() {
+    private func resetFullscreenHideCountdown() {
         cancelControlBarAutoHide()
         let expectedMovementInstant = lastPointerMovementAt
         hideControlsTask = Task { @MainActor in
