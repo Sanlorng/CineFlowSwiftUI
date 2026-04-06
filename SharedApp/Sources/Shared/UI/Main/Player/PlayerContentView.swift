@@ -618,7 +618,14 @@ private struct PlayerContentMainView: View {
 
     private func revealControls() {
         hideControlsTask?.cancel()
-        showCursorIfNeeded()
+        let needsCursorReveal = isCursorHidden
+        let needsControlBarReveal = !isControlBarVisible
+
+        if needsCursorReveal {
+            showCursorIfNeeded()
+        }
+        guard needsControlBarReveal else { return }
+
         withAnimation(.easeOut(duration: 0.18)) {
             isControlBarVisible = true
         }
@@ -639,9 +646,13 @@ private struct PlayerContentMainView: View {
 #endif
 
         guard shouldHideLater else {
-            showCursorIfNeeded()
-            withAnimation(.easeOut(duration: 0.18)) {
-                isControlBarVisible = true
+            if isCursorHidden {
+                showCursorIfNeeded()
+            }
+            if !isControlBarVisible {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    isControlBarVisible = true
+                }
             }
             return
         }
