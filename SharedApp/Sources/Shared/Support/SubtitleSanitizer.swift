@@ -1,6 +1,11 @@
 import Foundation
 
 enum SubtitleSanitizer {
+    private struct StyleDefinition {
+        let alignment: Int?
+        let marginV: Int?
+    }
+
     private enum Language {
         case japanese
         case chinese
@@ -27,8 +32,8 @@ enum SubtitleSanitizer {
 
     private struct ASSDocument {
         let lines: [String]
+        let styles: [String: StyleDefinition]
         let dialogueEntries: [DialogueEntry]
-        let styleIndex: Int
         let textIndex: Int
         let supportsBilingualLayout: Bool
     }
@@ -42,17 +47,42 @@ enum SubtitleSanitizer {
         }
 
         var inEventsSection = false
+        var inStylesSection = false
         var formatFieldCount = 0
         var textFieldIndex = -1
         var styleFieldIndex: Int?
+        var styleFormat: [String] = []
+        var styles: [String: StyleDefinition] = [:]
         var dialogueEntries: [DialogueEntry] = []
 
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("[Events]") {
                 inEventsSection = true
+                inStylesSection = false
                 continue
             }
+            if trimmed.hasPrefix("[V4+ Styles]") || trimmed.hasPrefix("[V4 Styles]") {
+                inStylesSection = true
+                inEventsSection = false
+                continue
+            }
+
+            if inStylesSection {
+                if trimmed.lowercased().hasPrefix("format:") {
+                    let formatLine = trimmed.dropFirst("Format:".count)
+                    styleFormat = formatLine.split(separator: ",").map {
+                        $0.trimmingCharacters(in: .whitespaces).uppercased()
+                    }
+                    continue
+                }
+                if trimmed.lowercased().hasPrefix("style:"),
+                   let style = parseStyleDefinition(trimmed, format: styleFormat) {
+                    styles[style.name] = .init(alignment: style.alignment, marginV: style.marginV)
+                }
+                continue
+            }
+
             if !inEventsSection { continue }
             if trimmed.lowercased().hasPrefix("format:") {
                 let formatLine = trimmed.dropFirst("Format:".count)
@@ -94,14 +124,13 @@ enum SubtitleSanitizer {
         }
 
         let supportsBilingualLayout = groups.values.contains { entries in
-            entries.contains(where: { $0.language == .japanese }) &&
-            entries.contains(where: { $0.language == .chinese })
+            requiresMarginWorkaround(entries: entries, styles: styles)
         }
 
         return ASSDocument(
             lines: lines,
+            styles: styles,
             dialogueEntries: dialogueEntries,
-            styleIndex: styleIndex,
             textIndex: textFieldIndex,
             supportsBilingualLayout: supportsBilingualLayout
         )
@@ -118,6 +147,9 @@ enum SubtitleSanitizer {
         var skipIndices = Set<Int>()
 
         for entries in grouped.values {
+            guard requiresMarginWorkaround(entries: entries, styles: document.styles) else {
+                continue
+            }
             let jpEntries = entries.filter { $0.language == .japanese }.sorted { $0.index < $1.index }
             let chEntries = entries.filter { $0.language == .chinese }.sorted { $0.index < $1.index }
             let pairCount = min(jpEntries.count, chEntries.count)
@@ -161,6 +193,39 @@ enum SubtitleSanitizer {
         }
 
         return output.joined(separator: "\n")
+    }
+
+    private static func parseStyleDefinition(_ line: String, format: [String]) -> (name: String, alignment: Int?, marginV: Int?)? {
+        guard !format.isEmpty else { return nil }
+        let payload = line.dropFirst("Style:".count)
+        let values = payload.split(separator: ",", omittingEmptySubsequences: false).map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        guard values.count == format.count,
+              let nameIndex = format.firstIndex(of: "NAME"),
+              values.indices.contains(nameIndex) else {
+            return nil
+        }
+
+        let alignment: Int?
+        if let alignmentIndex = format.firstIndex(of: "ALIGNMENT"), values.indices.contains(alignmentIndex) {
+            alignment = Int(values[alignmentIndex])
+        } else {
+            alignment = nil
+        }
+
+        let marginV: Int?
+        if let marginVIndex = format.firstIndex(of: "MARGINV"), values.indices.contains(marginVIndex) {
+            marginV = Int(values[marginVIndex])
+        } else {
+            marginV = nil
+        }
+
+        return (
+            name: values[nameIndex],
+            alignment: alignment,
+            marginV: marginV
+        )
     }
 
     private static func splitASSFields(_ content: String, expected: Int) -> [String]? {
@@ -261,5 +326,33 @@ enum SubtitleSanitizer {
         let jpSegment = "{\\r\(japaneseStyle)}\(japaneseText)"
         let chSegment = "{\\r\(chineseStyle)}\(chineseText)"
         return jpSegment + "\\N" + chSegment
+    }
+
+    private static func requiresMarginWorkaround(
+        entries: [DialogueEntry],
+        styles: [String: StyleDefinition]
+    ) -> Bool {
+        let japaneseEntries = entries.filter { $0.language == .japanese }.sorted { $0.index < $1.index }
+        let chineseEntries = entries.filter { $0.language == .chinese }.sorted { $0.index < $1.index }
+        let pairCount = min(japaneseEntries.count, chineseEntries.count)
+        guard pairCount > 0 else { return false }
+
+        for idx in 0..<pairCount {
+            guard let japaneseStyle = styles[japaneseEntries[idx].style],
+                  let chineseStyle = styles[chineseEntries[idx].style],
+                  let japaneseAlignment = japaneseStyle.alignment,
+                  let chineseAlignment = chineseStyle.alignment,
+                  let japaneseMarginV = japaneseStyle.marginV,
+                  let chineseMarginV = chineseStyle.marginV else {
+                continue
+            }
+
+            if japaneseAlignment == chineseAlignment,
+               japaneseMarginV != chineseMarginV {
+                return true
+            }
+        }
+
+        return false
     }
 }
