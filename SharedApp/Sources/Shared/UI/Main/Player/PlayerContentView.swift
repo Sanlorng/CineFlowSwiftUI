@@ -844,13 +844,13 @@ private func shouldAllowAutoPlay(
         return true
     }
     if viewStore.selectedEmbeddedSubtitleTrackID != nil {
-        return viewStore.activeSubtitle != nil
+        return true
+    }
+    if !viewStore.availableEmbeddedSubtitles.isEmpty {
+        return false
     }
     if viewStore.isLoadingEmbeddedSubtitles {
         return false
-    }
-    if !viewStore.availableEmbeddedSubtitles.isEmpty {
-        return viewStore.activeSubtitle != nil
     }
     return true
 }
