@@ -292,6 +292,12 @@ private struct PlayerContentMainView: View {
             switch result {
             case let .success(urls):
                 guard let url = urls.first else { return }
+                let accessedSecurityScope = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessedSecurityScope {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
                 do {
                     let content = try String(contentsOf: url, encoding: .utf8)
                     store.send(.localSubtitleLoaded(fileName: url.lastPathComponent, content: content))
