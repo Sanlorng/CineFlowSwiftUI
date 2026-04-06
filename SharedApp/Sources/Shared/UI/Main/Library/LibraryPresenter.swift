@@ -1027,10 +1027,19 @@ private func makeAuthorizedRequest(
 }
 
 private func fetchData(with request: URLRequest) async throws -> Data {
-    let (data, response) = try await URLSession.shared.data(for: request)
+    NetworkDebugLogger.logURLRequest(request, label: "RemoteMediaLibraryFallback")
+    let data: Data
+    let response: URLResponse
+    do {
+        (data, response) = try await URLSession.shared.data(for: request)
+    } catch {
+        NetworkDebugLogger.logURLRequestError(error, request: request, label: "RemoteMediaLibraryFallback")
+        throw error
+    }
     guard let httpResponse = response as? HTTPURLResponse else {
         throw APIError.unexpectedResponse("字幕接口没有返回 HTTP 响应。")
     }
+    NetworkDebugLogger.logURLResponse(httpResponse, request: request, label: "RemoteMediaLibraryFallback")
     guard 200..<300 ~= httpResponse.statusCode else {
         throw APIError.serverError(statusCode: httpResponse.statusCode)
     }
@@ -1059,12 +1068,56 @@ private struct TokenTransport: ClientTransport {
         baseURL: URL,
         operationID: String
     ) async throws -> (HTTPResponse, HTTPBody?) {
+        NetworkDebugLogger.logRequest(
+            client: "RemoteMediaLibrary",
+            operationID: operationID,
+            request: request,
+            baseURL: baseURL
+        )
         guard let token, !token.isEmpty else {
-            return try await next.send(request, body: body, baseURL: baseURL, operationID: operationID)
+            do {
+                let result = try await next.send(request, body: body, baseURL: baseURL, operationID: operationID)
+                NetworkDebugLogger.logResponse(
+                    client: "RemoteMediaLibrary",
+                    operationID: operationID,
+                    request: request,
+                    baseURL: baseURL,
+                    response: result.0
+                )
+                return result
+            } catch {
+                NetworkDebugLogger.logError(
+                    client: "RemoteMediaLibrary",
+                    operationID: operationID,
+                    request: request,
+                    baseURL: baseURL,
+                    error: error
+                )
+                throw error
+            }
         }
         var mutableRequest = request
         mutableRequest.headerFields.append(.init(name: .authorization, value: "Bearer \(token)"))
-        return try await next.send(mutableRequest, body: body, baseURL: baseURL, operationID: operationID)
+        do {
+            let result = try await next.send(mutableRequest, body: body, baseURL: baseURL, operationID: operationID)
+            NetworkDebugLogger.logResponse(
+                client: "RemoteMediaLibrary",
+                operationID: operationID,
+                request: mutableRequest,
+                baseURL: baseURL,
+                response: result.0
+            )
+            return result
+        } catch {
+            NetworkDebugLogger.logError(
+                client: "RemoteMediaLibrary",
+                operationID: operationID,
+                request: mutableRequest,
+                baseURL: baseURL,
+                error: error
+            )
+            throw error
+        }
     }
 }
 

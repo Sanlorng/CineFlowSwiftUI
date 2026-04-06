@@ -49,14 +49,39 @@ struct SignatureMiddleware: ClientTransport {
         mutableRequest.headerFields.append(.init(name: .init("X-AppId")!, value: self.appId))
         mutableRequest.headerFields.append(.init(name: .init("X-Timestamp")!, value: timestamp))
         mutableRequest.headerFields.append(.init(name: .init("X-Signature")!, value: signature))
-        
-        // 5. 将带有签名的请求传递给下一个 Transport
-        return try await next.send(
-            mutableRequest,
-            body: body,
-            baseURL: baseURL,
-            operationID: operationID
+
+        NetworkDebugLogger.logRequest(
+            client: "DandanApi",
+            operationID: operationID,
+            request: mutableRequest,
+            baseURL: baseURL
         )
+
+        do {
+            let result = try await next.send(
+                mutableRequest,
+                body: body,
+                baseURL: baseURL,
+                operationID: operationID
+            )
+            NetworkDebugLogger.logResponse(
+                client: "DandanApi",
+                operationID: operationID,
+                request: mutableRequest,
+                baseURL: baseURL,
+                response: result.0
+            )
+            return result
+        } catch {
+            NetworkDebugLogger.logError(
+                client: "DandanApi",
+                operationID: operationID,
+                request: mutableRequest,
+                baseURL: baseURL,
+                error: error
+            )
+            throw error
+        }
     }
     
     /// 私有辅助方法，用于计算签名
