@@ -67,6 +67,9 @@ struct SubtitleRendererOverlay: NSViewRepresentable {
             )
 
             guard viewport.size.width > 0, viewport.size.height > 0 else {
+#if DEBUG
+                print("[SubtitleRendererOverlay] Skip rendering because viewport is zero for \(document.fileName ?? "unknown")")
+#endif
                 clear(view: view)
                 return
             }
@@ -83,11 +86,19 @@ struct SubtitleRendererOverlay: NSViewRepresentable {
                 if currentDocument != document {
                     try renderer?.updateDocument(document)
                     currentDocument = document
+#if DEBUG
+                    print("[SubtitleRendererOverlay] Loaded subtitle document \(document.fileName ?? "unknown") format=\(document.format.rawValue)")
+#endif
                 }
 
                 let frame = try renderer?.renderFrame(at: playbackTime)
                 view.layer?.contents = frame?.image
                 view.layer?.contentsScale = viewport.scale
+#if DEBUG
+                if frame == nil {
+                    print("[SubtitleRendererOverlay] No frame at time \(playbackTime) for \(document.fileName ?? "unknown")")
+                }
+#endif
             } catch {
 #if DEBUG
                 print("[SubtitleRendererOverlay] Failed to render subtitle frame:", error)

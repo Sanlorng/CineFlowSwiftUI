@@ -48,8 +48,10 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    let usesCustomSubtitleRenderer = viewStore.activeSubtitle != nil && !viewStore.areSubtitlesSuppressed
-                    let externalSubtitle: FSVideoPlayer.ExternalSubtitle? = nil
+                    let usesCustomSubtitleRenderer = customSubtitleDocument != nil
+                    let externalSubtitle = customSubtitleDocument == nil ? viewStore.activeSubtitle.map {
+                        FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.fsPlayerContent)
+                    } : nil
                     ZStack {
                         FSVideoPlayer(
                             coordinator: coordinator,
@@ -86,6 +88,7 @@ private struct PlayerContentMainView: View {
                             document: customSubtitleDocument,
                             playbackTime: playbackTime
                         )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .allowsHitTesting(false)
                     }
                         .frame(minHeight: 240)
