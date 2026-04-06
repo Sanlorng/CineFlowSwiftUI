@@ -105,7 +105,6 @@ private struct PlayerContentMainView: View {
                                 .offset(y: isControlBarVisible ? 0 : 28)
                                 .scaleEffect(isControlBarVisible ? 1 : 0.97, anchor: .bottom)
                                 .allowsHitTesting(isControlBarVisible)
-                                .animation(.easeInOut(duration: 0.22), value: isControlBarVisible)
 #if os(macOS)
                         PlayerWindowObserver(
                             onWindowChanged: { window in
@@ -639,8 +638,26 @@ private struct PlayerContentMainView: View {
         }
         guard needsControlBarReveal else { return }
 
-        withAnimation(.easeOut(duration: 0.18)) {
+        if isFullscreen {
             isControlBarVisible = true
+        } else {
+            withAnimation(.easeOut(duration: 0.18)) {
+                isControlBarVisible = true
+            }
+        }
+    }
+
+    private func revealControlsIfHiddenWithoutAnimation() {
+        if isCursorHidden {
+            showCursorIfNeeded()
+        }
+        guard !isControlBarVisible else { return }
+        if isFullscreen {
+            isControlBarVisible = true
+        } else {
+            withAnimation(.easeOut(duration: 0.18)) {
+                isControlBarVisible = true
+            }
         }
     }
 
@@ -651,14 +668,7 @@ private struct PlayerContentMainView: View {
         if isFullscreen {
             if isAnyControlPopoverPresented || isPointerInsideControls {
                 cancelPointerSettleTask()
-                if isCursorHidden {
-                    showCursorIfNeeded()
-                }
-                if !isControlBarVisible {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        isControlBarVisible = true
-                    }
-                }
+                revealControlsIfHiddenWithoutAnimation()
                 return
             }
             scheduleFullscreenHideCountdown()
@@ -671,14 +681,7 @@ private struct PlayerContentMainView: View {
 #endif
 
         guard shouldHideLater else {
-            if isCursorHidden {
-                showCursorIfNeeded()
-            }
-            if !isControlBarVisible {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    isControlBarVisible = true
-                }
-            }
+            revealControlsIfHiddenWithoutAnimation()
             return
         }
 
