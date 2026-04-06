@@ -345,7 +345,8 @@ final class PlayerContainerView: UIView {
 
     func attach(player: AVPlayer?) {
         playerLayer.player = player
-        backgroundColor = .black
+        backgroundColor = .clear
+        playerLayer.backgroundColor = UIColor.clear.cgColor
     }
 
     private var playerLayer: AVPlayerLayer {
@@ -358,6 +359,8 @@ final class PlayerContainerView: AVPlayerView {
     func attach(player: AVPlayer?) {
         self.player = player
         controlsStyle = .none
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
 }
 #endif

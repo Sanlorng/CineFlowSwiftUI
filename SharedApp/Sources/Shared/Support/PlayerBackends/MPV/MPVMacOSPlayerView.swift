@@ -204,6 +204,10 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override var isOpaque: Bool {
+        false
+    }
+
     override class func defaultPixelFormat() -> NSOpenGLPixelFormat {
         let attributes: [NSOpenGLPixelFormatAttribute] = [
             NSOpenGLPixelFormatAttribute(NSOpenGLPFADoubleBuffer),
@@ -217,6 +221,8 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
 
     func setupContext() {
         autoresizingMask = [.width, .height]
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
         openGLContext?.makeCurrentContext()
     }
 

@@ -169,6 +169,7 @@ final class MPVContainerViewController: PlatformViewController {
         view = PlatformView(frame: defaultSurfaceFrame)
         view.wantsLayer = true
         view.layer = metalLayer
+        view.layer?.backgroundColor = platformClearColor
     }
 #endif
 
@@ -178,7 +179,7 @@ final class MPVContainerViewController: PlatformViewController {
 #if canImport(UIKit)
         view.layer.addSublayer(metalLayer)
 #endif
-        metalLayer.backgroundColor = platformBlackColor
+        metalLayer.backgroundColor = platformClearColor
         metalLayer.framebufferOnly = true
         updateMetalLayerGeometry()
     }
@@ -776,13 +777,13 @@ private extension MPVContainerViewController {
 #endif
     }
 
-    var platformBlackColor: CGColor {
+    var platformClearColor: CGColor {
 #if canImport(AppKit)
-        NSColor.black.cgColor
+        NSColor.clear.cgColor
 #elseif canImport(UIKit)
-        UIColor.black.cgColor
+        UIColor.clear.cgColor
 #else
-        CGColor(gray: 0, alpha: 1)
+        CGColor(gray: 0, alpha: 0)
 #endif
     }
 }
@@ -796,7 +797,7 @@ struct MPVPlayerView: View {
 
     var body: some View {
         Rectangle()
-            .fill(Color.black)
+            .fill(Color.clear)
             .overlay {
                 VStack(spacing: 12) {
                     Image(systemName: "play.square.stack")
