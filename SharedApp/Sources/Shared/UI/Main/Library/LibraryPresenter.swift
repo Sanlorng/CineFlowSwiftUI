@@ -974,6 +974,11 @@ private func fetchWebPlayerStreamContext(
     token: String?,
     fileID: String
 ) async throws -> RemoteMediaLibraryClient.StreamContext {
+    let directStreamContext = buildDirectStreamContext(
+        baseURL: baseURL,
+        token: token,
+        fileID: fileID
+    )
     let pageURL = buildOperationURL(
         baseURL: baseURL,
         path: "/web1/video.html",
@@ -991,19 +996,16 @@ private func fetchWebPlayerStreamContext(
     guard let relativePath = extractWebPlayerVideoPath(from: html) else {
         throw APIError.unexpectedResponse("播放页面里没有找到 DPlayer 视频地址。")
     }
-
-    let playbackURL: URL
-    if let absoluteURL = URL(string: relativePath), absoluteURL.scheme != nil {
-        playbackURL = absoluteURL
-    } else {
-        playbackURL = buildOperationURL(baseURL: baseURL, path: relativePath, queryItems: [])
+    guard let playbackURL = resolveOperationURL(baseURL: baseURL, path: relativePath) else {
+        throw APIError.unexpectedResponse("播放页面返回了无效的视频地址。")
     }
 
-    var headers: [String: String] = ["Accept": "video/*"]
-    if let token, !token.isEmpty {
-        headers["Authorization"] = "Bearer \(token)"
+    if isWebPlayerHistorySyncURL(playbackURL, baseURL: baseURL) {
+        scheduleWebPlayerHistorySync(url: playbackURL, token: token)
+        return directStreamContext
     }
-    return .init(url: playbackURL, headers: headers)
+
+    return .init(url: playbackURL, headers: directStreamContext.headers)
 }
 
 private func extractWebPlayerVideoPath(from html: String) -> String? {
@@ -1025,6 +1027,50 @@ private func extractWebPlayerVideoPath(from html: String) -> String? {
         }
     }
     return nil
+}
+
+private func resolveOperationURL(baseURL: URL, path: String) -> URL? {
+    guard !path.isEmpty else { return nil }
+    if let absoluteURL = URL(string: path), absoluteURL.scheme != nil {
+        return absoluteURL
+    }
+    return URL(string: path, relativeTo: baseURL)?.absoluteURL
+}
+
+private func isWebPlayerHistorySyncURL(_ url: URL, baseURL: URL) -> Bool {
+    guard hasSameOrigin(url, as: baseURL) else { return false }
+    return url.path.range(
+        of: #"^/web1/video/[^/?#]+\.[^/?#]+$"#,
+        options: .regularExpression
+    ) != nil
+}
+
+private func hasSameOrigin(_ url: URL, as baseURL: URL) -> Bool {
+    url.scheme?.lowercased() == baseURL.scheme?.lowercased()
+        && url.host?.lowercased() == baseURL.host?.lowercased()
+        && normalizedPort(for: url) == normalizedPort(for: baseURL)
+}
+
+private func normalizedPort(for url: URL) -> Int? {
+    if let port = url.port {
+        return port
+    }
+    switch url.scheme?.lowercased() {
+    case "http":
+        return 80
+    case "https":
+        return 443
+    default:
+        return nil
+    }
+}
+
+private func scheduleWebPlayerHistorySync(url: URL, token: String?) {
+    var request = makeAuthorizedRequest(url: url, token: token, accept: "*/*")
+    request.timeoutInterval = 10
+    request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+    NetworkDebugLogger.logURLRequest(request, label: "RemoteMediaLibraryHistorySync")
+    HeaderOnlyRequestRunner.start(request: request, label: "RemoteMediaLibraryHistorySync")
 }
 
 private func mapSubtitleInfoPayload(
@@ -1188,6 +1234,66 @@ private func mapRawSubtitleInfoPayload(_ rawSubtitles: [[String: Any]]) -> [Remo
         let fileSize = (item["fileSize"] as? Int)
             ?? (item["FileSize"] as? Int)
         return .init(fileName: fileName, fileSize: fileSize)
+    }
+}
+
+private final class HeaderOnlyRequestRunner: NSObject, URLSessionDataDelegate {
+    private let request: URLRequest
+    private let label: String
+    private lazy var session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = request.timeoutInterval
+        configuration.timeoutIntervalForResource = request.timeoutInterval
+        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }()
+
+    static func start(request: URLRequest, label: String) {
+        let runner = HeaderOnlyRequestRunner(request: request, label: label)
+        runner.start()
+    }
+
+    private init(request: URLRequest, label: String) {
+        self.request = request
+        self.label = label
+    }
+
+    private func start() {
+        session.dataTask(with: request).resume()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        if let httpResponse = response as? HTTPURLResponse {
+            NetworkDebugLogger.logURLResponse(httpResponse, request: request, label: label)
+        } else {
+            NetworkDebugLogger.logURLRequestError(
+                APIError.unexpectedResponse("历史同步接口没有返回 HTTP 响应。"),
+                request: request,
+                label: label
+            )
+        }
+        completionHandler(.cancel)
+        session.finishTasksAndInvalidate()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        if let error {
+            let nsError = error as NSError
+            let isCancellation = nsError.domain == NSURLErrorDomain
+                && nsError.code == NSURLErrorCancelled
+            if !isCancellation {
+                NetworkDebugLogger.logURLRequestError(error, request: request, label: label)
+            }
+        }
+        session.finishTasksAndInvalidate()
     }
 }
 
