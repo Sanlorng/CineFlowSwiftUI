@@ -348,11 +348,11 @@ private struct PlayerContentMainView: View {
                     glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
                         viewStore.send(.playPrevious)
                     }
-                    glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
-                        viewStore.send(.playNext)
-                    }
                     glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
                         playerController.togglePlayPause()
+                    }
+                    glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
+                        viewStore.send(.playNext)
                     }
                 }
 
