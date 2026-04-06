@@ -257,7 +257,10 @@ final class MPVContainerViewController: PlatformViewController {
         var wid = Int64(UInt(bitPattern: rawHandle))
         _ = mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &wid)
         _ = mpv_set_option_string(handle, "subs-match-os-language", "yes")
-        _ = mpv_set_option_string(handle, "subs-fallback", "yes")
+        _ = mpv_set_option_string(handle, "subs-fallback", "no")
+        _ = mpv_set_option_string(handle, "sub-auto", "no")
+        _ = mpv_set_option_string(handle, "sid", "no")
+        _ = mpv_set_option_string(handle, "sub-visibility", "no")
         _ = mpv_set_option_string(handle, "vo", "gpu-next")
         _ = mpv_set_option_string(handle, "gpu-api", "vulkan")
         _ = mpv_set_option_string(handle, "gpu-context", "moltenvk")
@@ -274,6 +277,7 @@ final class MPVContainerViewController: PlatformViewController {
         guard let mpv else { return }
 
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "videotoolbox" : "no")
+        applyHTTPHeaders(source.headers, to: mpv)
         stateChanged(.preparing)
 
         var args = [source.url.absoluteString, "replace"]
@@ -284,6 +288,29 @@ final class MPVContainerViewController: PlatformViewController {
         if options.allowAutoPlay {
             setPause(false)
         }
+    }
+
+    private func applyHTTPHeaders(_ headers: [String: String], to mpv: OpaquePointer) {
+        guard headers.isEmpty == false else {
+            _ = mpv_set_option_string(mpv, "http-header-fields", "")
+            return
+        }
+
+        if let userAgent = headers["User-Agent"] ?? headers["user-agent"] {
+            _ = mpv_set_option_string(mpv, "user-agent", userAgent)
+        }
+        if let referer = headers["Referer"] ?? headers["referer"] {
+            _ = mpv_set_option_string(mpv, "referrer", referer)
+        }
+
+        let headerFields = headers
+            .filter { key, _ in
+                let lowered = key.lowercased()
+                return lowered != "user-agent" && lowered != "referer"
+            }
+            .map { "\($0): \($1)" }
+            .joined(separator: ",")
+        _ = mpv_set_option_string(mpv, "http-header-fields", headerFields)
     }
 
     private func setPause(_ paused: Bool) {
