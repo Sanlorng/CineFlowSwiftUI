@@ -103,19 +103,21 @@ private struct PlayerContentMainView: View {
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
 #if os(macOS)
-                            PlayerWindowObserver(
-                                onWindowChanged: { window in
-                                    observedWindow = window
-                                    isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
-                                    scheduleControlBarVisibilityUpdate()
-                                },
-                                onFullscreenChanged: { fullscreen in
-                                    isFullscreen = fullscreen
-                                    if !fullscreen {
-                                        showCursorIfNeeded()
-                                    }
-                                    revealControls()
+                        PlayerWindowObserver(
+                            onWindowChanged: { window in
+                                observedWindow = window
+                                isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
+                                updateWindowToolbarVisibility()
+                                scheduleControlBarVisibilityUpdate()
+                            },
+                            onFullscreenChanged: { fullscreen in
+                                isFullscreen = fullscreen
+                                updateWindowToolbarVisibility()
+                                if !fullscreen {
+                                    showCursorIfNeeded()
                                 }
+                                revealControls()
+                            }
                             )
                             .frame(width: 0, height: 0)
 #endif
@@ -167,6 +169,8 @@ private struct PlayerContentMainView: View {
                             lastPointerLocation = nil
                             hideControlsTask?.cancel()
                             hideControlsTask = nil
+                            isFullscreen = false
+                            updateWindowToolbarVisibility()
                             showCursorIfNeeded()
                         }
                 } else {
@@ -666,6 +670,10 @@ private struct PlayerContentMainView: View {
     }
 
 #if os(macOS)
+    private func updateWindowToolbarVisibility() {
+        observedWindow?.toolbar?.isVisible = !isFullscreen
+    }
+
     private func hideCursorIfNeeded() {
         guard !isCursorHidden else { return }
         NSCursor.hide()
@@ -678,6 +686,7 @@ private struct PlayerContentMainView: View {
         isCursorHidden = false
     }
 #else
+    private func updateWindowToolbarVisibility() {}
     private func hideCursorIfNeeded() {}
     private func showCursorIfNeeded() {}
 #endif
