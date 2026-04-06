@@ -50,7 +50,12 @@ struct PlayerPresenter {
         }
 
         struct LoadedDanmaku: Equatable, Sendable {
+            let id = UUID()
             let payload: DanmakuPayload
+
+            static func == (lhs: LoadedDanmaku, rhs: LoadedDanmaku) -> Bool {
+                lhs.id == rhs.id
+            }
         }
         
         let configuration: LibraryPresenter.State.Configuration

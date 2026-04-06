@@ -5,7 +5,7 @@ import AppKit
 import DanmakuRender
 
 struct DanmakuRenderOverlay: NSViewRepresentable {
-    let payload: DanmakuPayload?
+    let loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?
     let playbackTime: TimeInterval
     let playbackState: PlayerPlaybackState
 
@@ -22,7 +22,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
     func updateNSView(_ view: DanmakuCanvasHostView, context: Context) {
         context.coordinator.update(
             view: view,
-            payload: payload,
+            loadedDanmaku: loadedDanmaku,
             playbackTime: playbackTime,
             playbackState: playbackState
         )
@@ -35,6 +35,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         private let engine = DanmakuEngine()
+        private var currentDanmakuID: UUID?
         private var currentPayload: DanmakuPayload?
         private var nextCommentIndex = 0
         private var lastPlaybackTime: TimeInterval = 0
@@ -50,6 +51,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         func detach(from view: DanmakuCanvasHostView) {
             engine.stop()
             isEngineStarted = false
+            currentDanmakuID = nil
             currentPayload = nil
             nextCommentIndex = 0
             lastPlaybackTime = 0
@@ -57,15 +59,16 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
 
         func update(
             view: DanmakuCanvasHostView,
-            payload: DanmakuPayload?,
+            loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?,
             playbackTime: TimeInterval,
             playbackState: PlayerPlaybackState
         ) {
             let clampedTime = max(playbackTime, 0)
-            view.layoutSubtreeIfNeeded()
             updateEnginePlaybackState(playbackState)
+            let payload = loadedDanmaku?.payload
 
-            if currentPayload != payload {
+            if currentDanmakuID != loadedDanmaku?.id {
+                currentDanmakuID = loadedDanmaku?.id
                 replacePayload(payload, at: clampedTime)
                 return
             }
@@ -225,7 +228,7 @@ final class DanmakuCanvasHostView: NSView {
 }
 #else
 struct DanmakuRenderOverlay: View {
-    let payload: DanmakuPayload?
+    let loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?
     let playbackTime: TimeInterval
     let playbackState: PlayerPlaybackState
 
