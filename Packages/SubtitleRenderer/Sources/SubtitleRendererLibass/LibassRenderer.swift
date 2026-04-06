@@ -4,6 +4,7 @@ import Foundation
 import SubtitleRendererCore
 
 public enum LibassRendererError: Error, Equatable {
+    case runtimeUnavailable(String)
     case initializationFailed(String)
     case unsupportedFormat(SubtitleFormat)
     case failedToParseDocument
@@ -14,6 +15,7 @@ public enum LibassRendererError: Error, Equatable {
 
 public final class LibassRenderer: SubtitleRenderingBackend {
     public private(set) var viewport: SubtitleViewport
+    private let runtime: LibassRuntime
     private let library: OpaquePointer
     private let renderer: OpaquePointer
     private var track: UnsafeMutablePointer<ASS_Track>?
@@ -25,11 +27,17 @@ public final class LibassRenderer: SubtitleRenderingBackend {
         defaultFontFamily: String? = nil,
         fontsDirectory: URL? = nil
     ) throws {
-        guard let libraryPointer = ass_library_init() else {
+        do {
+            self.runtime = try LibassRuntime()
+        } catch let error as LibassRuntimeError {
+            throw LibassRendererError.runtimeUnavailable(String(describing: error))
+        }
+
+        guard let libraryPointer = runtime.assLibraryInit() else {
             throw LibassRendererError.initializationFailed("ass_library_init returned nil")
         }
-        guard let rendererPointer = ass_renderer_init(libraryPointer) else {
-            ass_library_done(libraryPointer)
+        guard let rendererPointer = runtime.assRendererInit(libraryPointer) else {
+            runtime.assLibraryDone(libraryPointer)
             throw LibassRendererError.initializationFailed("ass_renderer_init returned nil")
         }
 
@@ -37,10 +45,10 @@ public final class LibassRenderer: SubtitleRenderingBackend {
         renderer = rendererPointer
         self.viewport = viewport
 
-        ass_set_extract_fonts(libraryPointer, 1)
+        runtime.assSetExtractFonts(libraryPointer, 1)
         if let fontsDirectory {
             fontsDirectory.path.withCString { path in
-                ass_set_fonts_dir(libraryPointer, path)
+                runtime.assSetFontsDir(libraryPointer, path)
             }
         }
 
@@ -50,10 +58,10 @@ public final class LibassRenderer: SubtitleRenderingBackend {
 
     deinit {
         if let track {
-            ass_free_track(track)
+            runtime.assFreeTrack(track)
         }
-        ass_renderer_done(renderer)
-        ass_library_done(library)
+        runtime.assRendererDone(renderer)
+        runtime.assLibraryDone(library)
     }
 
     public func updateDocument(_ document: SubtitleDocument) throws {
@@ -62,7 +70,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
         }
 
         if let track {
-            ass_free_track(track)
+            runtime.assFreeTrack(track)
             self.track = nil
         }
 
@@ -70,7 +78,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
         guard let newTrack = utf8.withUnsafeBufferPointer({ buffer -> UnsafeMutablePointer<ASS_Track>? in
             guard let baseAddress = buffer.baseAddress else { return nil }
             let mutable = UnsafeMutablePointer(mutating: baseAddress)
-            return ass_read_memory(library, mutable, buffer.count - 1, nil)
+            return runtime.assReadMemory(library, mutable, buffer.count - 1, nil)
         }) else {
             throw LibassRendererError.failedToParseDocument
         }
@@ -91,7 +99,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
 
         var change: Int32 = 0
         let timestamp = Int64((time * 1000).rounded())
-        let images = ass_render_frame(renderer, track, timestamp, &change)
+        let images = runtime.assRenderFrame(renderer, track, timestamp, &change)
 
         if change == 0, let lastFrame {
             return lastFrame
@@ -109,7 +117,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
     private func configureFonts(defaultFontFamily: String?) throws {
         let family = (defaultFontFamily?.isEmpty == false ? defaultFontFamily : "sans-serif") ?? "sans-serif"
         family.withCString { familyCString in
-            ass_set_fonts(
+            runtime.assSetFonts(
                 renderer,
                 nil,
                 familyCString,
@@ -127,11 +135,11 @@ public final class LibassRenderer: SubtitleRenderingBackend {
             throw LibassRendererError.invalidViewport
         }
 
-        ass_set_frame_size(renderer, Int32(pixelWidth), Int32(pixelHeight))
-        ass_set_storage_size(renderer, Int32(pixelWidth), Int32(pixelHeight))
-        ass_set_use_margins(renderer, 0)
-        ass_set_line_position(renderer, 0)
-        ass_set_hinting(renderer, ASS_HINTING_LIGHT)
+        runtime.assSetFrameSize(renderer, Int32(pixelWidth), Int32(pixelHeight))
+        runtime.assSetStorageSize(renderer, Int32(pixelWidth), Int32(pixelHeight))
+        runtime.assSetUseMargins(renderer, 0)
+        runtime.assSetLinePosition(renderer, 0)
+        runtime.assSetHinting(renderer, ASS_HINTING_LIGHT)
     }
 
     private func render(

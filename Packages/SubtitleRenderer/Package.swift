@@ -25,16 +25,16 @@ let package = Package(
         ),
         .systemLibrary(
             name: "CLibass",
-            pkgConfig: "libass",
-            providers: [
-                .brew(["libass", "pkgconf"])
-            ]
+            path: "Sources/CLibass"
         ),
         .target(
             name: "SubtitleRendererLibass",
             dependencies: [
                 "SubtitleRendererCore",
                 "CLibass",
+            ],
+            resources: [
+                .copy("Resources")
             ]
         ),
         .testTarget(
