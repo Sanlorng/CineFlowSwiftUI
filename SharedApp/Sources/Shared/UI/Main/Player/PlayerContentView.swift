@@ -54,7 +54,8 @@ private struct PlayerContentMainView: View {
                 if let stream = viewStore.currentItem?.stream {
                     let options = makeOptions(
                         for: stream,
-                        selectedAudioTrackID: viewStore.selectedAudioTrackID
+                        selectedAudioTrackID: viewStore.selectedAudioTrackID,
+                        allowAutoPlay: shouldAllowAutoPlay(viewStore: viewStore)
                     )
                     let customSubtitleDocument = makeCustomSubtitleDocument(
                         from: viewStore.activeSubtitle,
@@ -809,14 +810,38 @@ private struct PlayerFileSelectionView: View {
 
 private func makeOptions(
     for stream: RemoteMediaLibraryClient.StreamContext,
-    selectedAudioTrackID: String?
+    selectedAudioTrackID: String?,
+    allowAutoPlay: Bool
 ) -> PlayerLoadOptions {
     PlayerLoadOptions(
         headers: stream.headers,
         enableHardwareDecoding: true,
-        allowAutoPlay: true,
+        allowAutoPlay: allowAutoPlay,
         selectedAudioTrackID: selectedAudioTrackID
     )
+}
+
+@MainActor
+private func shouldAllowAutoPlay(
+    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+) -> Bool {
+    if viewStore.areSubtitlesSuppressed {
+        return true
+    }
+    if viewStore.subtitleError != nil,
+       !viewStore.isLoadingSelectedSubtitle {
+        return true
+    }
+    if viewStore.selectedEmbeddedSubtitleTrackID != nil {
+        return viewStore.activeSubtitle != nil
+    }
+    if viewStore.isLoadingEmbeddedSubtitles {
+        return false
+    }
+    if !viewStore.availableEmbeddedSubtitles.isEmpty {
+        return viewStore.activeSubtitle != nil
+    }
+    return true
 }
 
 private func selectedAudioTrackTitle(

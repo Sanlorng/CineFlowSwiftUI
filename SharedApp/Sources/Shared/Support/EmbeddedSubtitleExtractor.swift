@@ -22,7 +22,7 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
 
     func availableTracks(for mediaURL: URL, headers: [String: String]) async throws -> [SubtitleTrack] {
         let headerValue = makeHeaderValue(headers)
-        let tracks: [SubtitleTrack] = try mediaURL.absoluteString.withCString { mediaURLCString in
+        return try mediaURL.absoluteString.withCString { mediaURLCString in
             try withHeaderCString(headerValue) { headerCString in
                 var tracksPointer: UnsafeMutablePointer<SubtitleBridgeTrackInfo>?
                 var count: Int32 = 0
@@ -73,8 +73,6 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                 return tracks
             }
         }
-        prewarmDocuments(for: tracks, mediaURL: mediaURL, headers: headers)
-        return tracks
     }
 
     func loadDocument(for trackID: SubtitleTrack.ID, from mediaURL: URL, headers: [String: String]) async throws -> SubtitleDocument {
@@ -126,17 +124,6 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
             }
         }
     }
-
-    private func prewarmDocuments(for tracks: [SubtitleTrack], mediaURL: URL, headers: [String: String]) {
-        guard !tracks.isEmpty else { return }
-        Task.detached(priority: .utility) {
-            let extractor = EmbeddedSubtitleExtractor()
-            for track in tracks {
-                _ = try? await extractor.loadDocument(for: track.id, from: mediaURL, headers: headers)
-            }
-        }
-    }
-
     private func makeHeaderValue(_ headers: [String: String]) -> String? {
         guard !headers.isEmpty else { return nil }
         return headers
