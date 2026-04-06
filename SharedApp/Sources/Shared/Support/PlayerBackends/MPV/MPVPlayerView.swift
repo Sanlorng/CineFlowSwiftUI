@@ -130,6 +130,7 @@ final class MPVContainerViewController: PlatformViewController {
     nonisolated(unsafe) private var wakeupContext: UnsafeMutableRawPointer?
     private var currentSource: PlayerSource?
     private var currentOptions: PlayerLoadOptions?
+    private var lastLoadedSource: PlayerSource?
     private var isPaused = false
     private var isBuffering = false
 
@@ -149,7 +150,7 @@ final class MPVContainerViewController: PlatformViewController {
 
 #if canImport(AppKit)
     override func loadView() {
-        view = PlatformView(frame: .zero)
+        view = PlatformView(frame: defaultSurfaceFrame)
         view.wantsLayer = true
         view.layer = metalLayer
     }
@@ -163,29 +164,22 @@ final class MPVContainerViewController: PlatformViewController {
 #endif
         metalLayer.backgroundColor = platformBlackColor
         metalLayer.framebufferOnly = true
-        metalLayer.contentsScale = currentScreenScale
+        updateMetalLayerGeometry()
 
-        initializeIfNeeded()
-        if let currentSource, let currentOptions {
-            load(source: currentSource, options: currentOptions)
-        }
+        startPlaybackIfReady()
     }
 
 #if canImport(UIKit)
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        metalLayer.frame = view.bounds
-        let scale = view.window?.screen.nativeScale ?? currentScreenScale
-        metalLayer.contentsScale = scale
-        metalLayer.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        updateMetalLayerGeometry()
+        startPlaybackIfReady()
     }
 #elseif canImport(AppKit)
     override func viewDidLayout() {
         super.viewDidLayout()
-        metalLayer.frame = view.bounds
-        let scale = view.window?.screen?.backingScaleFactor ?? currentScreenScale
-        metalLayer.contentsScale = scale
-        metalLayer.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        updateMetalLayerGeometry()
+        startPlaybackIfReady()
     }
 #endif
 
@@ -194,12 +188,12 @@ final class MPVContainerViewController: PlatformViewController {
         currentOptions = options
 
         guard isViewLoaded else { return }
-        initializeIfNeeded()
-        load(source: source, options: options)
+        startPlaybackIfReady()
     }
 
     func apply(options: PlayerLoadOptions) {
         currentOptions = options
+        startPlaybackIfReady()
         applyAudioTrackSelection(options.selectedAudioTrackID)
         if options.allowAutoPlay {
             setPause(false)
@@ -216,9 +210,25 @@ final class MPVContainerViewController: PlatformViewController {
                 self.mpv = nil
             }
         }
+        lastLoadedSource = nil
         if let wakeupContext {
             Unmanaged<MPVContainerViewController>.fromOpaque(wakeupContext).release()
             self.wakeupContext = nil
+        }
+    }
+
+    private func startPlaybackIfReady() {
+        guard let currentSource, let currentOptions else { return }
+        guard isRenderSurfaceReady else {
+#if DEBUG
+            print("[MPV] Skip start because render surface is not ready yet. bounds=\(view.bounds) drawable=\(metalLayer.drawableSize)")
+#endif
+            return
+        }
+        initializeIfNeeded()
+        if lastLoadedSource != currentSource {
+            load(source: currentSource, options: currentOptions)
+            lastLoadedSource = currentSource
         }
     }
 
@@ -606,11 +616,36 @@ private extension PlayerTrack.Kind {
 }
 
 private extension MPVContainerViewController {
+    var isRenderSurfaceReady: Bool {
+        metalLayer.drawableSize.width > 1 && metalLayer.drawableSize.height > 1
+    }
+
+    func updateMetalLayerGeometry() {
+        let bounds = view.bounds.isEmpty ? defaultSurfaceFrame : view.bounds
+        metalLayer.frame = bounds
+        let scale = currentScreenScale
+        metalLayer.contentsScale = scale
+        metalLayer.drawableSize = CGSize(
+            width: max(bounds.width * scale, 1),
+            height: max(bounds.height * scale, 1)
+        )
+    }
+
+    var defaultSurfaceFrame: CGRect {
+#if canImport(AppKit)
+        NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1280, height: 720)
+#elseif canImport(UIKit)
+        UIScreen.main.bounds
+#else
+        CGRect(x: 0, y: 0, width: 1280, height: 720)
+#endif
+    }
+
     var currentScreenScale: CGFloat {
 #if canImport(AppKit)
-        NSScreen.main?.backingScaleFactor ?? 2
+        view.window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
 #elseif canImport(UIKit)
-        UIScreen.main.nativeScale
+        view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
 #else
         2
 #endif
