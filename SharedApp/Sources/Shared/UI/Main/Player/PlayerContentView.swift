@@ -193,8 +193,7 @@ private struct PlayerContentMainView: View {
                 .allowsHitTesting(false)
                 DanmakuRenderOverlay(
                     loadedDanmaku: viewStore.activeDanmaku,
-                    playbackTime: playerController.timeline.currentTime,
-                    playbackState: playerController.playbackState
+                    controller: playerController
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)

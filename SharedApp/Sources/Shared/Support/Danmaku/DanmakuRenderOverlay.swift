@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 #if canImport(DanmakuRender) && os(macOS)
 import AppKit
@@ -6,8 +7,7 @@ import DanmakuRender
 
 struct DanmakuRenderOverlay: NSViewRepresentable {
     let loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?
-    let playbackTime: TimeInterval
-    let playbackState: PlayerPlaybackState
+    let controller: PlayerController
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -23,8 +23,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         context.coordinator.update(
             view: view,
             loadedDanmaku: loadedDanmaku,
-            playbackTime: playbackTime,
-            playbackState: playbackState
+            controller: controller
         )
     }
 
@@ -35,11 +34,14 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         private let engine = DanmakuEngine()
+        private weak var controller: PlayerController?
         private var currentDanmakuID: UUID?
         private var currentPayload: DanmakuPayload?
         private var nextCommentIndex = 0
         private var lastPlaybackTime: TimeInterval = 0
         private var isEngineStarted = false
+        private var timelineCancellable: AnyCancellable?
+        private var stateCancellable: AnyCancellable?
 
         func attach(to view: DanmakuCanvasHostView) {
             engine.speed = 1
@@ -51,6 +53,9 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         func detach(from view: DanmakuCanvasHostView) {
             engine.stop()
             isEngineStarted = false
+            timelineCancellable = nil
+            stateCancellable = nil
+            controller = nil
             currentDanmakuID = nil
             currentPayload = nil
             nextCommentIndex = 0
@@ -60,11 +65,10 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         func update(
             view: DanmakuCanvasHostView,
             loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?,
-            playbackTime: TimeInterval,
-            playbackState: PlayerPlaybackState
+            controller: PlayerController
         ) {
-            let clampedTime = max(playbackTime, 0)
-            updateEnginePlaybackState(playbackState)
+            bind(to: controller)
+            let clampedTime = max(controller.timeline.currentTime, 0)
             let payload = loadedDanmaku?.payload
 
             if currentDanmakuID != loadedDanmaku?.id {
@@ -72,24 +76,6 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
                 replacePayload(payload, at: clampedTime)
                 return
             }
-
-            guard let payload else {
-                engine.stop()
-                lastPlaybackTime = clampedTime
-                return
-            }
-
-            if clampedTime + 0.1 < lastPlaybackTime || clampedTime - lastPlaybackTime > 5 {
-                replacePayload(payload, at: clampedTime)
-                return
-            }
-
-            enqueueComments(
-                payload.comments,
-                from: lastPlaybackTime,
-                through: clampedTime + 0.35
-            )
-            lastPlaybackTime = clampedTime
         }
 
         private func replacePayload(_ payload: DanmakuPayload?, at playbackTime: TimeInterval) {
@@ -115,6 +101,41 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
                 from: lowerBound,
                 through: playbackTime
             )
+        }
+
+        private func bind(to controller: PlayerController) {
+            guard self.controller !== controller else { return }
+            self.controller = controller
+            timelineCancellable = controller.$timeline.sink { [weak self] timeline in
+                Task { @MainActor in
+                    self?.handlePlaybackTimeChange(timeline.currentTime)
+                }
+            }
+            stateCancellable = controller.$playbackState.sink { [weak self] state in
+                Task { @MainActor in
+                    self?.updateEnginePlaybackState(state)
+                }
+            }
+        }
+
+        private func handlePlaybackTimeChange(_ playbackTime: TimeInterval) {
+            let clampedTime = max(playbackTime, 0)
+            guard let payload = currentPayload else {
+                lastPlaybackTime = clampedTime
+                return
+            }
+
+            if clampedTime + 0.1 < lastPlaybackTime || clampedTime - lastPlaybackTime > 5 {
+                replacePayload(payload, at: clampedTime)
+                return
+            }
+
+            enqueueComments(
+                payload.comments,
+                from: lastPlaybackTime,
+                through: clampedTime + 0.35
+            )
+            lastPlaybackTime = clampedTime
         }
 
         private func updateEnginePlaybackState(_ playbackState: PlayerPlaybackState) {
@@ -229,8 +250,7 @@ final class DanmakuCanvasHostView: NSView {
 #else
 struct DanmakuRenderOverlay: View {
     let loadedDanmaku: PlayerPresenter.State.LoadedDanmaku?
-    let playbackTime: TimeInterval
-    let playbackState: PlayerPlaybackState
+    let controller: PlayerController
 
     var body: some View {
         Color.clear
