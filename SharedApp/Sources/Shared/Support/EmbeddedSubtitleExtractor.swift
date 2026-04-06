@@ -18,9 +18,11 @@ enum EmbeddedSubtitleExtractorError: LocalizedError {
 }
 
 struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
+    private static let documentCache = EmbeddedSubtitleDocumentCache()
+
     func availableTracks(for mediaURL: URL, headers: [String: String]) async throws -> [SubtitleTrack] {
         let headerValue = makeHeaderValue(headers)
-        return try mediaURL.absoluteString.withCString { mediaURLCString in
+        let tracks: [SubtitleTrack] = try mediaURL.absoluteString.withCString { mediaURLCString in
             try withHeaderCString(headerValue) { headerCString in
                 var tracksPointer: UnsafeMutablePointer<SubtitleBridgeTrackInfo>?
                 var count: Int32 = 0
@@ -51,11 +53,11 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
 #if DEBUG
                     print("[EmbeddedSubtitleExtractor] No embedded subtitle tracks for \(mediaURL.absoluteString)")
 #endif
-                    return []
+                    return [SubtitleTrack]()
                 }
 
                 let buffer = UnsafeBufferPointer(start: tracksPointer, count: Int(count))
-                let tracks = buffer.map { item in
+                let tracks: [SubtitleTrack] = buffer.map { item in
                     SubtitleTrack(
                         id: String(item.stream_index),
                         displayName: makeDisplayName(title: item.title, language: item.language, codecName: item.codec_name, streamIndex: item.stream_index),
@@ -71,6 +73,8 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                 return tracks
             }
         }
+        prewarmDocuments(for: tracks, mediaURL: mediaURL, headers: headers)
+        return tracks
     }
 
     func loadDocument(for trackID: SubtitleTrack.ID, from mediaURL: URL, headers: [String: String]) async throws -> SubtitleDocument {
@@ -79,39 +83,56 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
         }
 
         let headerValue = makeHeaderValue(headers)
-        return try mediaURL.absoluteString.withCString { mediaURLCString in
-            try withHeaderCString(headerValue) { headerCString in
-                var documentPointer: UnsafeMutablePointer<CChar>?
-                var errorPointer: UnsafeMutablePointer<CChar>?
+        let cacheKey = EmbeddedSubtitleDocumentCache.Key(
+            mediaURL: mediaURL.absoluteString,
+            headerValue: headerValue ?? "",
+            trackID: trackID
+        )
+        return try await Self.documentCache.document(for: cacheKey) {
+            try mediaURL.absoluteString.withCString { mediaURLCString in
+                try withHeaderCString(headerValue) { headerCString in
+                    var documentPointer: UnsafeMutablePointer<CChar>?
+                    var errorPointer: UnsafeMutablePointer<CChar>?
 
-                defer {
-                    if let documentPointer {
-                        subtitle_bridge_free_string(documentPointer)
+                    defer {
+                        if let documentPointer {
+                            subtitle_bridge_free_string(documentPointer)
+                        }
+                        if let errorPointer {
+                            subtitle_bridge_free_string(errorPointer)
+                        }
                     }
-                    if let errorPointer {
-                        subtitle_bridge_free_string(errorPointer)
+
+                    let result = subtitle_bridge_copy_ass_document(
+                        mediaURLCString,
+                        headerCString,
+                        Int32(streamIndex),
+                        &documentPointer,
+                        &errorPointer
+                    )
+
+                    guard result == 0, let documentPointer else {
+                        throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕失败。")
                     }
-                }
-
-                let result = subtitle_bridge_copy_ass_document(
-                    mediaURLCString,
-                    headerCString,
-                    Int32(streamIndex),
-                    &documentPointer,
-                    &errorPointer
-                )
-
-                guard result == 0, let documentPointer else {
-                    throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕失败。")
-                }
 
 #if DEBUG
-                print("[EmbeddedSubtitleExtractor] Loaded embedded subtitle track \(streamIndex)")
+                    print("[EmbeddedSubtitleExtractor] Loaded embedded subtitle track \(streamIndex)")
 #endif
-                return .ass(
-                    String(cString: documentPointer),
-                    fileName: "embedded-\(streamIndex).ass"
-                )
+                    return .ass(
+                        String(cString: documentPointer),
+                        fileName: "embedded-\(streamIndex).ass"
+                    )
+                }
+            }
+        }
+    }
+
+    private func prewarmDocuments(for tracks: [SubtitleTrack], mediaURL: URL, headers: [String: String]) {
+        guard !tracks.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            let extractor = EmbeddedSubtitleExtractor()
+            for track in tracks {
+                _ = try? await extractor.loadDocument(for: track.id, from: mediaURL, headers: headers)
             }
         }
     }
@@ -161,6 +182,44 @@ private func withHeaderCString<R>(_ value: String?, _ body: (UnsafePointer<CChar
 private func string(from pointer: UnsafeMutablePointer<CChar>?) -> String? {
     guard let pointer else { return nil }
     return String(cString: pointer)
+}
+
+private actor EmbeddedSubtitleDocumentCache {
+    struct Key: Hashable, Sendable {
+        let mediaURL: String
+        let headerValue: String
+        let trackID: SubtitleTrack.ID
+    }
+
+    private var cachedDocuments: [Key: SubtitleDocument] = [:]
+    private var inFlightLoads: [Key: Task<SubtitleDocument, Error>] = [:]
+
+    func document(
+        for key: Key,
+        loader: @escaping @Sendable () async throws -> SubtitleDocument
+    ) async throws -> SubtitleDocument {
+        if let cachedDocument = cachedDocuments[key] {
+            return cachedDocument
+        }
+        if let inFlightLoad = inFlightLoads[key] {
+            return try await inFlightLoad.value
+        }
+
+        let task = Task {
+            try await loader()
+        }
+        inFlightLoads[key] = task
+
+        do {
+            let document = try await task.value
+            cachedDocuments[key] = document
+            inFlightLoads[key] = nil
+            return document
+        } catch {
+            inFlightLoads[key] = nil
+            throw error
+        }
+    }
 }
 #else
 enum EmbeddedSubtitleExtractorError: LocalizedError {
