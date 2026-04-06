@@ -47,6 +47,7 @@ private struct PlayerContentMainView: View {
     @State private var isCursorHidden = false
     @State private var lastPointerLocation: CGPoint?
     @State private var isSubtitleRendererReady = false
+    @State private var selectedEpisodePageIndex = 0
     @State private var pointerSettleTask: Task<Void, Never>?
     @State private var hideControlsTask: Task<Void, Never>?
     
@@ -123,6 +124,15 @@ private struct PlayerContentMainView: View {
                         viewStore.send(.fileSelectionDismissed)
                     }
                 )
+            }
+            .onAppear {
+                syncEpisodePageSelection(with: viewStore)
+            }
+            .onChange(of: viewStore.currentIndex) { _, _ in
+                syncEpisodePageSelection(with: viewStore)
+            }
+            .onChange(of: viewStore.playlist.count) { _, _ in
+                syncEpisodePageSelection(with: viewStore)
             }
         }
         .background(Color.platformBackground.ignoresSafeArea())
@@ -422,23 +432,36 @@ private struct PlayerContentMainView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isSpeedPopoverPresented, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                    Button {
-                        playerController.setPlaybackRate(rate)
-                        isSpeedPopoverPresented = false
-                    } label: {
-                        if abs(playerController.playbackRate - rate) < 0.001 {
-                            Label(playbackRateTitle(rate), systemImage: "checkmark")
-                        } else {
-                            Text(playbackRateTitle(rate))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                            Button {
+                                playerController.setPlaybackRate(rate)
+                                isSpeedPopoverPresented = false
+                            } label: {
+                                if abs(playerController.playbackRate - rate) < 0.001 {
+                                    Label(playbackRateTitle(rate), systemImage: "checkmark")
+                                } else {
+                                    Text(playbackRateTitle(rate))
+                                }
+                            }
+                            .id(rate)
+                            .buttonStyle(.plain)
                         }
                     }
-                    .buttonStyle(.plain)
+                }
+                .padding(12)
+                .frame(minWidth: 120, maxHeight: 220, alignment: .leading)
+                .onAppear {
+                    let selectedRate = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                        .min(by: { abs(playerController.playbackRate - $0) < abs(playerController.playbackRate - $1) })
+                    guard let selectedRate else { return }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(selectedRate, anchor: .center)
+                    }
                 }
             }
-            .padding(12)
-            .frame(minWidth: 120, alignment: .leading)
         }
     }
 
@@ -455,25 +478,39 @@ private struct PlayerContentMainView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isEpisodePopoverPresented, arrowEdge: .bottom) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(viewStore.playlist) { item in
-                        Button {
-                            viewStore.send(.playItem(item.id))
-                            isEpisodePopoverPresented = false
-                        } label: {
-                            selectionRowLabel(
-                                title: currentTitle(for: item.episode),
-                                subtitle: item.file.name ?? "未知文件",
-                                isSelected: viewStore.currentItem?.id == item.id
-                            )
+            VStack(alignment: .leading, spacing: 12) {
+                episodePagePicker(viewStore: viewStore)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 6) {
+                            ForEach(displayedEpisodeItems(viewStore: viewStore)) { item in
+                                Button {
+                                    viewStore.send(.playItem(item.id))
+                                    isEpisodePopoverPresented = false
+                                } label: {
+                                    selectionRowLabel(
+                                        title: currentTitle(for: item.episode),
+                                        subtitle: item.file.name ?? "未知文件",
+                                        isSelected: viewStore.currentItem?.id == item.id
+                                    )
+                                }
+                                .id(item.id)
+                                .buttonStyle(.plain)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                    }
+                    .frame(height: 320)
+                    .onAppear {
+                        scrollEpisodeSelectionIntoView(viewStore: viewStore, proxy: proxy)
+                    }
+                    .onChange(of: selectedEpisodePageIndex) { _, _ in
+                        scrollEpisodeSelectionIntoView(viewStore: viewStore, proxy: proxy)
                     }
                 }
-                .padding(12)
             }
-            .frame(width: 280, height: min(CGFloat(max(viewStore.playlist.count, 1)) * 54, 320))
+            .padding(.vertical, 12)
+            .frame(width: 300)
         }
     }
 
@@ -482,47 +519,60 @@ private struct PlayerContentMainView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("选集")
                 .font(.headline)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(viewStore.playlist) { item in
-                        Button {
-                            viewStore.send(.playItem(item.id))
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(currentTitle(for: item.episode))
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(2)
-                                Text(item.file.name ?? "未知文件")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+            episodePagePicker(viewStore: viewStore)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(displayedEpisodeItems(viewStore: viewStore)) { item in
+                            Button {
+                                viewStore.send(.playItem(item.id))
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(currentTitle(for: item.episode))
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(2)
+                                    Text(item.file.name ?? "未知文件")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(
+                                            viewStore.currentItem?.id == item.id
+                                            ? Color.accentColor.opacity(0.18)
+                                            : Color.white.opacity(0.06)
+                                        )
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(
+                                            viewStore.currentItem?.id == item.id
+                                            ? Color.accentColor.opacity(0.6)
+                                            : Color.white.opacity(0.08),
+                                            lineWidth: 1
+                                        )
+                                )
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(
-                                        viewStore.currentItem?.id == item.id
-                                        ? Color.accentColor.opacity(0.18)
-                                        : Color.white.opacity(0.06)
-                                    )
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(
-                                        viewStore.currentItem?.id == item.id
-                                        ? Color.accentColor.opacity(0.6)
-                                        : Color.white.opacity(0.08),
-                                        lineWidth: 1
-                                    )
-                            )
+                            .id(item.id)
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(14)
                 }
-                .padding(14)
+                .onAppear {
+                    scrollEpisodeSelectionIntoView(viewStore: viewStore, proxy: proxy)
+                }
+                .onChange(of: selectedEpisodePageIndex) { _, _ in
+                    scrollEpisodeSelectionIntoView(viewStore: viewStore, proxy: proxy)
+                }
+                .onChange(of: viewStore.currentItem?.id) { _, _ in
+                    scrollEpisodeSelectionIntoView(viewStore: viewStore, proxy: proxy)
+                }
             }
         }
         .padding(16)
@@ -535,6 +585,79 @@ private struct PlayerContentMainView: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private func episodePagePicker(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        let pages = episodePages(itemCount: viewStore.playlist.count)
+        if pages.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(pages) { page in
+                        Button {
+                            selectedEpisodePageIndex = page.index
+                        } label: {
+                            Text(page.title)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(
+                                            selectedEpisodePageIndex == page.index
+                                            ? Color.accentColor.opacity(0.24)
+                                            : Color.white.opacity(0.08)
+                                        )
+                                )
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(
+                                            selectedEpisodePageIndex == page.index
+                                            ? Color.accentColor.opacity(0.7)
+                                            : Color.white.opacity(0.08),
+                                            lineWidth: 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func displayedEpisodeItems(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) -> [PlayerPresenter.State.PlaylistItem] {
+        let pages = episodePages(itemCount: viewStore.playlist.count)
+        guard let page = pages.first(where: { $0.index == selectedEpisodePageIndex }) else {
+            return Array(viewStore.playlist)
+        }
+        return Array(viewStore.playlist[page.range])
+    }
+
+    private func syncEpisodePageSelection(
+        with viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        let pages = episodePages(itemCount: viewStore.playlist.count)
+        guard !pages.isEmpty else {
+            selectedEpisodePageIndex = 0
+            return
+        }
+        selectedEpisodePageIndex = min(viewStore.currentIndex / 25, pages.count - 1)
+    }
+
+    private func scrollEpisodeSelectionIntoView(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+        proxy: ScrollViewProxy
+    ) {
+        guard let currentItemID = viewStore.currentItem?.id,
+              displayedEpisodeItems(viewStore: viewStore).contains(where: { $0.id == currentItemID }) else {
+            return
+        }
+        DispatchQueue.main.async {
+            proxy.scrollTo(currentItemID, anchor: .center)
+        }
     }
 
     @ViewBuilder
@@ -553,26 +676,37 @@ private struct PlayerContentMainView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isAudioPopoverPresented, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 6) {
-                Button(action: {
-                    viewStore.send(.audioTrackSelected(nil))
-                    isAudioPopoverPresented = false
-                }) {
-                    selectionRowLabel(title: "自动选择", subtitle: nil, isSelected: viewStore.selectedAudioTrackID == nil)
-                }
-                .buttonStyle(.plain)
-                ForEach(viewStore.availableAudioTracks) { track in
-                    Button {
-                        viewStore.send(.audioTrackSelected(track.id))
-                        isAudioPopoverPresented = false
-                    } label: {
-                        selectionRowLabel(title: track.displayName, subtitle: track.language, isSelected: viewStore.selectedAudioTrackID == track.id)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button(action: {
+                            viewStore.send(.audioTrackSelected(nil))
+                            isAudioPopoverPresented = false
+                        }) {
+                            selectionRowLabel(title: "自动选择", subtitle: nil, isSelected: viewStore.selectedAudioTrackID == nil)
+                        }
+                        .id("audio-auto")
+                        .buttonStyle(.plain)
+                        ForEach(viewStore.availableAudioTracks) { track in
+                            Button {
+                                viewStore.send(.audioTrackSelected(track.id))
+                                isAudioPopoverPresented = false
+                            } label: {
+                                selectionRowLabel(title: track.displayName, subtitle: track.language, isSelected: viewStore.selectedAudioTrackID == track.id)
+                            }
+                            .id(track.id)
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
+                }
+                .padding(12)
+                .frame(minWidth: 180, maxHeight: 260, alignment: .leading)
+                .onAppear {
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(viewStore.selectedAudioTrackID ?? "audio-auto", anchor: .center)
+                    }
                 }
             }
-            .padding(12)
-            .frame(minWidth: 180, alignment: .leading)
         }
     }
 
@@ -593,79 +727,92 @@ private struct PlayerContentMainView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isSubtitlePopoverPresented, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 8) {
-                Button(action: {
-                    viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
-                }) {
-                    selectionRowLabel(
-                        title: viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕",
-                        subtitle: nil,
-                        isSelected: false
-                    )
-                }
-                .buttonStyle(.plain)
-                Button(action: {
-                    isImportingLocalSubtitle = true
-                    isSubtitlePopoverPresented = false
-                }) {
-                    selectionRowLabel(title: "导入本地字幕…", subtitle: nil, isSelected: false)
-                }
-                .buttonStyle(.plain)
-
-                if !viewStore.areSubtitlesSuppressed,
-                   (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
-                    Divider()
-                }
-                if viewStore.availableSubtitles.isEmpty,
-                   viewStore.availableEmbeddedSubtitles.isEmpty {
-                    Text("暂无字幕")
-                        .foregroundStyle(.secondary)
-                } else if !viewStore.areSubtitlesSuppressed {
-                    if !viewStore.availableSubtitles.isEmpty {
-                        if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                            Text("外挂字幕")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button(action: {
+                            viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
+                        }) {
+                            selectionRowLabel(
+                                title: viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕",
+                                subtitle: nil,
+                                isSelected: false
+                            )
                         }
-                        ForEach(viewStore.availableSubtitles) { subtitle in
-                            Button {
-                                viewStore.send(.subtitleSelected(subtitle))
-                                isSubtitlePopoverPresented = false
-                            } label: {
-                                selectionRowLabel(
-                                    title: externalSubtitleDisplayTitle(subtitle),
-                                    subtitle: nil,
-                                    isSelected: viewStore.selectedSubtitle?.id == subtitle.id
-                                )
+                        .buttonStyle(.plain)
+                        Button(action: {
+                            isImportingLocalSubtitle = true
+                            isSubtitlePopoverPresented = false
+                        }) {
+                            selectionRowLabel(title: "导入本地字幕…", subtitle: nil, isSelected: false)
+                        }
+
+                        if !viewStore.areSubtitlesSuppressed,
+                           (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
+                            Divider()
+                        }
+                        if viewStore.availableSubtitles.isEmpty,
+                           viewStore.availableEmbeddedSubtitles.isEmpty {
+                            Text("暂无字幕")
+                                .foregroundStyle(.secondary)
+                        } else if !viewStore.areSubtitlesSuppressed {
+                            if !viewStore.availableSubtitles.isEmpty {
+                                if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                                    Text("外挂字幕")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(viewStore.availableSubtitles) { subtitle in
+                                    Button {
+                                        viewStore.send(.subtitleSelected(subtitle))
+                                        isSubtitlePopoverPresented = false
+                                    } label: {
+                                        selectionRowLabel(
+                                            title: externalSubtitleDisplayTitle(subtitle),
+                                            subtitle: nil,
+                                            isSelected: viewStore.selectedSubtitle?.id == subtitle.id
+                                        )
+                                    }
+                                    .id("subtitle-external-\(subtitle.id)")
+                                    .buttonStyle(.plain)
+                                }
                             }
-                            .buttonStyle(.plain)
+                            if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                                if !viewStore.availableSubtitles.isEmpty {
+                                    Divider()
+                                    Text("内嵌字幕")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
+                                    Button {
+                                        viewStore.send(.embeddedSubtitleSelected(subtitle.id))
+                                        isSubtitlePopoverPresented = false
+                                    } label: {
+                                        selectionRowLabel(
+                                            title: subtitle.displayName,
+                                            subtitle: subtitle.language,
+                                            isSelected: viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.selectedSubtitle == nil
+                                        )
+                                    }
+                                    .id("subtitle-embedded-\(subtitle.id)")
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                     }
-                    if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                        if !viewStore.availableSubtitles.isEmpty {
-                            Divider()
-                            Text("内嵌字幕")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
-                            Button {
-                                viewStore.send(.embeddedSubtitleSelected(subtitle.id))
-                                isSubtitlePopoverPresented = false
-                            } label: {
-                                selectionRowLabel(
-                                    title: subtitle.displayName,
-                                    subtitle: subtitle.language,
-                                    isSelected: viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.selectedSubtitle == nil
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
+                }
+                .padding(12)
+                .frame(minWidth: 240, maxHeight: 320, alignment: .leading)
+                .onAppear {
+                    let targetID = viewStore.selectedSubtitle.map { "subtitle-external-\($0.id)" }
+                        ?? viewStore.selectedEmbeddedSubtitleTrackID.map { "subtitle-embedded-\($0)" }
+                    guard let targetID else { return }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(targetID, anchor: .center)
                     }
                 }
             }
-            .padding(12)
-            .frame(minWidth: 220, alignment: .leading)
         }
         .fileImporter(
             isPresented: $isImportingLocalSubtitle,
@@ -982,6 +1129,28 @@ private struct PlayerFileSelectionView: View {
                 .padding(.vertical, 8)
             }
         }
+    }
+}
+
+private struct EpisodePage: Identifiable {
+    let index: Int
+    let range: Range<Int>
+    let title: String
+
+    var id: Int { index }
+}
+
+private func episodePages(itemCount: Int) -> [EpisodePage] {
+    guard itemCount > 0 else { return [] }
+    let pageSize = 25
+    let starts = stride(from: 0, to: itemCount, by: pageSize)
+    return starts.enumerated().map { pageIndex, start in
+        let end = min(start + pageSize, itemCount)
+        return EpisodePage(
+            index: pageIndex,
+            range: start..<end,
+            title: "\(start + 1)-\(end)"
+        )
     }
 }
 
