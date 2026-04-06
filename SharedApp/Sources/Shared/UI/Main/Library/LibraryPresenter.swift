@@ -571,6 +571,7 @@ struct RemoteMediaLibraryClient {
     var fetchBangumiList: @Sendable (_ baseURL: URL, _ token: String?, _ sort: LibraryPresenter.SortOption) async throws -> [Components.Schemas.LibraryBangumiSummary]
     var fetchBangumiDetail: @Sendable (_ baseURL: URL, _ token: String?, _ animeId: Int) async throws -> Components.Schemas.LibraryBangumiDetailsResponse
     var makeStreamContext: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) throws -> StreamContext
+    var fetchDanmakuXML: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> String
     var fetchSubtitleInfo: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> [Subtitle]
     var fetchSubtitleFile: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String, _ fileName: String) async throws -> String
 }
@@ -639,6 +640,17 @@ extension RemoteMediaLibraryClient: DependencyKey {
                 }
                 let url = buildOperationURL(baseURL: baseURL, path: path, queryItems: queryItems)
                 return StreamContext(url: url, headers: headers)
+            },
+            fetchDanmakuXML: { baseURL, token, fileID in
+                let api = try makeClient(baseURL: baseURL, token: token)
+                let output = try await api.getCommentById(.init(path: .init(id: fileID)))
+                switch output {
+                case let .ok(ok):
+                    let body = try ok.body.xml
+                    return try await String(collecting: body, upTo: 8 * 1024 * 1024)
+                case let .undocumented(statusCode, _):
+                    throw APIError.serverError(statusCode: statusCode)
+                }
             },
             fetchSubtitleInfo: { baseURL, token, fileID in
                 do {
@@ -840,6 +852,17 @@ extension RemoteMediaLibraryClient: DependencyKey {
                 )
                 return .init(url: url, headers: ["Accept": "video/*"])
             },
+            fetchDanmakuXML: { _, _, fileID in
+                """
+                <?xml version="1.0"?>
+                <i>
+                  <chatserver>chat.bilibili.com</chatserver>
+                  <chatid>\(fileID)</chatid>
+                  <d p="1.5,1,25,16777215,0,0,0,0">Preview Danmaku</d>
+                  <d p="6.0,5,25,16744192,0,0,0,0">Top Danmaku</d>
+                </i>
+                """
+            },
             fetchSubtitleInfo: { _, _, fileID in
                 [
                     .init(fileName: "Preview-\(fileID).sc.ass", fileSize: 42_000),
@@ -869,6 +892,7 @@ extension RemoteMediaLibraryClient: DependencyKey {
                 )
                 return .init(url: url, headers: ["Accept": "video/*"])
             },
+            fetchDanmakuXML: { _, _, _ in "" },
             fetchSubtitleInfo: { _, _, _ in [] },
             fetchSubtitleFile: { _, _, _, _ in "" }
         )
