@@ -177,7 +177,6 @@ struct PlayerPresenter {
                 }
                 state.areSubtitlesSuppressed = false
                 state.selectedSubtitle = subtitle
-                state.selectedEmbeddedSubtitleStreamIndex = nil
                 state.subtitleError = nil
                 state.activeSubtitle = nil
                 state.isLoadingSelectedSubtitle = true
@@ -216,11 +215,7 @@ struct PlayerPresenter {
 
             case let .embeddedSubtitleTracksChanged(tracks, selectedStreamIndex):
                 state.availableEmbeddedSubtitles = tracks
-                if state.areSubtitlesSuppressed || state.selectedSubtitle != nil {
-                    state.selectedEmbeddedSubtitleStreamIndex = nil
-                } else {
-                    state.selectedEmbeddedSubtitleStreamIndex = selectedStreamIndex
-                }
+                state.selectedEmbeddedSubtitleStreamIndex = selectedStreamIndex
                 return .none
 
             case let .embeddedSubtitleSelected(streamIndex):
@@ -237,7 +232,6 @@ struct PlayerPresenter {
                 
             case .subtitleCleared:
                 state.selectedSubtitle = nil
-                state.selectedEmbeddedSubtitleStreamIndex = nil
                 state.activeSubtitle = nil
                 state.subtitleError = nil
                 state.areSubtitlesSuppressed = true
@@ -248,7 +242,6 @@ struct PlayerPresenter {
                 state.areSubtitlesSuppressed = suppressed
                 if suppressed {
                     state.selectedSubtitle = nil
-                    state.selectedEmbeddedSubtitleStreamIndex = nil
                     state.activeSubtitle = nil
                     state.isLoadingSelectedSubtitle = false
                 }
