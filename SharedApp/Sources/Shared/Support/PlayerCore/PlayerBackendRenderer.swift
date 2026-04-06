@@ -5,15 +5,18 @@ struct PlayerBackendEventSink {
     var onStateChanged: ((PlayerPlaybackState) -> Void)?
     var onFinish: ((Error?) -> Void)?
     var onPlaybackTimeChanged: ((TimeInterval) -> Void)?
+    var onTracksChanged: (([PlayerTrack]) -> Void)?
 
     init(
         onStateChanged: ((PlayerPlaybackState) -> Void)? = nil,
         onFinish: ((Error?) -> Void)? = nil,
-        onPlaybackTimeChanged: ((TimeInterval) -> Void)? = nil
+        onPlaybackTimeChanged: ((TimeInterval) -> Void)? = nil,
+        onTracksChanged: (([PlayerTrack]) -> Void)? = nil
     ) {
         self.onStateChanged = onStateChanged
         self.onFinish = onFinish
         self.onPlaybackTimeChanged = onPlaybackTimeChanged
+        self.onTracksChanged = onTracksChanged
     }
 }
 

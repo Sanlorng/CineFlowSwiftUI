@@ -8,6 +8,7 @@ struct PlayerView: View {
     private var onStateChangedHandler: ((PlayerPlaybackState) -> Void)?
     private var onFinishHandler: ((Error?) -> Void)?
     private var onPlaybackTimeChangedHandler: ((TimeInterval) -> Void)?
+    private var onTracksChangedHandler: (([PlayerTrack]) -> Void)?
 
     init(
         backend: PlayerBackendKind = .defaultDistributable,
@@ -28,7 +29,8 @@ struct PlayerView: View {
                 eventSink: .init(
                     onStateChanged: onStateChangedHandler,
                     onFinish: onFinishHandler,
-                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler
+                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler,
+                    onTracksChanged: onTracksChangedHandler
                 )
             )
         case .mpv:
@@ -38,7 +40,8 @@ struct PlayerView: View {
                 eventSink: .init(
                     onStateChanged: onStateChangedHandler,
                     onFinish: onFinishHandler,
-                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler
+                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler,
+                    onTracksChanged: onTracksChangedHandler
                 )
             )
         }
@@ -61,6 +64,12 @@ extension PlayerView {
     func onPlaybackTimeChanged(_ handler: @escaping (TimeInterval) -> Void) -> PlayerView {
         var copy = self
         copy.onPlaybackTimeChangedHandler = handler
+        return copy
+    }
+
+    func onTracksChanged(_ handler: @escaping ([PlayerTrack]) -> Void) -> PlayerView {
+        var copy = self
+        copy.onTracksChangedHandler = handler
         return copy
     }
 }

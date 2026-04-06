@@ -199,6 +199,7 @@ final class MPVContainerViewController: PlatformViewController {
 
     func apply(options: PlayerLoadOptions) {
         currentOptions = options
+        applyAudioTrackSelection(options.selectedAudioTrackID)
         if options.allowAutoPlay {
             setPause(false)
         }
@@ -271,6 +272,9 @@ final class MPVContainerViewController: PlatformViewController {
         mpv_observe_property(handle, 0, MPVProperty.pause, MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 0, MPVProperty.pausedForCache, MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 0, MPVProperty.timePos, MPV_FORMAT_DOUBLE)
+        mpv_observe_property(handle, 0, MPVProperty.aid, MPV_FORMAT_INT64)
+        mpv_observe_property(handle, 0, MPVProperty.sid, MPV_FORMAT_INT64)
+        mpv_observe_property(handle, 0, MPVProperty.trackList, MPV_FORMAT_NODE)
     }
 
     private func load(source: PlayerSource, options: PlayerLoadOptions) {
@@ -278,6 +282,7 @@ final class MPVContainerViewController: PlatformViewController {
 
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "videotoolbox" : "no")
         applyHTTPHeaders(source.headers, to: mpv)
+        applyAudioTrackSelection(options.selectedAudioTrackID)
         stateChanged(.preparing)
 
         var args = [source.url.absoluteString, "replace"]
@@ -321,6 +326,15 @@ final class MPVContainerViewController: PlatformViewController {
         syncPlaybackState()
     }
 
+    private func applyAudioTrackSelection(_ trackID: String?) {
+        guard let mpv else { return }
+        if let trackID, !trackID.isEmpty {
+            _ = mpv_set_property_string(mpv, MPVProperty.aid, trackID)
+        } else {
+            _ = mpv_set_property_string(mpv, MPVProperty.aid, "auto")
+        }
+    }
+
     private func command(_ command: String, args: [String] = []) {
         guard let mpv else { return }
         var cargs: [UnsafePointer<CChar>?] = ([command] + args).map { UnsafePointer(strdup($0)) } + [nil]
@@ -346,6 +360,7 @@ final class MPVContainerViewController: PlatformViewController {
                     }
                 case MPV_EVENT_FILE_LOADED:
                     DispatchQueue.main.async {
+                        self.publishTracksSnapshot()
                         self.syncPlaybackState()
                     }
                 case MPV_EVENT_END_FILE:
@@ -392,9 +407,24 @@ final class MPVContainerViewController: PlatformViewController {
             DispatchQueue.main.async {
                 self.eventSink.onPlaybackTimeChanged?(time)
             }
+        case MPVProperty.trackList, MPVProperty.aid, MPVProperty.sid:
+            DispatchQueue.main.async {
+                self.publishTracksSnapshot()
+            }
         default:
             break
         }
+    }
+
+    private func publishTracksSnapshot() {
+        guard let mpv else { return }
+        var node = mpv_node()
+        let status = mpv_get_property(mpv, MPVProperty.trackList, MPV_FORMAT_NODE, &node)
+        guard status >= 0 else { return }
+        defer {
+            mpv_free_node_contents(&node)
+        }
+        eventSink.onTracksChanged?(Self.parseTrackList(from: node))
     }
 
     private func syncPlaybackState() {
@@ -445,9 +475,118 @@ private enum MPVProperty {
     static let pause = "pause"
     static let pausedForCache = "paused-for-cache"
     static let timePos = "time-pos"
+    static let aid = "aid"
+    static let sid = "sid"
+    static let trackList = "track-list"
 }
 
 private final class MPVMetalLayer: CAMetalLayer {}
+
+private extension MPVContainerViewController {
+    static func parseTrackList(from node: mpv_node) -> [PlayerTrack] {
+        guard node.format == MPV_FORMAT_NODE_ARRAY || node.format == MPV_FORMAT_NODE_MAP,
+              let list = node.u.list else {
+            return []
+        }
+
+        let entries = UnsafeBufferPointer(start: list.pointee.values, count: Int(list.pointee.num))
+        return entries.compactMap(parseTrackNode(_:))
+    }
+
+    static func parseTrackNode(_ node: mpv_node) -> PlayerTrack? {
+        guard node.format == MPV_FORMAT_NODE_MAP,
+              let map = node.u.list else {
+            return nil
+        }
+
+        guard let type = stringValue(in: map, key: "type"),
+              let kind = PlayerTrack.Kind(mpvtTrackType: type),
+              let id = int64Value(in: map, key: "id") else {
+            return nil
+        }
+
+        let title = stringValue(in: map, key: "title")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let language = stringValue(in: map, key: "lang")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let codec = stringValue(in: map, key: "codec")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selected = boolValue(in: map, key: "selected") ?? false
+        let external = boolValue(in: map, key: "external") ?? false
+
+        let displayName: String
+        if let title, !title.isEmpty {
+            displayName = title
+        } else if let language, !language.isEmpty, let codec, !codec.isEmpty {
+            displayName = "\(language) [\(codec)]"
+        } else if let language, !language.isEmpty {
+            displayName = language
+        } else if let codec, !codec.isEmpty {
+            displayName = "\(kind.rawValue) [\(codec)]"
+        } else {
+            displayName = "\(kind.rawValue.capitalized) #\(id)"
+        }
+
+        return PlayerTrack(
+            id: String(id),
+            kind: kind,
+            displayName: displayName,
+            language: language,
+            codec: codec,
+            isSelected: selected,
+            isExternal: external
+        )
+    }
+
+    static func stringValue(in map: UnsafePointer<mpv_node_list>, key: String) -> String? {
+        guard let node = nodeValue(in: map, key: key), node.format == MPV_FORMAT_STRING, let value = node.u.string else {
+            return nil
+        }
+        return String(cString: value)
+    }
+
+    static func int64Value(in map: UnsafePointer<mpv_node_list>, key: String) -> Int64? {
+        guard let node = nodeValue(in: map, key: key), node.format == MPV_FORMAT_INT64 else {
+            return nil
+        }
+        return node.u.int64
+    }
+
+    static func boolValue(in map: UnsafePointer<mpv_node_list>, key: String) -> Bool? {
+        guard let node = nodeValue(in: map, key: key), node.format == MPV_FORMAT_FLAG else {
+            return nil
+        }
+        return node.u.flag != 0
+    }
+
+    static func nodeValue(in map: UnsafePointer<mpv_node_list>, key: String) -> mpv_node? {
+        guard let keys = map.pointee.keys,
+              let values = map.pointee.values else {
+            return nil
+        }
+
+        let count = Int(map.pointee.num)
+        for index in 0..<count {
+            let currentKey = String(cString: keys[index]!)
+            if currentKey == key {
+                return values[index]
+            }
+        }
+        return nil
+    }
+}
+
+private extension PlayerTrack.Kind {
+    init?(mpvtTrackType: String) {
+        switch mpvtTrackType {
+        case "video":
+            self = .video
+        case "audio":
+            self = .audio
+        case "sub":
+            self = .subtitle
+        default:
+            return nil
+        }
+    }
+}
 
 private extension MPVContainerViewController {
     var currentScreenScale: CGFloat {

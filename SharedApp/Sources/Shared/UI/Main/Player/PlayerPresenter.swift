@@ -58,6 +58,8 @@ struct PlayerPresenter {
         var isLoadingEmbeddedSubtitles = false
         var availableSubtitles: [RemoteMediaLibraryClient.Subtitle] = []
         var availableEmbeddedSubtitles: [SubtitleTrack] = []
+        var availableAudioTracks: [PlayerTrack] = []
+        var selectedAudioTrackID: PlayerTrack.ID?
         var selectedSubtitle: RemoteMediaLibraryClient.Subtitle?
         var selectedEmbeddedSubtitleTrackID: SubtitleTrack.ID?
         var subtitleError: String?
@@ -100,6 +102,8 @@ struct PlayerPresenter {
         case playNext
         case playPrevious
         case updateCurrentIndex(Int)
+        case playerTracksChanged([PlayerTrack])
+        case audioTrackSelected(PlayerTrack.ID?)
         case subtitleListResponse(String, TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
         case embeddedSubtitleTracksResponse(String, TaskResult<[SubtitleTrack]>)
         case subtitleSelected(RemoteMediaLibraryClient.Subtitle)
@@ -153,6 +157,21 @@ struct PlayerPresenter {
                 state.currentIndex = index
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
+
+            case let .playerTracksChanged(tracks):
+                let audioTracks = tracks.filter { $0.kind == .audio }
+                state.availableAudioTracks = audioTracks
+                if let selectedAudioTrack = audioTracks.first(where: \.isSelected) {
+                    state.selectedAudioTrackID = selectedAudioTrack.id
+                } else if let selectedAudioTrackID = state.selectedAudioTrackID,
+                          audioTracks.contains(where: { $0.id == selectedAudioTrackID }) == false {
+                    state.selectedAudioTrackID = nil
+                }
+                return .none
+
+            case let .audioTrackSelected(trackID):
+                state.selectedAudioTrackID = trackID
+                return .none
                 
             case let .subtitleListResponse(fileID, .success(subtitles)):
                 guard state.currentFileID == fileID else { return .none }
@@ -384,6 +403,8 @@ struct PlayerPresenter {
               !fileID.isEmpty else {
             state.availableSubtitles = []
             state.availableEmbeddedSubtitles = []
+            state.availableAudioTracks = []
+            state.selectedAudioTrackID = nil
             state.selectedSubtitle = nil
             state.selectedEmbeddedSubtitleTrackID = nil
             state.activeSubtitle = nil
@@ -398,6 +419,8 @@ struct PlayerPresenter {
         state.isLoadingEmbeddedSubtitles = true
         state.availableSubtitles = []
         state.availableEmbeddedSubtitles = []
+        state.availableAudioTracks = []
+        state.selectedAudioTrackID = nil
         state.selectedSubtitle = nil
         state.selectedEmbeddedSubtitleTrackID = nil
         state.activeSubtitle = nil

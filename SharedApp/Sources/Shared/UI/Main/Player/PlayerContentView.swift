@@ -39,7 +39,8 @@ private struct PlayerContentMainView: View {
             VStack(spacing: 16) {
                 if let stream = viewStore.currentItem?.stream {
                     let options = makeOptions(
-                        for: stream
+                        for: stream,
+                        selectedAudioTrackID: viewStore.selectedAudioTrackID
                     )
                     let customSubtitleDocument = makeCustomSubtitleDocument(
                         from: viewStore.activeSubtitle,
@@ -72,6 +73,9 @@ private struct PlayerContentMainView: View {
                             .onPlaybackTimeChanged { time in
                                 playbackTime = time
                             }
+                            .onTracksChanged { tracks in
+                                viewStore.send(.playerTracksChanged(tracks))
+                            }
                         SubtitleRendererOverlay(
                             document: customSubtitleDocument,
                             playbackTime: playbackTime
@@ -99,6 +103,7 @@ private struct PlayerContentMainView: View {
                 
                 metadataSection(viewStore: viewStore)
                 controlsSection(viewStore: viewStore)
+                audioSection(viewStore: viewStore)
                 subtitleSection(viewStore: viewStore)
                 playlistSection(viewStore: viewStore)
                 
@@ -299,6 +304,43 @@ private struct PlayerContentMainView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func audioSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        if !viewStore.availableAudioTracks.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("音轨")
+                        .font(.headline)
+                    Spacer()
+                    Menu {
+                        Button("自动选择") {
+                            viewStore.send(.audioTrackSelected(nil))
+                        }
+                        ForEach(viewStore.availableAudioTracks) { track in
+                            Button {
+                                viewStore.send(.audioTrackSelected(track.id))
+                            } label: {
+                                if viewStore.selectedAudioTrackID == track.id {
+                                    Label(track.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(track.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(
+                            selectedAudioTrackTitle(
+                                tracks: viewStore.availableAudioTracks,
+                                selectedAudioTrackID: viewStore.selectedAudioTrackID
+                            ),
+                            systemImage: "waveform"
+                        )
+                    }
+                }
+            }
+        }
+    }
     
     @ViewBuilder
     private func playlistSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
@@ -418,13 +460,29 @@ private struct PlayerFileSelectionView: View {
 }
 
 private func makeOptions(
-    for stream: RemoteMediaLibraryClient.StreamContext
+    for stream: RemoteMediaLibraryClient.StreamContext,
+    selectedAudioTrackID: String?
 ) -> PlayerLoadOptions {
     PlayerLoadOptions(
         headers: stream.headers,
         enableHardwareDecoding: true,
-        allowAutoPlay: true
+        allowAutoPlay: true,
+        selectedAudioTrackID: selectedAudioTrackID
     )
+}
+
+private func selectedAudioTrackTitle(
+    tracks: [PlayerTrack],
+    selectedAudioTrackID: PlayerTrack.ID?
+) -> String {
+    if let selectedAudioTrackID,
+       let track = tracks.first(where: { $0.id == selectedAudioTrackID }) {
+        return track.displayName
+    }
+    if let autoSelectedTrack = tracks.first(where: \.isSelected) {
+        return autoSelectedTrack.displayName
+    }
+    return "自动音轨"
 }
 
 private func subtitleMenuTitle(
