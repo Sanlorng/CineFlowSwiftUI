@@ -1012,9 +1012,28 @@ private func externalSubtitleDisplayTitle(_ subtitle: RemoteMediaLibraryClient.S
 }
 
 private func externalSubtitleDisplayTitle(fileName: String) -> String? {
-    let displayName = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
-    guard !displayName.isEmpty else { return nil }
-    return displayName
+    let trimmedFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedFileName.isEmpty else { return nil }
+
+    let withoutFragment = trimmedFileName
+        .split(separator: "#", maxSplits: 1)
+        .first
+        .map(String.init) ?? trimmedFileName
+    let withoutQuery = withoutFragment
+        .split(separator: "?", maxSplits: 1)
+        .first
+        .map(String.init) ?? withoutFragment
+    let normalizedPath = withoutQuery.replacingOccurrences(of: "\\", with: "/")
+    let lastPathComponent = normalizedPath
+        .split(separator: "/", omittingEmptySubsequences: true)
+        .last
+        .map(String.init) ?? normalizedPath
+    let decodedComponent = lastPathComponent.removingPercentEncoding ?? lastPathComponent
+    let cleanedComponent = decodedComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !cleanedComponent.isEmpty else { return nil }
+
+    let displayName = (cleanedComponent as NSString).deletingPathExtension
+    return displayName.isEmpty ? cleanedComponent : displayName
 }
 
 private let supportedSubtitleContentTypes: [UTType] = {
