@@ -570,6 +570,7 @@ struct RemoteMediaLibraryClient {
     var fetchWelcome: @Sendable (_ baseURL: URL, _ token: String?) async throws -> Welcome
     var fetchBangumiList: @Sendable (_ baseURL: URL, _ token: String?, _ sort: LibraryPresenter.SortOption) async throws -> [Components.Schemas.LibraryBangumiSummary]
     var fetchBangumiDetail: @Sendable (_ baseURL: URL, _ token: String?, _ animeId: Int) async throws -> Components.Schemas.LibraryBangumiDetailsResponse
+    var makeDirectStreamContext: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) -> StreamContext
     var makeStreamContext: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> StreamContext
     var fetchDanmakuXML: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> String
     var fetchSubtitleInfo: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> [Subtitle]
@@ -629,6 +630,9 @@ extension RemoteMediaLibraryClient: DependencyKey {
                     try await api.getBangumiDetails(.init(path: .init(animeId: animeId)))
                 }
             },
+            makeDirectStreamContext: { baseURL, token, fileID in
+                buildDirectStreamContext(baseURL: baseURL, token: token, fileID: fileID)
+            },
             makeStreamContext: { baseURL, token, fileID in
                 do {
                     return try await fetchWebPlayerStreamContext(
@@ -640,16 +644,7 @@ extension RemoteMediaLibraryClient: DependencyKey {
 #if DEBUG
                     print("[Network][RemoteMediaLibrary] web player stream fallback reason: \(error)")
 #endif
-                    let path = "/api/v1/stream/id/\(fileID)"
-                    var queryItems: [URLQueryItem] = []
-                    var headers: [String: String] = [:]
-                    headers["Accept"] = "video/*"
-                    if let token, !token.isEmpty {
-                        headers["Authorization"] = "Bearer \(token)"
-                        queryItems.append(.init(name: "token", value: token))
-                    }
-                    let url = buildOperationURL(baseURL: baseURL, path: path, queryItems: queryItems)
-                    return StreamContext(url: url, headers: headers)
+                    return buildDirectStreamContext(baseURL: baseURL, token: token, fileID: fileID)
                 }
             },
             fetchDanmakuXML: { baseURL, token, fileID in
@@ -854,6 +849,15 @@ extension RemoteMediaLibraryClient: DependencyKey {
                     ]
                 )
             },
+            makeDirectStreamContext: { baseURL, token, fileID in
+                let path = "/preview/\(fileID)"
+                let url = buildOperationURL(
+                    baseURL: baseURL,
+                    path: path,
+                    queryItems: token?.isEmpty == false ? [.init(name: "token", value: token)] : []
+                )
+                return .init(url: url, headers: ["Accept": "video/*"])
+            },
             makeStreamContext: { baseURL, token, fileID in
                 let path = "/preview/\(fileID)"
                 let url = buildOperationURL(
@@ -894,6 +898,14 @@ extension RemoteMediaLibraryClient: DependencyKey {
             fetchBangumiList: { _, _, _ in [] },
             fetchBangumiDetail: { _, _, _ in
                 Components.Schemas.LibraryBangumiDetailsResponse()
+            },
+            makeDirectStreamContext: { baseURL, _, fileID in
+                let url = buildOperationURL(
+                    baseURL: baseURL,
+                    path: "/api/v1/stream/id/\(fileID)",
+                    queryItems: []
+                )
+                return .init(url: url, headers: ["Accept": "video/*"])
             },
             makeStreamContext: { baseURL, _, fileID in
                 let url = buildOperationURL(
@@ -938,6 +950,23 @@ private func buildOperationURL(
         components.queryItems = (components.queryItems ?? []) + queryItems
     }
     return components.url ?? baseURL.appendingPathComponent(trimmedPath)
+}
+
+private func buildDirectStreamContext(
+    baseURL: URL,
+    token: String?,
+    fileID: String
+) -> RemoteMediaLibraryClient.StreamContext {
+    let path = "/api/v1/stream/id/\(fileID)"
+    var queryItems: [URLQueryItem] = []
+    var headers: [String: String] = [:]
+    headers["Accept"] = "video/*"
+    if let token, !token.isEmpty {
+        headers["Authorization"] = "Bearer \(token)"
+        queryItems.append(.init(name: "token", value: token))
+    }
+    let url = buildOperationURL(baseURL: baseURL, path: path, queryItems: queryItems)
+    return .init(url: url, headers: headers)
 }
 
 private func fetchWebPlayerStreamContext(

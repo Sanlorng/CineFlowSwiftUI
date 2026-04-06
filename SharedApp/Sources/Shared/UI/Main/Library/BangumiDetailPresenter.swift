@@ -207,7 +207,7 @@ struct BangumiDetailPresenter {
                 throw PlaybackPreparationError.missingStream("文件 \(chosenFile.name ?? "未知") 缺少标识符。")
             }
 
-            let stream = try await remoteClient.makeStreamContext(baseURL, token, fileID)
+            let stream = remoteClient.makeDirectStreamContext(baseURL, token, fileID)
             let item = PlayerPresenter.State.PlaylistItem(
                 episode: episode,
                 file: chosenFile,
@@ -223,12 +223,17 @@ struct BangumiDetailPresenter {
             throw PlaybackPreparationError.missingEpisodes
         }
 
-        return PlayerPresenter.State(
+        var prepared = PlayerPresenter.State(
             configuration: configuration,
             playlist: playlistItems,
             currentIndex: currentIndex,
             allEpisodeFiles: episodeFiles
         )
+        if let currentFileID = prepared.currentItem?.file.id, !currentFileID.isEmpty {
+            let preferredStream = try await remoteClient.makeStreamContext(baseURL, token, currentFileID)
+            prepared.playlist[prepared.currentIndex].stream = preferredStream
+        }
+        return prepared
     }
 
     private func bestMatchingFile(

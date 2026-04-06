@@ -132,6 +132,7 @@ struct PlayerPresenter {
         case fileSelected(Components.Schemas.LibraryBangumiMatchedFile)
         case streamContextResolved(Components.Schemas.LibraryBangumiMatchedFile, RemoteMediaLibraryClient.StreamContext)
         case streamContextFailed(String)
+        case preferredStreamResolved(PlayerPresenter.State.PlaylistItem.ID, RemoteMediaLibraryClient.StreamContext)
         case setPlaybackError(String?)
         case delegate(DelegateAction)
     }
@@ -442,6 +443,13 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = false
                 return loadSubtitles(for: &state)
 
+            case let .preferredStreamResolved(itemID, stream):
+                guard let index = state.playlist.firstIndex(where: { $0.id == itemID }) else {
+                    return .none
+                }
+                state.playlist[index].stream = stream
+                return .none
+
             case let .streamContextFailed(message):
                 state.subtitleError = message
                 return .none
@@ -547,7 +555,28 @@ struct PlayerPresenter {
             }
         }
 
-        return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect)
+        let preferredStreamEffect: Effect<Action>
+        if let baseURL = state.configuration.baseURL,
+           let currentItem = state.currentItem,
+           let fileID = currentItem.file.id,
+           !fileID.isEmpty {
+            let token = state.configuration.apiToken
+            let itemID = currentItem.id
+            preferredStreamEffect = .run { [remoteClient] send in
+                do {
+                    let stream = try await remoteClient.makeStreamContext(baseURL, token, fileID)
+                    await send(.preferredStreamResolved(itemID, stream))
+                } catch {
+#if DEBUG
+                    print("[PlayerPresenter] Preferred stream resolution failed for \(fileID): \(error)")
+#endif
+                }
+            }
+        } else {
+            preferredStreamEffect = .none
+        }
+
+        return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect, preferredStreamEffect)
     }
 
     private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {
