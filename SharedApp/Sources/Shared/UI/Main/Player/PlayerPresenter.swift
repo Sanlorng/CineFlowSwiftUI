@@ -48,6 +48,10 @@ struct PlayerPresenter {
             let fileName: String
             let document: SubtitleDocument
         }
+
+        struct LoadedDanmaku: Equatable, Sendable {
+            let payload: DanmakuPayload
+        }
         
         let configuration: LibraryPresenter.State.Configuration
         var playlist: IdentifiedArrayOf<PlaylistItem>
@@ -68,6 +72,9 @@ struct PlayerPresenter {
         var playbackError: String?
         var areSubtitlesSuppressed = false
         var isLoadingSelectedSubtitle = false
+        var isLoadingDanmaku = false
+        var danmakuError: String?
+        var activeDanmaku: LoadedDanmaku?
         
         init(
             configuration: LibraryPresenter.State.Configuration,
@@ -112,6 +119,7 @@ struct PlayerPresenter {
         case localSubtitleLoadFailed(String)
         case embeddedSubtitleSelected(SubtitleTrack.ID)
         case embeddedSubtitleContentResponse(String, SubtitleTrack.ID, TaskResult<State.LoadedSubtitle>)
+        case danmakuResponse(String, TaskResult<State.LoadedDanmaku>)
         case subtitleCleared
         case setSubtitlesSuppressed(Bool)
         case showFilePicker
@@ -342,6 +350,20 @@ struct PlayerPresenter {
                 state.subtitleError = error.localizedDescription
                 state.activeSubtitle = nil
                 return .none
+
+            case let .danmakuResponse(fileID, .success(loadedDanmaku)):
+                guard state.currentFileID == fileID else { return .none }
+                state.isLoadingDanmaku = false
+                state.danmakuError = nil
+                state.activeDanmaku = loadedDanmaku
+                return .none
+
+            case let .danmakuResponse(fileID, .failure(error)):
+                guard state.currentFileID == fileID else { return .none }
+                state.isLoadingDanmaku = false
+                state.danmakuError = error.localizedDescription
+                state.activeDanmaku = nil
+                return .none
                 
             case .subtitleCleared:
                 state.selectedSubtitle = nil
@@ -430,6 +452,9 @@ struct PlayerPresenter {
             state.isLoadingEmbeddedSubtitles = false
             state.areSubtitlesSuppressed = false
             state.isLoadingSelectedSubtitle = false
+            state.isLoadingDanmaku = false
+            state.danmakuError = nil
+            state.activeDanmaku = nil
             return .none
         }
         let stream = currentItem.stream
@@ -446,6 +471,9 @@ struct PlayerPresenter {
         state.subtitleError = nil
         state.areSubtitlesSuppressed = false
         state.isLoadingSelectedSubtitle = false
+        state.isLoadingDanmaku = state.configuration.baseURL != nil
+        state.danmakuError = nil
+        state.activeDanmaku = nil
 
         let subtitleListEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
@@ -462,6 +490,24 @@ struct PlayerPresenter {
             }
         } else {
             subtitleListEffect = .none
+        }
+
+        let danmakuEffect: Effect<Action>
+        if let baseURL = state.configuration.baseURL {
+            let token = state.configuration.apiToken
+            danmakuEffect = .run { [remoteClient] send in
+                await send(
+                    .danmakuResponse(
+                        fileID,
+                        TaskResult {
+                            let xml = try await remoteClient.fetchDanmakuXML(baseURL, token, fileID)
+                            return .init(payload: try BilibiliDanmakuParser.parse(xml: xml))
+                        }
+                    )
+                )
+            }
+        } else {
+            danmakuEffect = .none
         }
 
         let embeddedTracksEffect: Effect<Action>
@@ -482,7 +528,7 @@ struct PlayerPresenter {
             }
         }
 
-        return .merge(subtitleListEffect, embeddedTracksEffect)
+        return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect)
     }
 
     private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {
