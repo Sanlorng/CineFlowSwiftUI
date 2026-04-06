@@ -181,7 +181,7 @@ struct PlayerPresenter {
                    state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
                     state.selectedEmbeddedSubtitleTrackID = nil
                 }
-                return .none
+                return autoSelectSubtitleIfNeeded(for: &state)
 
             case let .audioTrackSelected(trackID):
                 state.selectedAudioTrackID = trackID
@@ -192,14 +192,14 @@ struct PlayerPresenter {
                 state.isLoadingSubtitles = false
                 state.availableSubtitles = subtitles
                 state.subtitleError = nil
-                return .none
+                return autoSelectSubtitleIfNeeded(for: &state)
                 
             case let .subtitleListResponse(fileID, .failure(error)):
                 guard state.currentFileID == fileID else { return .none }
                 state.isLoadingSubtitles = false
                 state.availableSubtitles = []
                 state.subtitleError = error.localizedDescription
-                return .none
+                return autoSelectSubtitleIfNeeded(for: &state)
 
             case let .embeddedSubtitleTracksResponse(fileID, .success(tracks)):
                 guard state.currentFileID == fileID else { return .none }
@@ -214,14 +214,14 @@ struct PlayerPresenter {
                     state.selectedEmbeddedSubtitleTrackID = nil
                 }
                 state.subtitleError = nil
-                return .none
+                return autoSelectSubtitleIfNeeded(for: &state)
 
             case let .embeddedSubtitleTracksResponse(fileID, .failure(error)):
                 guard state.currentFileID == fileID else { return .none }
                 state.isLoadingEmbeddedSubtitles = false
                 state.availableEmbeddedSubtitles = []
                 state.subtitleError = error.localizedDescription
-                return .none
+                return autoSelectSubtitleIfNeeded(for: &state)
                 
             case let .subtitleSelected(subtitle):
                 guard let currentItem = state.currentItem,
@@ -483,6 +483,29 @@ struct PlayerPresenter {
         }
 
         return .merge(subtitleListEffect, embeddedTracksEffect)
+    }
+
+    private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {
+        guard !state.areSubtitlesSuppressed,
+              !state.isLoadingSelectedSubtitle,
+              state.selectedSubtitle == nil,
+              state.selectedEmbeddedSubtitleTrackID == nil,
+              state.activeSubtitle == nil else {
+            return .none
+        }
+
+        if !state.isLoadingSubtitles,
+           let externalSubtitle = state.availableSubtitles.first {
+            return .send(.subtitleSelected(externalSubtitle))
+        }
+
+        if !state.isLoadingSubtitles,
+           !state.isLoadingEmbeddedSubtitles,
+           let embeddedSubtitle = state.availableEmbeddedSubtitles.first {
+            return .send(.embeddedSubtitleSelected(embeddedSubtitle.id))
+        }
+
+        return .none
     }
 }
 
