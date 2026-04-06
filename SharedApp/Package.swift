@@ -19,6 +19,7 @@ let package = Package(
         .library(name: "DependenciesMacro", targets: ["DependenciesMacro"]),
     ],
     dependencies: [
+        .package(path: "../Packages/SubtitleRenderer"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.1"),
         .package(url: "https://github.com/apple/swift-openapi-generator", from: "1.10.3"),
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.11.0"),
@@ -36,6 +37,8 @@ let package = Package(
                 "RemoteMediaLibrary",
                 "DandanApi",
                 "DependenciesMacro",
+                .product(name: "SubtitleRendererCore", package: "SubtitleRenderer"),
+                .product(name: "SubtitleRendererLibass", package: "SubtitleRenderer", condition: .when(platforms: [.macOS])),
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "FSPlayer", package: "fsplayer-spm"),
             ],

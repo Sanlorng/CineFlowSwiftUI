@@ -6,6 +6,7 @@
 !/Packages/SubtitleRenderer
 !/Packages/SubtitleRenderer/**
 /Packages/SubtitleRenderer/.build
+/Packages/SubtitleRenderer/.DS_Store
 /**/xcshareddata/
 /**/Package.resolved
 xcuserdata/
