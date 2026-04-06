@@ -25,9 +25,11 @@ struct PlayerView: View {
             AVFoundationPlayerView(
                 source: source,
                 options: options,
-                onStateChanged: onStateChangedHandler,
-                onFinish: onFinishHandler,
-                onPlaybackTimeChanged: onPlaybackTimeChangedHandler
+                eventSink: .init(
+                    onStateChanged: onStateChangedHandler,
+                    onFinish: onFinishHandler,
+                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler
+                )
             )
         case .mpv:
             UnsupportedPlayerBackendView(

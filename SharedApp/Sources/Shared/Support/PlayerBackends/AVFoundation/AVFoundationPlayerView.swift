@@ -13,18 +13,12 @@ private typealias PlatformViewRepresentable = NSViewRepresentable
 struct AVFoundationPlayerView {
     let source: PlayerSource
     let options: PlayerLoadOptions
-    let onStateChanged: ((PlayerPlaybackState) -> Void)?
-    let onFinish: ((Error?) -> Void)?
-    let onPlaybackTimeChanged: ((TimeInterval) -> Void)?
+    let eventSink: PlayerBackendEventSink
 }
 
 extension AVFoundationPlayerView: PlatformViewRepresentable {
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            onStateChanged: onStateChanged,
-            onFinish: onFinish,
-            onPlaybackTimeChanged: onPlaybackTimeChanged
-        )
+        Coordinator(eventSink: eventSink)
     }
 
 #if canImport(UIKit)
@@ -37,7 +31,7 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
     }
 
     static func dismantleUIView(_ view: PlayerContainerView, coordinator: Coordinator) {
-        coordinator.resetPlayer()
+        coordinator.reset()
     }
 #elseif canImport(AppKit)
     func makeNSView(context: Context) -> PlayerContainerView {
@@ -49,7 +43,7 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
     }
 
     static func dismantleNSView(_ view: PlayerContainerView, coordinator: Coordinator) {
-        coordinator.resetPlayer()
+        coordinator.reset()
     }
 #endif
 }
@@ -57,14 +51,13 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
 extension AVFoundationPlayerView {
     @MainActor
     final class Coordinator: NSObject, ObservableObject, @unchecked Sendable {
-        private var onStateChanged: ((PlayerPlaybackState) -> Void)?
-        private var onFinish: ((Error?) -> Void)?
-        private var onPlaybackTimeChanged: ((TimeInterval) -> Void)?
+        let capabilities = PlayerBackendKind.avFoundation.capabilities
+        private let eventSink: PlayerBackendEventSink
 
         private var state: PlayerPlaybackState = .idle {
             didSet {
                 guard state != oldValue else { return }
-                onStateChanged?(state)
+                eventSink.onStateChanged?(state)
             }
         }
 
@@ -80,14 +73,8 @@ extension AVFoundationPlayerView {
         private var periodicTimeObserver: Any?
         private var notificationTokens: [NSObjectProtocol] = []
 
-        init(
-            onStateChanged: ((PlayerPlaybackState) -> Void)?,
-            onFinish: ((Error?) -> Void)?,
-            onPlaybackTimeChanged: ((TimeInterval) -> Void)?
-        ) {
-            self.onStateChanged = onStateChanged
-            self.onFinish = onFinish
-            self.onPlaybackTimeChanged = onPlaybackTimeChanged
+        init(eventSink: PlayerBackendEventSink) {
+            self.eventSink = eventSink
         }
 
         func makeView(source: PlayerSource, options: PlayerLoadOptions) -> PlayerContainerView {
@@ -113,7 +100,7 @@ extension AVFoundationPlayerView {
             }
         }
 
-        func resetPlayer() {
+        func reset() {
             clearObservers()
             player?.pause()
             player = nil
@@ -161,7 +148,7 @@ extension AVFoundationPlayerView {
                     if item.status == .failed {
                         let message = item.error?.localizedDescription ?? "播放失败。"
                         self.state = .error(message)
-                        self.onFinish?(item.error)
+                        self.eventSink.onFinish?(item.error)
                         return
                     }
                     self.updateState(for: player, item: item)
@@ -190,7 +177,7 @@ extension AVFoundationPlayerView {
             periodicTimeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 guard let self else { return }
                 MainActor.assumeIsolated {
-                    self.onPlaybackTimeChanged?(time.seconds.isFinite ? time.seconds : 0)
+                    self.eventSink.onPlaybackTimeChanged?(time.seconds.isFinite ? time.seconds : 0)
                 }
             }
 
@@ -203,7 +190,7 @@ extension AVFoundationPlayerView {
                     guard let self else { return }
                     MainActor.assumeIsolated {
                         self.state = .completed
-                        self.onFinish?(nil)
+                        self.eventSink.onFinish?(nil)
                     }
                 }
             )
@@ -218,7 +205,7 @@ extension AVFoundationPlayerView {
                     let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
                     MainActor.assumeIsolated {
                         self.state = .error(error?.localizedDescription ?? "播放失败。")
-                        self.onFinish?(error)
+                        self.eventSink.onFinish?(error)
                     }
                 }
             )
@@ -266,6 +253,10 @@ extension AVFoundationPlayerView {
             notificationTokens.removeAll()
         }
     }
+}
+
+extension AVFoundationPlayerView.Coordinator: PlayerBackendRenderer {
+    static var backend: PlayerBackendKind { .avFoundation }
 }
 
 #if canImport(UIKit)
