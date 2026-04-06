@@ -134,6 +134,8 @@ final class MPVMacOSViewController: NSViewController {
 
     override func loadView() {
         view = NSView(frame: NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1280, height: 720))
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     override func viewDidLoad() {
@@ -212,6 +214,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         let attributes: [NSOpenGLPixelFormatAttribute] = [
             NSOpenGLPixelFormatAttribute(NSOpenGLPFADoubleBuffer),
             NSOpenGLPixelFormatAttribute(NSOpenGLPFAColorSize), NSOpenGLPixelFormatAttribute(32),
+            NSOpenGLPixelFormatAttribute(NSOpenGLPFAAlphaSize), NSOpenGLPixelFormatAttribute(8),
             NSOpenGLPixelFormatAttribute(NSOpenGLPFADepthSize), NSOpenGLPixelFormatAttribute(24),
             NSOpenGLPixelFormatAttribute(NSOpenGLPFAStencilSize), NSOpenGLPixelFormatAttribute(8),
             NSOpenGLPixelFormatAttribute(0),
