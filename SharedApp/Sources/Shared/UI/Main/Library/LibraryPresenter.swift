@@ -641,41 +641,47 @@ extension RemoteMediaLibraryClient: DependencyKey {
                 return StreamContext(url: url, headers: headers)
             },
             fetchSubtitleInfo: { baseURL, token, fileID in
-                let api = try makeClient(baseURL: baseURL, token: token)
-                let output = try await api.getSubtitleInfo(.init(path: .init(id: fileID)))
-                switch output {
-                case let .ok(ok):
-                    let info = try ok.body.json
-                    return (info.subtitles ?? []).map { payload in
-                        let name: String
-                        if let fileName = payload.fileName, !fileName.isEmpty {
-                            name = fileName
-                        } else {
-                            name = "subtitle-\(UUID().uuidString)"
-                        }
-                        return Subtitle(
-                            fileName: name,
-                            fileSize: payload.fileSize
-                        )
+                do {
+                    let api = try makeClient(baseURL: baseURL, token: token)
+                    let output = try await api.getSubtitleInfo(.init(path: .init(id: fileID)))
+                    switch output {
+                    case let .ok(ok):
+                        let info = try ok.body.json
+                        return mapSubtitleInfoPayload(info.subtitles)
+                    case let .undocumented(statusCode, _):
+                        throw APIError.serverError(statusCode: statusCode)
                     }
-                case let .undocumented(statusCode, _):
-                    throw APIError.serverError(statusCode: statusCode)
+                } catch {
+                    return try await fetchSubtitleInfoFallback(
+                        baseURL: baseURL,
+                        token: token,
+                        fileID: fileID
+                    )
                 }
             },
             fetchSubtitleFile: { baseURL, token, fileID, fileName in
-                let api = try makeClient(baseURL: baseURL, token: token)
-                let output = try await api.getSubtitleFile(
-                    .init(
-                        path: .init(id: fileID),
-                        query: .init(fileName: fileName)
+                do {
+                    let api = try makeClient(baseURL: baseURL, token: token)
+                    let output = try await api.getSubtitleFile(
+                        .init(
+                            path: .init(id: fileID),
+                            query: .init(fileName: fileName)
+                        )
                     )
-                )
-                switch output {
-                case let .ok(ok):
-                    let body = try ok.body.plainText
-                    return try await String(collecting: body, upTo: 5 * 1024 * 1024)
-                case let .undocumented(statusCode, _):
-                    throw APIError.serverError(statusCode: statusCode)
+                    switch output {
+                    case let .ok(ok):
+                        let body = try ok.body.plainText
+                        return try await String(collecting: body, upTo: 5 * 1024 * 1024)
+                    case let .undocumented(statusCode, _):
+                        throw APIError.serverError(statusCode: statusCode)
+                    }
+                } catch {
+                    return try await fetchSubtitleFileFallback(
+                        baseURL: baseURL,
+                        token: token,
+                        fileID: fileID,
+                        fileName: fileName
+                    )
                 }
             }
         )
@@ -887,6 +893,148 @@ private func buildOperationURL(
         components.queryItems = (components.queryItems ?? []) + queryItems
     }
     return components.url ?? baseURL.appendingPathComponent(trimmedPath)
+}
+
+private func mapSubtitleInfoPayload(
+    _ payloads: Components.Schemas.SubtitleInfoResponse.SubtitlesPayload?
+) -> [RemoteMediaLibraryClient.Subtitle] {
+    (payloads ?? []).map { payload in
+        let name: String
+        if let fileName = payload.fileName, !fileName.isEmpty {
+            name = fileName
+        } else {
+            name = "subtitle-\(UUID().uuidString)"
+        }
+        return .init(
+            fileName: name,
+            fileSize: payload.fileSize
+        )
+    }
+}
+
+private func fetchSubtitleInfoFallback(
+    baseURL: URL,
+    token: String?,
+    fileID: String
+) async throws -> [RemoteMediaLibraryClient.Subtitle] {
+    let url = buildOperationURL(
+        baseURL: baseURL,
+        path: "/api/v1/subtitle/info/\(fileID)",
+        queryItems: tokenQueryItems(token)
+    )
+    let request = makeAuthorizedRequest(
+        url: url,
+        token: token,
+        accept: "application/json"
+    )
+    let data = try await fetchData(with: request)
+    let object = try JSONSerialization.jsonObject(with: data)
+    guard let dictionary = object as? [String: Any] else {
+        throw APIError.unexpectedResponse("字幕列表响应不是 JSON 对象。")
+    }
+    let rawSubtitles = (dictionary["subtitles"] as? [[String: Any]])
+        ?? (dictionary["Subtitles"] as? [[String: Any]])
+        ?? []
+    return rawSubtitles.map { item in
+        let fileName = (item["fileName"] as? String)
+            ?? (item["FileName"] as? String)
+            ?? "subtitle-\(UUID().uuidString)"
+        let fileSize = (item["fileSize"] as? Int)
+            ?? (item["FileSize"] as? Int)
+        return .init(fileName: fileName, fileSize: fileSize)
+    }
+}
+
+private func fetchSubtitleFileFallback(
+    baseURL: URL,
+    token: String?,
+    fileID: String,
+    fileName: String
+) async throws -> String {
+    let candidates = [
+        buildOperationURL(
+            baseURL: baseURL,
+            path: "/api/v1/subtitle/file/\(fileID)",
+            queryItems: tokenQueryItems(token) + [.init(name: "fileName", value: fileName)]
+        ),
+        buildSubtitleWebURL(
+            baseURL: baseURL,
+            fileID: fileID,
+            fileName: fileName,
+            token: token
+        )
+    ]
+
+    var lastError: Error?
+    for url in candidates {
+        do {
+            let request = makeAuthorizedRequest(
+                url: url,
+                token: token,
+                accept: "text/plain, text/x-ssa, text/ass, application/octet-stream;q=0.9, */*;q=0.8"
+            )
+            let data = try await fetchData(with: request)
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                return text
+            }
+            if let text = String(data: data, encoding: .unicode), !text.isEmpty {
+                return text
+            }
+            throw APIError.unexpectedResponse("字幕文件不是可识别的文本编码。")
+        } catch {
+            lastError = error
+        }
+    }
+
+    throw lastError ?? APIError.unexpectedResponse("无法加载字幕文件。")
+}
+
+private func tokenQueryItems(_ token: String?) -> [URLQueryItem] {
+    guard let token, !token.isEmpty else { return [] }
+    return [.init(name: "token", value: token)]
+}
+
+private func buildSubtitleWebURL(
+    baseURL: URL,
+    fileID: String,
+    fileName: String,
+    token: String?
+) -> URL {
+    let components = fileName.split(separator: "/").map(String.init)
+    let suffix = components.isEmpty ? [fileName] : components
+    let path = (["web1", "subtitle", fileID] + suffix).joined(separator: "/")
+    return buildOperationURL(
+        baseURL: baseURL,
+        path: path,
+        queryItems: tokenQueryItems(token)
+    )
+}
+
+private func makeAuthorizedRequest(
+    url: URL,
+    token: String?,
+    accept: String? = nil
+) -> URLRequest {
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    if let accept, !accept.isEmpty {
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+    }
+    if let token, !token.isEmpty {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+    return request
+}
+
+private func fetchData(with request: URLRequest) async throws -> Data {
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw APIError.unexpectedResponse("字幕接口没有返回 HTTP 响应。")
+    }
+    guard 200..<300 ~= httpResponse.statusCode else {
+        throw APIError.serverError(statusCode: httpResponse.statusCode)
+    }
+    return data
 }
 
 extension DependencyValues {
