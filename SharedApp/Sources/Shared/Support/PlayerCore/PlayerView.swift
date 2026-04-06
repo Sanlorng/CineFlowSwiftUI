@@ -34,6 +34,18 @@ struct PlayerView: View {
                 )
             )
         case .mpv:
+#if os(macOS)
+            MPVMacOSPlayerView(
+                source: source,
+                options: options,
+                eventSink: .init(
+                    onStateChanged: onStateChangedHandler,
+                    onFinish: onFinishHandler,
+                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler,
+                    onTracksChanged: onTracksChangedHandler
+                )
+            )
+#else
             MPVPlayerView(
                 source: source,
                 options: options,
@@ -44,6 +56,7 @@ struct PlayerView: View {
                     onTracksChanged: onTracksChangedHandler
                 )
             )
+#endif
         }
     }
 }

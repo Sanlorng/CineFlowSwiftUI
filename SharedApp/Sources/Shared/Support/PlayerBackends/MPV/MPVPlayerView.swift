@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import QuartzCore
 
-#if canImport(Libmpv) && (os(iOS) || os(macOS) || os(tvOS))
+#if canImport(Libmpv) && (os(iOS) || os(tvOS))
 import Libmpv
 
 #if canImport(UIKit)
