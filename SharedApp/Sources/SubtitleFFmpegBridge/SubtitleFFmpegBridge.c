@@ -243,6 +243,98 @@ static int bridge_append_text_dialogue(
     return bridge_builder_append_string(builder, "\n");
 }
 
+static int bridge_append_ass_event_dialogue(
+    BridgeStringBuilder *builder,
+    const char *ass_event,
+    int64_t subtitle_pts,
+    int64_t packet_pts,
+    AVRational time_base,
+    uint32_t start_display_time,
+    uint32_t end_display_time
+) {
+    if (!ass_event || ass_event[0] == '\0') {
+        return 0;
+    }
+
+    if (strncmp(ass_event, "Dialogue:", 9) == 0) {
+        if (bridge_builder_append_string(builder, ass_event) < 0) {
+            return -1;
+        }
+        return bridge_builder_append_string(builder, "\n");
+    }
+
+    int64_t base = subtitle_pts != AV_NOPTS_VALUE ? (subtitle_pts / 1000) : bridge_pts_to_milliseconds(packet_pts, time_base);
+    if (base < 0) {
+        base = 0;
+    }
+
+    int start_ms = (int) (base + start_display_time);
+    int end_ms = (int) (base + (end_display_time > start_display_time ? end_display_time : (start_display_time + 1000)));
+
+    char start_buffer[32];
+    char end_buffer[32];
+    bridge_format_ass_time(start_ms, start_buffer, sizeof(start_buffer));
+    bridge_format_ass_time(end_ms, end_buffer, sizeof(end_buffer));
+
+    char *event_copy = bridge_strdup(ass_event);
+    if (!event_copy) {
+        return -1;
+    }
+
+    char *parts[9] = {0};
+    parts[0] = event_copy;
+    int part_count = 1;
+    for (char *cursor = event_copy; *cursor && part_count < 9; cursor++) {
+        if (*cursor == ',') {
+            *cursor = '\0';
+            parts[part_count++] = cursor + 1;
+        }
+    }
+
+    int result = 0;
+    if (part_count >= 9) {
+        const char *layer = parts[1] && parts[1][0] ? parts[1] : "0";
+        const char *style = parts[2] ? parts[2] : "Default";
+        const char *name = parts[3] ? parts[3] : "";
+        const char *margin_l = parts[4] ? parts[4] : "0";
+        const char *margin_r = parts[5] ? parts[5] : "0";
+        const char *margin_v = parts[6] ? parts[6] : "0";
+        const char *effect = parts[7] ? parts[7] : "";
+        const char *text = parts[8] ? parts[8] : "";
+
+        result = bridge_builder_append_format(
+            builder,
+            "Dialogue: %s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+            layer,
+            start_buffer,
+            end_buffer,
+            style,
+            name,
+            margin_l,
+            margin_r,
+            margin_v,
+            effect,
+            text
+        );
+    } else {
+        result = bridge_builder_append_format(
+            builder,
+            "Dialogue: 0,%s,%s,Default,,0,0,0,,",
+            start_buffer,
+            end_buffer
+        );
+        if (result >= 0) {
+            result = bridge_builder_append_string(builder, ass_event);
+        }
+        if (result >= 0) {
+            result = bridge_builder_append_string(builder, "\n");
+        }
+    }
+
+    free(event_copy);
+    return result;
+}
+
 int subtitle_bridge_copy_tracks(
     const char *media_url,
     const char *headers,
@@ -390,13 +482,15 @@ int subtitle_bridge_copy_ass_document(
                 }
                 if (rect->type == SUBTITLE_ASS && rect->ass && rect->ass[0] != '\0') {
                     has_ass_events = true;
-                    if (strncmp(rect->ass, "Dialogue:", 9) == 0) {
-                        bridge_builder_append_string(&ass_events, rect->ass);
-                    } else {
-                        bridge_builder_append_string(&ass_events, "Dialogue: ");
-                        bridge_builder_append_string(&ass_events, rect->ass);
-                    }
-                    bridge_builder_append_string(&ass_events, "\n");
+                    bridge_append_ass_event_dialogue(
+                        &ass_events,
+                        rect->ass,
+                        subtitle.pts,
+                        packet->pts,
+                        target_stream->time_base,
+                        subtitle.start_display_time,
+                        subtitle.end_display_time
+                    );
                 } else if (rect->text && rect->text[0] != '\0') {
                     has_text_events = true;
                     bridge_append_text_dialogue(

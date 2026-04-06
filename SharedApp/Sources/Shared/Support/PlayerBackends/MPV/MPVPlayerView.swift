@@ -165,17 +165,37 @@ final class MPVContainerViewController: PlatformViewController {
         metalLayer.backgroundColor = platformBlackColor
         metalLayer.framebufferOnly = true
         updateMetalLayerGeometry()
-
-        startPlaybackIfReady()
     }
 
 #if canImport(UIKit)
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        updateMetalLayerGeometry()
+        startPlaybackIfReady()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        shutdown()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateMetalLayerGeometry()
         startPlaybackIfReady()
     }
 #elseif canImport(AppKit)
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        updateMetalLayerGeometry()
+        startPlaybackIfReady()
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        shutdown()
+    }
+
     override func viewDidLayout() {
         super.viewDidLayout()
         updateMetalLayerGeometry()
@@ -221,7 +241,7 @@ final class MPVContainerViewController: PlatformViewController {
         guard let currentSource, let currentOptions else { return }
         guard isRenderSurfaceReady else {
 #if DEBUG
-            print("[MPV] Skip start because render surface is not ready yet. bounds=\(view.bounds) drawable=\(metalLayer.drawableSize)")
+            print("[MPV] Skip start because render surface is not ready yet. window=\(String(describing: view.window)) bounds=\(view.bounds) drawable=\(metalLayer.drawableSize)")
 #endif
             return
         }
@@ -617,7 +637,9 @@ private extension PlayerTrack.Kind {
 
 private extension MPVContainerViewController {
     var isRenderSurfaceReady: Bool {
-        metalLayer.drawableSize.width > 1 && metalLayer.drawableSize.height > 1
+        view.window != nil &&
+        metalLayer.drawableSize.width > 1 &&
+        metalLayer.drawableSize.height > 1
     }
 
     func updateMetalLayerGeometry() {
