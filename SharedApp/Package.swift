@@ -38,6 +38,7 @@ let package = Package(
                 "RemoteMediaLibrary",
                 "DandanApi",
                 "DependenciesMacro",
+                .target(name: "SubtitleFFmpegBridge", condition: .when(platforms: [.iOS, .macOS, .tvOS])),
                 .product(name: "SubtitleRendererCore", package: "SubtitleRenderer"),
                 .product(name: "SubtitleRendererLibass", package: "SubtitleRenderer", condition: .when(platforms: [.macOS])),
                 .product(name: "MPVKit", package: "MPVKit", condition: .when(platforms: [.iOS, .macOS, .tvOS])),
@@ -49,6 +50,13 @@ let package = Package(
             plugins: [
                 .plugin(name: "BuildPlugin")
             ],
+        ),
+        .target(
+            name: "SubtitleFFmpegBridge",
+            dependencies: [
+                .product(name: "MPVKit", package: "MPVKit", condition: .when(platforms: [.iOS, .macOS, .tvOS])),
+            ],
+            publicHeadersPath: "include"
         ),
         .target(
             name: "SharedDemo",
