@@ -182,6 +182,7 @@ private struct PlayerContentMainView: View {
                         guard let fileID = viewStore.currentFileID else { return }
                         viewStore.send(.playerTracksChanged(fileID, tracks))
                     }
+                    .id(playerSourceIdentity(stream))
                 SubtitleRendererOverlay(
                     document: customSubtitleDocument,
                     playbackTime: playerController.timeline.currentTime,
@@ -1164,6 +1165,14 @@ private func makeOptions(
         allowAutoPlay: allowAutoPlay,
         selectedAudioTrackID: selectedAudioTrackID
     )
+}
+
+private func playerSourceIdentity(_ stream: RemoteMediaLibraryClient.StreamContext) -> String {
+    let headerIdentity = stream.headers
+        .sorted { lhs, rhs in lhs.key < rhs.key }
+        .map { "\($0.key)=\($0.value)" }
+        .joined(separator: "&")
+    return "\(stream.url.absoluteString)|\(headerIdentity)"
 }
 
 @MainActor
