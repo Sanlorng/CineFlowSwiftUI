@@ -232,9 +232,7 @@ private struct PlayerContentMainView: View {
             case .ended:
                 isPointerInsidePlayer = false
                 lastPointerLocation = nil
-                if isFullscreen {
-                    scheduleFullscreenHideCountdown()
-                } else {
+                if !isFullscreen {
                     scheduleControlBarVisibilityUpdate()
                 }
             }
