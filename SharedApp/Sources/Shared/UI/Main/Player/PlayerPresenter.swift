@@ -499,8 +499,7 @@ struct PlayerPresenter {
             return .send(.subtitleSelected(externalSubtitle))
         }
 
-        if !state.isLoadingSubtitles,
-           !state.isLoadingEmbeddedSubtitles,
+        if !state.isLoadingEmbeddedSubtitles,
            let embeddedSubtitle = state.availableEmbeddedSubtitles.first {
             return .send(.embeddedSubtitleSelected(embeddedSubtitle.id))
         }

@@ -471,8 +471,7 @@ private struct PlayerContentMainView: View {
         } label: {
             glassCapsuleLabel(
                 title: subtitleMenuTitle(
-                    externalSubtitle: viewStore.selectedSubtitle.map(externalSubtitleDisplayTitle(_:))
-                        ?? viewStore.activeSubtitle.flatMap { externalSubtitleDisplayTitle(fileName: $0.fileName) },
+                    externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore),
                     embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
                     isSuppressed: viewStore.areSubtitlesSuppressed
                 ),
@@ -1014,6 +1013,19 @@ private func subtitleMenuTitle(
         return embeddedSubtitle
     }
     return "选择字幕"
+}
+
+@MainActor
+private func selectedExternalSubtitleTitle(
+    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+) -> String? {
+    if viewStore.selectedEmbeddedSubtitleTrackID != nil {
+        return nil
+    }
+    if let selectedSubtitle = viewStore.selectedSubtitle {
+        return externalSubtitleDisplayTitle(selectedSubtitle)
+    }
+    return viewStore.activeSubtitle.flatMap { externalSubtitleDisplayTitle(fileName: $0.fileName) }
 }
 
 private func externalSubtitleDisplayTitle(_ subtitle: RemoteMediaLibraryClient.Subtitle) -> String {
