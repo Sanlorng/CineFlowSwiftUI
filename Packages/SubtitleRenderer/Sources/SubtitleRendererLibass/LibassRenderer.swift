@@ -14,6 +14,10 @@ public enum LibassRendererError: Error, Equatable {
 }
 
 public final class LibassRenderer: SubtitleRenderingBackend {
+    public static var isRuntimeAvailable: Bool {
+        (try? LibassRuntime()) != nil
+    }
+
     public private(set) var viewport: SubtitleViewport
     private let runtime: LibassRuntime
     private let library: OpaquePointer

@@ -2,6 +2,9 @@ import SwiftUI
 import ComposableArchitecture
 import RemoteMediaLibrary
 import SubtitleRendererCore
+#if os(macOS) && arch(arm64)
+import SubtitleRendererLibass
+#endif
 
 struct PlayerContentView: View {
     let store: StoreOf<PlayerPresenter>?
@@ -428,6 +431,11 @@ private func makeCustomSubtitleDocument(
     isSuppressed: Bool
 ) -> SubtitleDocument? {
     guard !isSuppressed, let subtitle else { return nil }
+#if os(macOS) && arch(arm64)
+    guard LibassRenderer.isRuntimeAvailable else { return nil }
+#else
+    return nil
+#endif
     let ext = (subtitle.fileName as NSString).pathExtension.lowercased()
     guard ext == "ass" || ext == "ssa" else { return nil }
     return .ass(subtitle.rawContent, fileName: subtitle.fileName)
