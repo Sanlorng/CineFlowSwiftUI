@@ -264,6 +264,7 @@ final class MPVContainerViewController: PlatformViewController {
             Unmanaged<MPVContainerViewController>.fromOpaque(wakeupContext).release()
             self.wakeupContext = nil
         }
+        eventSink.onVideoPresentationSizeChanged?(nil)
     }
 
     private func startPlaybackIfReady() {
@@ -335,6 +336,7 @@ final class MPVContainerViewController: PlatformViewController {
         mpv_observe_property(handle, 0, MPVProperty.aid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.sid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.trackList, MPV_FORMAT_NODE)
+        mpv_observe_property(handle, 0, MPVProperty.videoParams, MPV_FORMAT_NODE)
     }
 
     private func load(source: PlayerSource, options: PlayerLoadOptions) {
@@ -420,6 +422,7 @@ final class MPVContainerViewController: PlatformViewController {
                     }
                 case MPV_EVENT_FILE_LOADED:
                     DispatchQueue.main.async {
+                        self.publishVideoPresentationSize()
                         self.publishTracksSnapshot()
                         self.syncPlaybackState()
                     }
@@ -474,6 +477,10 @@ final class MPVContainerViewController: PlatformViewController {
                 self.currentDuration = duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
                 self.eventSink.onTimelineChanged?(.init(currentTime: self.currentPlaybackTime, duration: self.currentDuration))
             }
+        case MPVProperty.videoParams:
+            DispatchQueue.main.async {
+                self.publishVideoPresentationSize()
+            }
         case MPVProperty.trackList, MPVProperty.aid, MPVProperty.sid:
             DispatchQueue.main.async {
                 self.publishTracksSnapshot()
@@ -499,6 +506,20 @@ final class MPVContainerViewController: PlatformViewController {
         print("[MPV] track-list => [\(summary)]")
 #endif
         eventSink.onTracksChanged?(tracks)
+    }
+
+    private func publishVideoPresentationSize() {
+        guard let mpv else { return }
+        var node = mpv_node()
+        let status = mpv_get_property(mpv, MPVProperty.videoParams, MPV_FORMAT_NODE, &node)
+        guard status >= 0 else {
+            eventSink.onVideoPresentationSizeChanged?(nil)
+            return
+        }
+        defer {
+            mpv_free_node_contents(&node)
+        }
+        eventSink.onVideoPresentationSizeChanged?(Self.parseVideoPresentationSize(from: node))
     }
 
     private func syncPlaybackState() {
@@ -554,6 +575,7 @@ private enum MPVProperty {
     static let aid = "aid"
     static let sid = "sid"
     static let trackList = "track-list"
+    static let videoParams = "video-params"
 }
 
 private final class MPVMetalLayer: CAMetalLayer {}
@@ -650,6 +672,19 @@ private extension MPVContainerViewController {
         return node.u.flag != 0
     }
 
+    static func doubleValue(in map: UnsafePointer<mpv_node_list>, key: String) -> Double? {
+        guard let node = nodeValue(in: map, key: key) else {
+            return nil
+        }
+        if node.format == MPV_FORMAT_DOUBLE {
+            return node.u.double_
+        }
+        if node.format == MPV_FORMAT_INT64 {
+            return Double(node.u.int64)
+        }
+        return nil
+    }
+
     static func nodeValue(in map: UnsafePointer<mpv_node_list>, key: String) -> mpv_node? {
         guard let keys = map.pointee.keys,
               let values = map.pointee.values else {
@@ -664,6 +699,20 @@ private extension MPVContainerViewController {
             }
         }
         return nil
+    }
+
+    static func parseVideoPresentationSize(from node: mpv_node) -> CGSize? {
+        guard node.format == MPV_FORMAT_NODE_MAP,
+              let map = node.u.list,
+              let width = doubleValue(in: map, key: "dw") ?? doubleValue(in: map, key: "w"),
+              let height = doubleValue(in: map, key: "dh") ?? doubleValue(in: map, key: "h"),
+              width.isFinite,
+              height.isFinite,
+              width > 0,
+              height > 0 else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
     }
 }
 

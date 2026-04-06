@@ -7,19 +7,22 @@ struct PlayerBackendEventSink {
     var onPlaybackTimeChanged: ((TimeInterval) -> Void)?
     var onTimelineChanged: ((PlayerTimeline) -> Void)?
     var onTracksChanged: (([PlayerTrack]) -> Void)?
+    var onVideoPresentationSizeChanged: ((CGSize?) -> Void)?
 
     init(
         onStateChanged: ((PlayerPlaybackState) -> Void)? = nil,
         onFinish: ((Error?) -> Void)? = nil,
         onPlaybackTimeChanged: ((TimeInterval) -> Void)? = nil,
         onTimelineChanged: ((PlayerTimeline) -> Void)? = nil,
-        onTracksChanged: (([PlayerTrack]) -> Void)? = nil
+        onTracksChanged: (([PlayerTrack]) -> Void)? = nil,
+        onVideoPresentationSizeChanged: ((CGSize?) -> Void)? = nil
     ) {
         self.onStateChanged = onStateChanged
         self.onFinish = onFinish
         self.onPlaybackTimeChanged = onPlaybackTimeChanged
         self.onTimelineChanged = onTimelineChanged
         self.onTracksChanged = onTracksChanged
+        self.onVideoPresentationSizeChanged = onVideoPresentationSizeChanged
     }
 }
 

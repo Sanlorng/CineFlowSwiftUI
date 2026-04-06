@@ -59,62 +59,66 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    ZStack(alignment: .bottom) {
-                        PlayerView(
-                            backend: .defaultDistributable,
-                            source: .init(
-                                url: stream.url,
-                                headers: stream.headers
-                            ),
-                            controller: playerController,
-                            options: options,
-                        )
-                            .onStateChanged { state in
-                                switch state {
-                                case .error(let message):
-                                    viewStore.send(.setPlaybackError(message ?? "播放失败。"))
-                                case .playing, .completed:
-                                    viewStore.send(.setPlaybackError(nil))
-                                case .buffering, .preparing, .paused, .stopped, .idle:
-                                    break
+                    GeometryReader { geometry in
+                        let subtitleViewportSize = subtitleOverlayViewportSize(in: geometry.size)
+                        ZStack(alignment: .bottom) {
+                            PlayerView(
+                                backend: .defaultDistributable,
+                                source: .init(
+                                    url: stream.url,
+                                    headers: stream.headers
+                                ),
+                                controller: playerController,
+                                options: options,
+                            )
+                                .onStateChanged { state in
+                                    switch state {
+                                    case .error(let message):
+                                        viewStore.send(.setPlaybackError(message ?? "播放失败。"))
+                                    case .playing, .completed:
+                                        viewStore.send(.setPlaybackError(nil))
+                                    case .buffering, .preparing, .paused, .stopped, .idle:
+                                        break
+                                    }
                                 }
-                            }
-                            .onFinish { error in
-                                if let error {
-                                    viewStore.send(.setPlaybackError(error.localizedDescription))
+                                .onFinish { error in
+                                    if let error {
+                                        viewStore.send(.setPlaybackError(error.localizedDescription))
+                                    }
                                 }
+                                .onTracksChanged { tracks in
+                                    guard let fileID = viewStore.currentFileID else { return }
+                                    viewStore.send(.playerTracksChanged(fileID, tracks))
+                                }
+                            SubtitleRendererOverlay(
+                                document: customSubtitleDocument,
+                                playbackTime: playerController.timeline.currentTime
+                            )
+                            .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            if isControlBarVisible {
+                                playbackControlBar(viewStore: viewStore)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
-                            .onTracksChanged { tracks in
-                                guard let fileID = viewStore.currentFileID else { return }
-                                viewStore.send(.playerTracksChanged(fileID, tracks))
-                            }
-                        SubtitleRendererOverlay(
-                            document: customSubtitleDocument,
-                            playbackTime: playerController.timeline.currentTime
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                        if isControlBarVisible {
-                            playbackControlBar(viewStore: viewStore)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
 #if os(macOS)
-                        PlayerWindowObserver(
-                            onWindowChanged: { window in
-                                observedWindow = window
-                                isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
-                                scheduleControlBarVisibilityUpdate()
-                            },
-                            onFullscreenChanged: { fullscreen in
-                                isFullscreen = fullscreen
-                                if !fullscreen {
-                                    showCursorIfNeeded()
+                            PlayerWindowObserver(
+                                onWindowChanged: { window in
+                                    observedWindow = window
+                                    isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
+                                    scheduleControlBarVisibilityUpdate()
+                                },
+                                onFullscreenChanged: { fullscreen in
+                                    isFullscreen = fullscreen
+                                    if !fullscreen {
+                                        showCursorIfNeeded()
+                                    }
+                                    revealControls()
                                 }
-                                revealControls()
-                            }
-                        )
-                        .frame(width: 0, height: 0)
+                            )
+                            .frame(width: 0, height: 0)
 #endif
+                        }
                     }
                         .frame(minHeight: 240, maxHeight: isFullscreen ? .infinity : nil)
                         .clipped()
@@ -569,6 +573,30 @@ private struct PlayerContentMainView: View {
 
     private var isAnyControlPopoverPresented: Bool {
         isAudioPopoverPresented || isSubtitlePopoverPresented || isSpeedPopoverPresented || isEpisodePopoverPresented
+    }
+
+    private func subtitleOverlayViewportSize(in containerSize: CGSize) -> CGSize {
+        guard containerSize.width > 0, containerSize.height > 0 else {
+            return .zero
+        }
+        guard let videoPresentationSize = playerController.videoPresentationSize,
+              videoPresentationSize.width > 0,
+              videoPresentationSize.height > 0 else {
+            return containerSize
+        }
+
+        let widthScale = containerSize.width / videoPresentationSize.width
+        let heightScale = containerSize.height / videoPresentationSize.height
+        let scale = min(widthScale, heightScale)
+
+        guard scale.isFinite, scale > 0 else {
+            return containerSize
+        }
+
+        return CGSize(
+            width: max(videoPresentationSize.width * scale, 1),
+            height: max(videoPresentationSize.height * scale, 1)
+        )
     }
 
     private func revealControls() {

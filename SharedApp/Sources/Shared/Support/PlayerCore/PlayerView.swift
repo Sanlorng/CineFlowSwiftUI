@@ -40,7 +40,10 @@ struct PlayerView: View {
                     onTimelineChanged: { timeline in
                         controller.updateTimeline(currentTime: timeline.currentTime, duration: timeline.duration)
                     },
-                    onTracksChanged: onTracksChangedHandler
+                    onTracksChanged: onTracksChangedHandler,
+                    onVideoPresentationSizeChanged: { size in
+                        controller.updateVideoPresentationSize(size)
+                    }
                 )
             )
         case .mpv:
@@ -59,7 +62,10 @@ struct PlayerView: View {
                     onTimelineChanged: { timeline in
                         controller.updateTimeline(currentTime: timeline.currentTime, duration: timeline.duration)
                     },
-                    onTracksChanged: onTracksChangedHandler
+                    onTracksChanged: onTracksChangedHandler,
+                    onVideoPresentationSizeChanged: { size in
+                        controller.updateVideoPresentationSize(size)
+                    }
                 )
             )
 #else
@@ -77,7 +83,10 @@ struct PlayerView: View {
                     onTimelineChanged: { timeline in
                         controller.updateTimeline(currentTime: timeline.currentTime, duration: timeline.duration)
                     },
-                    onTracksChanged: onTracksChangedHandler
+                    onTracksChanged: onTracksChangedHandler,
+                    onVideoPresentationSizeChanged: { size in
+                        controller.updateVideoPresentationSize(size)
+                    }
                 )
             )
 #endif

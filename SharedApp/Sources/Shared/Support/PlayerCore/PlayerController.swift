@@ -6,6 +6,7 @@ final class PlayerController: ObservableObject {
     @Published private(set) var playbackState: PlayerPlaybackState = .idle
     @Published private(set) var timeline = PlayerTimeline()
     @Published private(set) var playbackRate: Double = 1
+    @Published private(set) var videoPresentationSize: CGSize?
 
     @Published private(set) var commandRevision: UInt64 = 0
     @Published private(set) var latestCommand: PlayerCommand?
@@ -44,10 +45,23 @@ final class PlayerController: ObservableObject {
         timeline = .init(currentTime: max(currentTime, 0), duration: duration)
     }
 
+    func updateVideoPresentationSize(_ size: CGSize?) {
+        guard let size,
+              size.width.isFinite,
+              size.height.isFinite,
+              size.width > 0,
+              size.height > 0 else {
+            videoPresentationSize = nil
+            return
+        }
+        videoPresentationSize = size
+    }
+
     func reset() {
         playbackState = .idle
         timeline = .init()
         playbackRate = 1
+        videoPresentationSize = nil
         latestCommand = nil
     }
 

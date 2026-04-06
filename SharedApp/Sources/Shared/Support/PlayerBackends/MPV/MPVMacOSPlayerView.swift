@@ -331,6 +331,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             }
         }
         lastLoadedSource = nil
+        eventSink.onVideoPresentationSizeChanged?(nil)
     }
 
     private func observeProperties(handle: OpaquePointer) {
@@ -341,6 +342,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         mpv_observe_property(handle, 0, MPVProperty.aid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.sid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.trackList, MPV_FORMAT_NODE)
+        mpv_observe_property(handle, 0, MPVProperty.videoParams, MPV_FORMAT_NODE)
     }
 
     private func applyHTTPHeaders(_ headers: [String: String]) {
@@ -411,6 +413,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                     DispatchQueue.main.async { self.stateChanged(.preparing) }
                 case MPV_EVENT_FILE_LOADED:
                     DispatchQueue.main.async {
+                        self.publishVideoPresentationSize()
                         self.publishTracksSnapshot()
                         self.syncPlaybackState()
                     }
@@ -465,6 +468,10 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                 let current = self.currentPlaybackTime
                 self.eventSink.onTimelineChanged?(.init(currentTime: current, duration: self.currentDuration))
             }
+        case MPVProperty.videoParams:
+            DispatchQueue.main.async {
+                self.publishVideoPresentationSize()
+            }
         case MPVProperty.trackList, MPVProperty.aid, MPVProperty.sid:
             DispatchQueue.main.async { self.publishTracksSnapshot() }
         default:
@@ -484,6 +491,18 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         print("[MPV-GL] track-list => [\(summary)]")
 #endif
         eventSink.onTracksChanged?(tracks)
+    }
+
+    private func publishVideoPresentationSize() {
+        guard let mpv else { return }
+        var node = mpv_node()
+        let status = mpv_get_property(mpv, MPVProperty.videoParams, MPV_FORMAT_NODE, &node)
+        guard status >= 0 else {
+            eventSink.onVideoPresentationSizeChanged?(nil)
+            return
+        }
+        defer { mpv_free_node_contents(&node) }
+        eventSink.onVideoPresentationSizeChanged?(Self.parseVideoPresentationSize(from: node))
     }
 
     private func syncPlaybackState() {
@@ -565,6 +584,7 @@ private enum MPVProperty {
     static let aid = "aid"
     static let sid = "sid"
     static let trackList = "track-list"
+    static let videoParams = "video-params"
 }
 
 private extension MPVMacOSOpenGLView {
@@ -652,6 +672,19 @@ private extension MPVMacOSOpenGLView {
         return node.u.flag != 0
     }
 
+    static func doubleValue(in map: UnsafePointer<mpv_node_list>, key: String) -> Double? {
+        guard let node = nodeValue(in: map, key: key) else {
+            return nil
+        }
+        if node.format == MPV_FORMAT_DOUBLE {
+            return node.u.double_
+        }
+        if node.format == MPV_FORMAT_INT64 {
+            return Double(node.u.int64)
+        }
+        return nil
+    }
+
     static func nodeValue(in map: UnsafePointer<mpv_node_list>, key: String) -> mpv_node? {
         guard let keys = map.pointee.keys, let values = map.pointee.values else {
             return nil
@@ -664,6 +697,20 @@ private extension MPVMacOSOpenGLView {
             }
         }
         return nil
+    }
+
+    static func parseVideoPresentationSize(from node: mpv_node) -> CGSize? {
+        guard node.format == MPV_FORMAT_NODE_MAP,
+              let map = node.u.list,
+              let width = doubleValue(in: map, key: "dw") ?? doubleValue(in: map, key: "w"),
+              let height = doubleValue(in: map, key: "dh") ?? doubleValue(in: map, key: "h"),
+              width.isFinite,
+              height.isFinite,
+              width > 0,
+              height > 0 else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
     }
 }
 

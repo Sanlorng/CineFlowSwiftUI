@@ -116,6 +116,7 @@ extension AVFoundationPlayerView {
             currentOptions = nil
             currentPlaybackRate = 1
             view?.attach(player: nil)
+            eventSink.onVideoPresentationSizeChanged?(nil)
             if state != .idle {
                 state = .stopped
             }
@@ -136,6 +137,7 @@ extension AVFoundationPlayerView {
             self.player = player
             self.playerItem = item
             view.attach(player: player)
+            eventSink.onVideoPresentationSizeChanged?(nil)
             observe(player: player, item: item, options: options)
 
             if options.allowAutoPlay {
@@ -159,6 +161,7 @@ extension AVFoundationPlayerView {
                         self.eventSink.onFinish?(item.error)
                         return
                     }
+                    self.publishVideoPresentationSize(for: item)
                     self.updateState(for: player, item: item)
                 }
             }
@@ -251,7 +254,22 @@ extension AVFoundationPlayerView {
             let currentTime = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
             let durationSeconds = item.duration.seconds
             let duration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : nil
+            publishVideoPresentationSize(for: item)
             eventSink.onTimelineChanged?(.init(currentTime: currentTime, duration: duration))
+        }
+
+        private func publishVideoPresentationSize(for item: AVPlayerItem) {
+            let presentationSize = item.presentationSize
+            let normalizedSize: CGSize?
+            if presentationSize.width.isFinite,
+               presentationSize.height.isFinite,
+               presentationSize.width > 0,
+               presentationSize.height > 0 {
+                normalizedSize = presentationSize
+            } else {
+                normalizedSize = nil
+            }
+            eventSink.onVideoPresentationSizeChanged?(normalizedSize)
         }
 
         private func handleCommandIfNeeded(from controller: PlayerController) {
