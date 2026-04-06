@@ -73,6 +73,16 @@ enum NetworkDebugLogger {
 #endif
     }
 
+    static func logBodyPreview(_ data: Data, label: String, limit: Int = 800) {
+#if DEBUG
+        let text = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .unicode)
+            ?? "<binary \(data.count) bytes>"
+        let preview = String(text.prefix(limit))
+        print("[Network][\(label)] body: \(preview)")
+#endif
+    }
+
     private static func resolvedURL(for request: HTTPRequest, baseURL: URL) -> URL? {
         if let scheme = request.scheme,
            let authority = request.authority,

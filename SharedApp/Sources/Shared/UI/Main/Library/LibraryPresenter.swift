@@ -647,7 +647,16 @@ extension RemoteMediaLibraryClient: DependencyKey {
                     switch output {
                     case let .ok(ok):
                         let info = try ok.body.json
-                        return mapSubtitleInfoPayload(info.subtitles)
+                        let mapped = mapSubtitleInfoPayload(info.subtitles)
+                        if mapped.isEmpty {
+                            return try await fetchSubtitleInfoFallback(
+                                baseURL: baseURL,
+                                token: token,
+                                fileID: fileID,
+                                reason: "generated-client-empty"
+                            )
+                        }
+                        return mapped
                     case let .undocumented(statusCode, _):
                         throw APIError.serverError(statusCode: statusCode)
                     }
@@ -655,7 +664,8 @@ extension RemoteMediaLibraryClient: DependencyKey {
                     return try await fetchSubtitleInfoFallback(
                         baseURL: baseURL,
                         token: token,
-                        fileID: fileID
+                        fileID: fileID,
+                        reason: "generated-client-error: \(error)"
                     )
                 }
             },
@@ -915,8 +925,12 @@ private func mapSubtitleInfoPayload(
 private func fetchSubtitleInfoFallback(
     baseURL: URL,
     token: String?,
-    fileID: String
+    fileID: String,
+    reason: String
 ) async throws -> [RemoteMediaLibraryClient.Subtitle] {
+#if DEBUG
+    print("[Network][RemoteMediaLibraryFallback] subtitle info fallback reason: \(reason)")
+#endif
     let url = buildOperationURL(
         baseURL: baseURL,
         path: "/api/v1/subtitle/info/\(fileID)",
@@ -928,21 +942,18 @@ private func fetchSubtitleInfoFallback(
         accept: "application/json"
     )
     let data = try await fetchData(with: request)
+    NetworkDebugLogger.logBodyPreview(data, label: "RemoteMediaLibraryFallback.subtitleInfo")
     let object = try JSONSerialization.jsonObject(with: data)
+    if let rawArray = object as? [[String: Any]] {
+        return mapRawSubtitleInfoPayload(rawArray)
+    }
     guard let dictionary = object as? [String: Any] else {
-        throw APIError.unexpectedResponse("字幕列表响应不是 JSON 对象。")
+        throw APIError.unexpectedResponse("字幕列表响应不是 JSON 对象或数组。")
     }
     let rawSubtitles = (dictionary["subtitles"] as? [[String: Any]])
         ?? (dictionary["Subtitles"] as? [[String: Any]])
         ?? []
-    return rawSubtitles.map { item in
-        let fileName = (item["fileName"] as? String)
-            ?? (item["FileName"] as? String)
-            ?? "subtitle-\(UUID().uuidString)"
-        let fileSize = (item["fileSize"] as? Int)
-            ?? (item["FileSize"] as? Int)
-        return .init(fileName: fileName, fileSize: fileSize)
-    }
+    return mapRawSubtitleInfoPayload(rawSubtitles)
 }
 
 private func fetchSubtitleFileFallback(
@@ -974,6 +985,7 @@ private func fetchSubtitleFileFallback(
                 accept: "text/plain, text/x-ssa, text/ass, application/octet-stream;q=0.9, */*;q=0.8"
             )
             let data = try await fetchData(with: request)
+            NetworkDebugLogger.logBodyPreview(data, label: "RemoteMediaLibraryFallback.subtitleFile")
             if let text = String(data: data, encoding: .utf8), !text.isEmpty {
                 return text
             }
@@ -1044,6 +1056,17 @@ private func fetchData(with request: URLRequest) async throws -> Data {
         throw APIError.serverError(statusCode: httpResponse.statusCode)
     }
     return data
+}
+
+private func mapRawSubtitleInfoPayload(_ rawSubtitles: [[String: Any]]) -> [RemoteMediaLibraryClient.Subtitle] {
+    rawSubtitles.map { item in
+        let fileName = (item["fileName"] as? String)
+            ?? (item["FileName"] as? String)
+            ?? "subtitle-\(UUID().uuidString)"
+        let fileSize = (item["fileSize"] as? Int)
+            ?? (item["FileSize"] as? Int)
+        return .init(fileName: fileName, fileSize: fileSize)
+    }
 }
 
 extension DependencyValues {
