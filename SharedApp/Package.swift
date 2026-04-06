@@ -19,10 +19,10 @@ let package = Package(
         .library(name: "DependenciesMacro", targets: ["DependenciesMacro"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.6.1"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.1"),
         .package(url: "https://github.com/apple/swift-openapi-generator", from: "1.10.3"),
-        .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.8.3"),
-        .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.1.0"),
+        .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.11.0"),
+        .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.2.0"),
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.22.3"),
         .package(url: "https://github.com/swiftlang/swift-syntax", "509.0.0"..<"603.0.0"),
         .package(url: "https://github.com/debugly/fsplayer-spm.git", exact: "1.0.5"),
