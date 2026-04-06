@@ -1333,8 +1333,8 @@ private struct PlayerWindowObserver: NSViewRepresentable {
             notificationTokens.forEach(NotificationCenter.default.removeObserver)
             notificationTokens.removeAll()
             observedWindow = window
-            onWindowChanged(window)
-            onFullscreenChanged(window?.styleMask.contains(.fullScreen) ?? false)
+            reportWindowChange(window)
+            reportFullscreenChange(window?.styleMask.contains(.fullScreen) ?? false)
 
             guard let window else { return }
             notificationTokens.append(
@@ -1344,7 +1344,7 @@ private struct PlayerWindowObserver: NSViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     Task { @MainActor in
-                        self?.onFullscreenChanged(true)
+                        self?.reportFullscreenChange(true)
                     }
                 }
             )
@@ -1355,10 +1355,22 @@ private struct PlayerWindowObserver: NSViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     Task { @MainActor in
-                        self?.onFullscreenChanged(false)
+                        self?.reportFullscreenChange(false)
                     }
                 }
             )
+        }
+
+        private func reportWindowChange(_ window: NSWindow?) {
+            Task { @MainActor in
+                onWindowChanged(window)
+            }
+        }
+
+        private func reportFullscreenChange(_ fullscreen: Bool) {
+            Task { @MainActor in
+                onFullscreenChanged(fullscreen)
+            }
         }
     }
 }
