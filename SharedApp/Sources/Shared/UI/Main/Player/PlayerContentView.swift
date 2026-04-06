@@ -272,16 +272,7 @@ private struct PlayerContentMainView: View {
     }
     
     private func currentTitle(for episode: Components.Schemas.LibraryBangumiEpisode) -> String {
-        if let episodeTitle = episode.episodeTitle, !episodeTitle.isEmpty {
-            return episodeTitle
-        }
-        if let displayTitle = episode.displayTitle, !displayTitle.isEmpty {
-            return displayTitle
-        }
-        if let number = episode.episodeNumber, !number.isEmpty {
-            return "第\(number)话"
-        }
-        return "未命名剧集"
+        currentTitleStatic(for: episode)
     }
     
     @ViewBuilder
@@ -290,24 +281,37 @@ private struct PlayerContentMainView: View {
         let effectiveDuration = max(duration, 1)
         let displayedTime = isScrubbing ? scrubPosition : min(playerController.timeline.currentTime, effectiveDuration)
 
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             if let current = viewStore.currentItem {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("正在播放")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .tracking(0.8)
                     Text(currentTitle(for: current.episode))
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.96))
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.97))
                         .lineLimit(1)
-                    Text(current.file.name ?? "未知文件")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.72))
-                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        metadataPill(
+                            title: current.file.name ?? "未知文件",
+                            systemImage: "doc.text"
+                        )
+                        if let episodeNumber = current.episode.episodeNumber, !episodeNumber.isEmpty {
+                            metadataPill(
+                                title: "第\(episodeNumber)话",
+                                systemImage: "play.tv"
+                            )
+                        }
+                    }
                     Text(current.stream.url.absoluteString)
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.white.opacity(0.62))
+                        .foregroundStyle(.white.opacity(0.58))
                         .lineLimit(1)
                         .textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 2)
             }
 
             Slider(
@@ -332,63 +336,82 @@ private struct PlayerContentMainView: View {
             HStack(spacing: 14) {
                 Text(formatPlaybackTime(displayedTime))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.78))
-                    .frame(width: 52, alignment: .leading)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 58, alignment: .leading)
 
-                HStack(spacing: 8) {
-                    glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
-                        viewStore.send(.playPrevious)
+                HStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
+                            viewStore.send(.playPrevious)
+                        }
+                        glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
+                            playerController.togglePlayPause()
+                        }
+                        glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
+                            viewStore.send(.playNext)
+                        }
                     }
-                    glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
-                        playerController.togglePlayPause()
-                    }
-                    glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
-                        viewStore.send(.playNext)
-                    }
-                }
+                    .padding(6)
+                    .background(controlClusterBackground(opacity: 0.18))
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 0)
 
-                HStack(spacing: 8) {
-                    if isFullscreen {
-                        episodeMenu(viewStore: viewStore)
-                    }
-                    glassIconButton("gobackward.10") {
-                        playerController.seekBy(-10)
-                    }
-                    speedMenu()
-                    glassIconButton("goforward.10") {
-                        playerController.seekBy(10)
-                    }
-                    audioMenu(viewStore: viewStore)
-                    subtitleMenu(viewStore: viewStore)
+                    HStack(spacing: 8) {
+                        if isFullscreen {
+                            episodeMenu(viewStore: viewStore)
+                        }
+                        glassIconButton("gobackward.10") {
+                            playerController.seekBy(-10)
+                        }
+                        speedMenu()
+                        glassIconButton("goforward.10") {
+                            playerController.seekBy(10)
+                        }
+                        audioMenu(viewStore: viewStore)
+                        subtitleMenu(viewStore: viewStore)
 #if os(macOS)
-                    glassIconButton(
-                        isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-                    ) {
-                        observedWindow?.toggleFullScreen(nil)
-                    }
+                        glassIconButton(
+                            isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+                        ) {
+                            observedWindow?.toggleFullScreen(nil)
+                        }
 #endif
+                    }
+                    .padding(6)
+                    .background(controlClusterBackground(opacity: 0.14))
                 }
 
                 Text(formatPlaybackTime(duration))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.78))
-                    .frame(width: 52, alignment: .trailing)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 58, alignment: .trailing)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 760)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .frame(maxWidth: 860)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.14),
+                                    Color.white.opacity(0.04)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        .shadow(color: .black.opacity(0.28), radius: 28, y: 14)
         .padding(.horizontal, 18)
         .padding(.bottom, 16)
 #if os(macOS)
@@ -508,8 +531,18 @@ private struct PlayerContentMainView: View {
     @ViewBuilder
     private func episodeSidebar(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("选集")
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("剧集")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.8)
+                Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+                Text("\(viewStore.playlist.count) 集内容")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             episodePagePicker(viewStore: viewStore)
             ScrollViewReader { proxy in
                 ScrollView {
@@ -518,35 +551,9 @@ private struct PlayerContentMainView: View {
                             Button {
                                 viewStore.send(.playItem(item.id))
                             } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(currentTitle(for: item.episode))
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(2)
-                                    Text(item.file.name ?? "未知文件")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(
-                                            viewStore.currentItem?.id == item.id
-                                            ? Color.accentColor.opacity(0.18)
-                                            : Color.white.opacity(0.06)
-                                        )
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(
-                                            viewStore.currentItem?.id == item.id
-                                            ? Color.accentColor.opacity(0.6)
-                                            : Color.white.opacity(0.08),
-                                            lineWidth: 1
-                                        )
+                                episodeBrowserRow(
+                                    item: item,
+                                    isSelected: viewStore.currentItem?.id == item.id
                                 )
                             }
                             .id(item.id)
@@ -566,16 +573,30 @@ private struct PlayerContentMainView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(18)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.12),
+                                    Color.white.opacity(0.03)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.14), radius: 22, y: 10)
     }
 
     @ViewBuilder
@@ -590,14 +611,14 @@ private struct PlayerContentMainView: View {
                         } label: {
                             Text(page.title)
                                 .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 9)
                                 .background(
                                     Capsule(style: .continuous)
                                         .fill(
                                             selectedEpisodePageIndex == page.index
-                                            ? Color.accentColor.opacity(0.24)
-                                            : Color.white.opacity(0.08)
+                                            ? Color.accentColor.opacity(0.22)
+                                            : Color.white.opacity(0.06)
                                         )
                                 )
                                 .overlay(
@@ -605,7 +626,7 @@ private struct PlayerContentMainView: View {
                                         .stroke(
                                             selectedEpisodePageIndex == page.index
                                             ? Color.accentColor.opacity(0.7)
-                                            : Color.white.opacity(0.08),
+                                            : Color.white.opacity(0.06),
                                             lineWidth: 1
                                         )
                                 )
@@ -1213,13 +1234,22 @@ private func glassIconButton(
     Button(action: action) {
         Image(systemName: systemName)
             .font(.system(size: 15, weight: .semibold))
-            .frame(width: 34, height: 34)
+            .frame(width: 38, height: 38)
             .contentShape(Circle())
     }
     .buttonStyle(.plain)
     .background(
         Circle()
-            .fill(.white.opacity(0.14))
+            .fill(
+                LinearGradient(
+                    colors: [
+                        .white.opacity(0.2),
+                        .white.opacity(0.1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
     )
     .foregroundStyle(.white)
     .opacity(isDisabled ? 0.4 : 1)
@@ -1237,8 +1267,8 @@ private func glassCapsuleLabel(title: String, systemImage: String) -> some View 
             .lineLimit(1)
     }
     .foregroundStyle(.white.opacity(0.9))
-    .padding(.horizontal, 10)
-    .padding(.vertical, 8)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 9)
     .background(
         Capsule(style: .continuous)
             .fill(.white.opacity(0.12))
@@ -1254,14 +1284,54 @@ private func playbackRateTitle(_ rate: Double) -> String {
 
 @MainActor
 @ViewBuilder
+private func metadataPill(title: String, systemImage: String) -> some View {
+    HStack(spacing: 6) {
+        Image(systemName: systemImage)
+            .font(.system(size: 10, weight: .semibold))
+        Text(title)
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+    }
+    .foregroundStyle(.white.opacity(0.78))
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
+    .background(
+        Capsule(style: .continuous)
+            .fill(.white.opacity(0.08))
+    )
+}
+
+@MainActor
+@ViewBuilder
+private func controlClusterBackground(opacity: Double) -> some View {
+    Capsule(style: .continuous)
+        .fill(
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(opacity + 0.06),
+                    Color.white.opacity(opacity * 0.55)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+}
+
+@MainActor
+@ViewBuilder
 private func selectionRowLabel(title: String, subtitle: String?, isSelected: Bool) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
         Image(systemName: "checkmark")
             .font(.system(size: 11, weight: .semibold))
             .frame(width: 14)
             .opacity(isSelected ? 1 : 0)
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
+                .fontWeight(isSelected ? .semibold : .medium)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.caption2)
@@ -1271,7 +1341,104 @@ private func selectionRowLabel(title: String, subtitle: String?, isSelected: Boo
         Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.vertical, 4)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+    )
+}
+
+@MainActor
+@ViewBuilder
+private func episodeBrowserRow(
+    item: PlayerPresenter.State.PlaylistItem,
+    isSelected: Bool
+) -> some View {
+    HStack(spacing: 12) {
+        episodeOrdinalBadge(for: item.episode)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(currentTitleStatic(for: item.episode))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+            Text(item.file.name ?? "未知文件")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        Spacer(minLength: 0)
+        if isSelected {
+            Image(systemName: "play.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .padding(8)
+                .background(
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.16))
+                )
+        }
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(
+                isSelected
+                ? LinearGradient(
+                    colors: [
+                        Color.accentColor.opacity(0.24),
+                        Color.accentColor.opacity(0.12)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                : LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.1),
+                        Color.white.opacity(0.04)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+    )
+    .overlay(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .stroke(
+                isSelected ? Color.accentColor.opacity(0.55) : Color.white.opacity(0.08),
+                lineWidth: 1
+            )
+    )
+}
+
+@MainActor
+@ViewBuilder
+private func episodeOrdinalBadge(for episode: Components.Schemas.LibraryBangumiEpisode) -> some View {
+    let label = episode.episodeNumber?.isEmpty == false ? (episode.episodeNumber ?? "") : "EP"
+    Text(label)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.white.opacity(0.82))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(.white.opacity(0.08))
+        )
+}
+
+private func currentTitleStatic(for episode: Components.Schemas.LibraryBangumiEpisode) -> String {
+    if let episodeTitle = episode.episodeTitle, !episodeTitle.isEmpty {
+        return episodeTitle
+    }
+    if let displayTitle = episode.displayTitle, !displayTitle.isEmpty {
+        return displayTitle
+    }
+    if let number = episode.episodeNumber, !number.isEmpty {
+        return "第\(number)话"
+    }
+    return "未命名剧集"
 }
 
 #if os(macOS)
