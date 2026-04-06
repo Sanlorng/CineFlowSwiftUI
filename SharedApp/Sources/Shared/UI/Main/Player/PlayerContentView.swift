@@ -46,6 +46,7 @@ private struct PlayerContentMainView: View {
     @State private var isFullscreen = false
     @State private var isCursorHidden = false
     @State private var lastPointerLocation: CGPoint?
+    @State private var pointerSettleTask: Task<Void, Never>?
     @State private var hideControlsTask: Task<Void, Never>?
     
     var body: some View {
@@ -115,6 +116,7 @@ private struct PlayerContentMainView: View {
                                 isFullscreen = fullscreen
                                 updateWindowToolbarVisibility()
                                 if !fullscreen {
+                                    cancelFullscreenPointerTasks()
                                     showCursorIfNeeded()
                                 }
                                 revealControls()
@@ -137,7 +139,11 @@ private struct PlayerContentMainView: View {
                             case .ended:
                                 isPointerInsidePlayer = false
                                 lastPointerLocation = nil
-                                scheduleControlBarVisibilityUpdate()
+                                if isFullscreen {
+                                    scheduleFullscreenHideCountdown()
+                                } else {
+                                    scheduleControlBarVisibilityUpdate()
+                                }
                             }
                         }
 #endif
@@ -166,8 +172,7 @@ private struct PlayerContentMainView: View {
                             scrubPosition = 0
                             isScrubbing = false
                             lastPointerLocation = nil
-                            hideControlsTask?.cancel()
-                            hideControlsTask = nil
+                            cancelFullscreenPointerTasks()
                             isFullscreen = false
                             updateWindowToolbarVisibility()
                             showCursorIfNeeded()
@@ -347,11 +352,18 @@ private struct PlayerContentMainView: View {
 #if os(macOS)
         .onHover { inside in
             isPointerInsideControls = inside
-            if inside {
-                cancelControlBarAutoHide()
-                revealControls()
+            if isFullscreen {
+                if inside {
+                    cancelFullscreenPointerTasks()
+                    revealControls()
+                }
+            } else {
+                if inside {
+                    cancelControlBarAutoHide()
+                    revealControls()
+                }
+                scheduleControlBarVisibilityUpdate()
             }
-            scheduleControlBarVisibilityUpdate()
         }
 #endif
     }
@@ -636,6 +648,7 @@ private struct PlayerContentMainView: View {
 #if os(macOS)
         if isFullscreen {
             if isAnyControlPopoverPresented || isPointerInsideControls {
+                cancelPointerSettleTask()
                 if isCursorHidden {
                     showCursorIfNeeded()
                 }
@@ -646,17 +659,7 @@ private struct PlayerContentMainView: View {
                 }
                 return
             }
-
-            hideControlsTask = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(3))
-                guard isFullscreen,
-                      !isPointerInsideControls,
-                      !isAnyControlPopoverPresented else { return }
-                hideCursorIfNeeded()
-                withAnimation(.easeInOut(duration: 0.22)) {
-                    isControlBarVisible = false
-                }
-            }
+            scheduleFullscreenHideCountdown()
             return
         }
 
@@ -701,6 +704,23 @@ private struct PlayerContentMainView: View {
     }
 
     private func handlePlayerPointerMovement() {
+        if isFullscreen {
+            if isCursorHidden || !isControlBarVisible {
+                revealControls()
+            } else {
+                cancelControlBarAutoHide()
+            }
+            cancelPointerSettleTask()
+            pointerSettleTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(120))
+                pointerSettleTask = nil
+                guard isFullscreen,
+                      !isPointerInsideControls,
+                      !isAnyControlPopoverPresented else { return }
+                scheduleFullscreenHideCountdown()
+            }
+            return
+        }
         revealControls()
         scheduleControlBarVisibilityUpdate()
     }
@@ -708,6 +728,30 @@ private struct PlayerContentMainView: View {
     private func cancelControlBarAutoHide() {
         hideControlsTask?.cancel()
         hideControlsTask = nil
+    }
+
+    private func cancelPointerSettleTask() {
+        pointerSettleTask?.cancel()
+        pointerSettleTask = nil
+    }
+
+    private func cancelFullscreenPointerTasks() {
+        cancelPointerSettleTask()
+        cancelControlBarAutoHide()
+    }
+
+    private func scheduleFullscreenHideCountdown() {
+        cancelControlBarAutoHide()
+        hideControlsTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard isFullscreen,
+                  !isPointerInsideControls,
+                  !isAnyControlPopoverPresented else { return }
+            hideCursorIfNeeded()
+            withAnimation(.easeInOut(duration: 0.22)) {
+                isControlBarVisible = false
+            }
+        }
     }
 
 #if os(macOS)
