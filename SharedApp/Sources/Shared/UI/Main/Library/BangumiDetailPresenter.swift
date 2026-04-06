@@ -132,42 +132,44 @@ struct BangumiDetailPresenter {
             state.errorMessage = "媒体库地址无效，无法播放。"
             return .none
         }
-        do {
-            let prepared = try preparePlaylist(
-                detail: detail,
-                baseURL: baseURL,
-                token: state.configuration.apiToken,
-                configuration: state.configuration,
-                selectedEpisode: selectedEpisode,
-                selectedFile: selectedFile
-            )
-            state.fileSelection = nil
-            state.errorMessage = nil
-            return .run { send in
+        state.fileSelection = nil
+        state.errorMessage = nil
+        let token = state.configuration.apiToken
+        let configuration = state.configuration
+        return .run { [remoteClient] send in
+            do {
+                let prepared = try await preparePlaylist(
+                    remoteClient: remoteClient,
+                    detail: detail,
+                    baseURL: baseURL,
+                    token: token,
+                    configuration: configuration,
+                    selectedEpisode: selectedEpisode,
+                    selectedFile: selectedFile
+                )
                 await send(.delegate(.startPlayback(prepared)))
+            } catch let error as PlaybackPreparationError {
+                switch error {
+                case .missingEpisodes:
+                    await send(.detailFailed("无法构建播放列表。"))
+                case .missingStream(let reason):
+                    await send(.detailFailed(reason))
+                }
+            } catch {
+                await send(.detailFailed(error.localizedDescription))
             }
-        } catch let error as PlaybackPreparationError {
-            switch error {
-            case .missingEpisodes:
-                state.errorMessage = "无法构建播放列表。"
-            case .missingStream(let reason):
-                state.errorMessage = reason
-            }
-            return .none
-        } catch {
-            state.errorMessage = error.localizedDescription
-            return .none
         }
     }
 
     private func preparePlaylist(
+        remoteClient: RemoteMediaLibraryClient,
         detail: Components.Schemas.LibraryBangumiDetailsResponse,
         baseURL: URL,
         token: String?,
         configuration: LibraryPresenter.State.Configuration,
         selectedEpisode: Components.Schemas.LibraryBangumiEpisode,
         selectedFile: Components.Schemas.LibraryBangumiMatchedFile
-    ) throws -> PlayerPresenter.State {
+    ) async throws -> PlayerPresenter.State {
         guard let episodes = detail.episodes, !episodes.isEmpty else {
             throw PlaybackPreparationError.missingEpisodes
         }
@@ -205,7 +207,7 @@ struct BangumiDetailPresenter {
                 throw PlaybackPreparationError.missingStream("文件 \(chosenFile.name ?? "未知") 缺少标识符。")
             }
 
-            let stream = try remoteClient.makeStreamContext(baseURL, token, fileID)
+            let stream = try await remoteClient.makeStreamContext(baseURL, token, fileID)
             let item = PlayerPresenter.State.PlaylistItem(
                 episode: episode,
                 file: chosenFile,

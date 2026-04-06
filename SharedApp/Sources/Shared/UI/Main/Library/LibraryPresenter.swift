@@ -570,7 +570,7 @@ struct RemoteMediaLibraryClient {
     var fetchWelcome: @Sendable (_ baseURL: URL, _ token: String?) async throws -> Welcome
     var fetchBangumiList: @Sendable (_ baseURL: URL, _ token: String?, _ sort: LibraryPresenter.SortOption) async throws -> [Components.Schemas.LibraryBangumiSummary]
     var fetchBangumiDetail: @Sendable (_ baseURL: URL, _ token: String?, _ animeId: Int) async throws -> Components.Schemas.LibraryBangumiDetailsResponse
-    var makeStreamContext: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) throws -> StreamContext
+    var makeStreamContext: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> StreamContext
     var fetchDanmakuXML: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> String
     var fetchSubtitleInfo: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> [Subtitle]
     var fetchSubtitleFile: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String, _ fileName: String) async throws -> String
@@ -630,16 +630,27 @@ extension RemoteMediaLibraryClient: DependencyKey {
                 }
             },
             makeStreamContext: { baseURL, token, fileID in
-                let path = "/api/v1/stream/id/\(fileID)"
-                var queryItems: [URLQueryItem] = []
-                var headers: [String: String] = [:]
-                headers["Accept"] = "video/*"
-                if let token, !token.isEmpty {
-                    headers["Authorization"] = "Bearer \(token)"
-                    queryItems.append(.init(name: "token", value: token))
+                do {
+                    return try await fetchWebPlayerStreamContext(
+                        baseURL: baseURL,
+                        token: token,
+                        fileID: fileID
+                    )
+                } catch {
+#if DEBUG
+                    print("[Network][RemoteMediaLibrary] web player stream fallback reason: \(error)")
+#endif
+                    let path = "/api/v1/stream/id/\(fileID)"
+                    var queryItems: [URLQueryItem] = []
+                    var headers: [String: String] = [:]
+                    headers["Accept"] = "video/*"
+                    if let token, !token.isEmpty {
+                        headers["Authorization"] = "Bearer \(token)"
+                        queryItems.append(.init(name: "token", value: token))
+                    }
+                    let url = buildOperationURL(baseURL: baseURL, path: path, queryItems: queryItems)
+                    return StreamContext(url: url, headers: headers)
                 }
-                let url = buildOperationURL(baseURL: baseURL, path: path, queryItems: queryItems)
-                return StreamContext(url: url, headers: headers)
             },
             fetchDanmakuXML: { baseURL, token, fileID in
                 let api = try makeClient(baseURL: baseURL, token: token)
@@ -927,6 +938,64 @@ private func buildOperationURL(
         components.queryItems = (components.queryItems ?? []) + queryItems
     }
     return components.url ?? baseURL.appendingPathComponent(trimmedPath)
+}
+
+private func fetchWebPlayerStreamContext(
+    baseURL: URL,
+    token: String?,
+    fileID: String
+) async throws -> RemoteMediaLibraryClient.StreamContext {
+    let pageURL = buildOperationURL(
+        baseURL: baseURL,
+        path: "/web1/video.html",
+        queryItems: tokenQueryItems(token) + [.init(name: "id", value: fileID)]
+    )
+    let request = makeAuthorizedRequest(
+        url: pageURL,
+        token: token,
+        accept: "text/html,application/xhtml+xml"
+    )
+    let data = try await fetchData(with: request)
+    let html = String(data: data, encoding: .utf8)
+        ?? String(data: data, encoding: .unicode)
+        ?? ""
+    guard let relativePath = extractWebPlayerVideoPath(from: html) else {
+        throw APIError.unexpectedResponse("播放页面里没有找到 DPlayer 视频地址。")
+    }
+
+    let playbackURL: URL
+    if let absoluteURL = URL(string: relativePath), absoluteURL.scheme != nil {
+        playbackURL = absoluteURL
+    } else {
+        playbackURL = buildOperationURL(baseURL: baseURL, path: relativePath, queryItems: [])
+    }
+
+    var headers: [String: String] = ["Accept": "video/*"]
+    if let token, !token.isEmpty {
+        headers["Authorization"] = "Bearer \(token)"
+    }
+    return .init(url: playbackURL, headers: headers)
+}
+
+private func extractWebPlayerVideoPath(from html: String) -> String? {
+    let patterns = [
+        #"url:\s*'([^']+)'"#,
+        #"url:\s*"([^"]+)""#
+    ]
+    for pattern in patterns {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        guard let match = regex.firstMatch(in: html, range: range),
+              match.numberOfRanges > 1,
+              let captureRange = Range(match.range(at: 1), in: html) else {
+            continue
+        }
+        let path = String(html[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !path.isEmpty {
+            return path
+        }
+    }
+    return nil
 }
 
 private func mapSubtitleInfoPayload(

@@ -130,6 +130,8 @@ struct PlayerPresenter {
         case showFilePicker
         case fileSelectionDismissed
         case fileSelected(Components.Schemas.LibraryBangumiMatchedFile)
+        case streamContextResolved(Components.Schemas.LibraryBangumiMatchedFile, RemoteMediaLibraryClient.StreamContext)
+        case streamContextFailed(String)
         case setPlaybackError(String?)
         case delegate(DelegateAction)
     }
@@ -407,30 +409,42 @@ struct PlayerPresenter {
                 guard state.playlist.indices.contains(state.currentIndex) else {
                     return .none
                 }
-                do {
-                    guard let baseURL = state.configuration.baseURL else {
-                        state.subtitleError = "媒体库地址无效。"
-                        return .none
-                    }
-                    guard let fileID = file.id, !fileID.isEmpty else {
-                        state.subtitleError = "选定的文件缺少标识符。"
-                        return .none
-                    }
-
-                    let stream = try remoteClient.makeStreamContext(baseURL, state.configuration.apiToken, fileID)
-                    state.playlist[state.currentIndex].file = file
-                    state.playlist[state.currentIndex].stream = stream
-                    state.fileSelection = nil
-                    state.playbackError = nil
-                    state.selectedSubtitle = nil
-                    state.selectedEmbeddedSubtitleTrackID = nil
-                    state.activeSubtitle = nil
-                    state.isLoadingSelectedSubtitle = false
-                    return loadSubtitles(for: &state)
-                } catch {
-                    state.subtitleError = error.localizedDescription
+                guard let baseURL = state.configuration.baseURL else {
+                    state.subtitleError = "媒体库地址无效。"
                     return .none
                 }
+                guard let fileID = file.id, !fileID.isEmpty else {
+                    state.subtitleError = "选定的文件缺少标识符。"
+                    return .none
+                }
+
+                let token = state.configuration.apiToken
+                return .run { [remoteClient] send in
+                    do {
+                        let stream = try await remoteClient.makeStreamContext(baseURL, token, fileID)
+                        await send(.streamContextResolved(file, stream))
+                    } catch {
+                        await send(.streamContextFailed(error.localizedDescription))
+                    }
+                }
+
+            case let .streamContextResolved(file, stream):
+                guard state.playlist.indices.contains(state.currentIndex) else {
+                    return .none
+                }
+                state.playlist[state.currentIndex].file = file
+                state.playlist[state.currentIndex].stream = stream
+                state.fileSelection = nil
+                state.playbackError = nil
+                state.selectedSubtitle = nil
+                state.selectedEmbeddedSubtitleTrackID = nil
+                state.activeSubtitle = nil
+                state.isLoadingSelectedSubtitle = false
+                return loadSubtitles(for: &state)
+
+            case let .streamContextFailed(message):
+                state.subtitleError = message
+                return .none
                 
             case let .setPlaybackError(message):
                 state.playbackError = message
