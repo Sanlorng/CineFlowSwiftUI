@@ -66,135 +66,30 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    GeometryReader { geometry in
-                        let subtitleViewportSize = subtitleOverlayViewportSize(in: geometry.size)
-                        ZStack(alignment: .bottom) {
-                            PlayerView(
-                                backend: .defaultDistributable,
-                                source: .init(
-                                    url: stream.url,
-                                    headers: stream.headers
-                                ),
-                                controller: playerController,
+                    if isFullscreen {
+                        playerStage(
+                            viewStore: viewStore,
+                            stream: stream,
+                            options: options,
+                            customSubtitleDocument: customSubtitleDocument
+                        )
+                    } else {
+                        HStack(alignment: .top, spacing: 18) {
+                            playerStage(
+                                viewStore: viewStore,
+                                stream: stream,
                                 options: options,
+                                customSubtitleDocument: customSubtitleDocument
                             )
-                                .onStateChanged { state in
-                                    switch state {
-                                    case .error(let message):
-                                        viewStore.send(.setPlaybackError(message ?? "播放失败。"))
-                                    case .playing, .completed:
-                                        viewStore.send(.setPlaybackError(nil))
-                                    case .buffering, .preparing, .paused, .stopped, .idle:
-                                        break
-                                    }
-                                }
-                                .onFinish { error in
-                                    if let error {
-                                        viewStore.send(.setPlaybackError(error.localizedDescription))
-                                    }
-                                }
-                                .onTracksChanged { tracks in
-                                    guard let fileID = viewStore.currentFileID else { return }
-                                    viewStore.send(.playerTracksChanged(fileID, tracks))
-                                }
-                            SubtitleRendererOverlay(
-                                document: customSubtitleDocument,
-                                playbackTime: playerController.timeline.currentTime,
-                                onReadinessChanged: { ready in
-                                    isSubtitleRendererReady = ready
-                                }
-                            )
-                            .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                            playbackControlBar(viewStore: viewStore)
-                                .opacity(isControlBarVisible ? 1 : 0)
-                                .offset(y: isControlBarVisible ? 0 : 28)
-                                .scaleEffect(isControlBarVisible ? 1 : 0.97, anchor: .bottom)
-                                .allowsHitTesting(isControlBarVisible)
-#if os(macOS)
-                        PlayerWindowObserver(
-                            onWindowChanged: { window in
-                                observedWindow = window
-                                isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
-                                updateWindowToolbarVisibility()
-                                scheduleControlBarVisibilityUpdate()
-                            },
-                            onFullscreenChanged: { fullscreen in
-                                isFullscreen = fullscreen
-                                updateWindowToolbarVisibility()
-                                if !fullscreen {
-                                    cancelFullscreenPointerTasks()
-                                    showCursorIfNeeded()
-                                }
-                                revealControls()
-                            }
-                            )
-                            .frame(width: 0, height: 0)
-#endif
+                            .frame(maxWidth: .infinity)
+
+                            episodeSidebar(viewStore: viewStore)
+                                .frame(width: 300)
                         }
                     }
-                        .frame(minHeight: 240, maxHeight: isFullscreen ? .infinity : nil)
-                        .clipped()
-#if os(macOS)
-                        .onContinuousHover(coordinateSpace: .local) { phase in
-                            switch phase {
-                            case let .active(location):
-                                isPointerInsidePlayer = true
-                                if didPointerMove(to: location) {
-                                    handlePlayerPointerMovement()
-                                }
-                            case .ended:
-                                isPointerInsidePlayer = false
-                                lastPointerLocation = nil
-                                if isFullscreen {
-                                    scheduleFullscreenHideCountdown()
-                                } else {
-                                    scheduleControlBarVisibilityUpdate()
-                                }
-                            }
-                        }
-#endif
-                        .onAppear {
-                            viewStore.send(.onAppear)
-                            viewStore.send(.setPlaybackError(nil))
-                            revealControls()
-                        }
-                        .onChange(of: viewStore.currentItem?.stream) { _, newStream in
-                            guard newStream != nil else { return }
-                            playerController.reset()
-                            scrubPosition = 0
-                            isScrubbing = false
-                            isSubtitleRendererReady = false
-                            isAudioPopoverPresented = false
-                            isSubtitlePopoverPresented = false
-                            isSpeedPopoverPresented = false
-                            revealControls()
-                            viewStore.send(.setPlaybackError(nil))
-                        }
-                        .onChange(of: playerController.timeline.currentTime) { _, newValue in
-                            guard !isScrubbing else { return }
-                            scrubPosition = newValue
-                        }
-                        .onDisappear {
-                            playerController.reset()
-                            scrubPosition = 0
-                            isScrubbing = false
-                            isSubtitleRendererReady = false
-                            lastPointerLocation = nil
-                            cancelFullscreenPointerTasks()
-                            isFullscreen = false
-                            updateWindowToolbarVisibility()
-                            showCursorIfNeeded()
-                        }
                 } else {
                     Text("暂无可播放内容。")
                         .foregroundStyle(.secondary)
-                }
-                
-                if !isFullscreen {
-                    metadataSection(viewStore: viewStore)
-                    playlistSection(viewStore: viewStore)
                 }
                 
                 if !isFullscreen, let error = viewStore.subtitleError {
@@ -244,36 +139,148 @@ private struct PlayerContentMainView: View {
             scheduleControlBarVisibilityUpdate()
         }
     }
-    
+
     @ViewBuilder
-    private func metadataSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
-        if let current = viewStore.currentItem {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(currentTitle(for: current.episode))
-                    .font(.title3)
-                    .bold()
-                Text(current.stream.url.absoluteString)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(current.file.name ?? "未知文件")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+    private func playerStage(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+        stream: RemoteMediaLibraryClient.StreamContext,
+        options: PlayerLoadOptions,
+        customSubtitleDocument: SubtitleDocument?
+    ) -> some View {
+        GeometryReader { geometry in
+            let subtitleViewportSize = subtitleOverlayViewportSize(in: geometry.size)
+            ZStack(alignment: .bottom) {
+                PlayerView(
+                    backend: .defaultDistributable,
+                    source: .init(
+                        url: stream.url,
+                        headers: stream.headers
+                    ),
+                    controller: playerController,
+                    options: options,
+                )
+                    .onStateChanged { state in
+                        switch state {
+                        case .error(let message):
+                            viewStore.send(.setPlaybackError(message ?? "播放失败。"))
+                        case .playing, .completed:
+                            viewStore.send(.setPlaybackError(nil))
+                        case .buffering, .preparing, .paused, .stopped, .idle:
+                            break
+                        }
+                    }
+                    .onFinish { error in
+                        if let error {
+                            viewStore.send(.setPlaybackError(error.localizedDescription))
+                        }
+                    }
+                    .onTracksChanged { tracks in
+                        guard let fileID = viewStore.currentFileID else { return }
+                        viewStore.send(.playerTracksChanged(fileID, tracks))
+                    }
+                SubtitleRendererOverlay(
+                    document: customSubtitleDocument,
+                    playbackTime: playerController.timeline.currentTime,
+                    onReadinessChanged: { ready in
+                        isSubtitleRendererReady = ready
+                    }
+                )
+                .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                playbackControlBar(viewStore: viewStore)
+                    .opacity(isControlBarVisible ? 1 : 0)
+                    .offset(y: isControlBarVisible ? 0 : 28)
+                    .scaleEffect(isControlBarVisible ? 1 : 0.97, anchor: .bottom)
+                    .allowsHitTesting(isControlBarVisible)
+#if os(macOS)
+                PlayerWindowObserver(
+                    onWindowChanged: { window in
+                        observedWindow = window
+                        isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
+                        updateWindowToolbarVisibility()
+                        scheduleControlBarVisibilityUpdate()
+                    },
+                    onFullscreenChanged: { fullscreen in
+                        isFullscreen = fullscreen
+                        updateWindowToolbarVisibility()
+                        if !fullscreen {
+                            cancelFullscreenPointerTasks()
+                            showCursorIfNeeded()
+                        }
+                        revealControls()
+                    }
+                )
+                .frame(width: 0, height: 0)
+#endif
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: 240, maxHeight: isFullscreen ? .infinity : nil)
+        .clipped()
+#if os(macOS)
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case let .active(location):
+                isPointerInsidePlayer = true
+                if didPointerMove(to: location) {
+                    handlePlayerPointerMovement()
+                }
+            case .ended:
+                isPointerInsidePlayer = false
+                lastPointerLocation = nil
+                if isFullscreen {
+                    scheduleFullscreenHideCountdown()
+                } else {
+                    scheduleControlBarVisibilityUpdate()
+                }
+            }
+        }
+#endif
+        .onAppear {
+            viewStore.send(.onAppear)
+            viewStore.send(.setPlaybackError(nil))
+            revealControls()
+        }
+        .onChange(of: viewStore.currentItem?.stream) { _, newStream in
+            guard newStream != nil else { return }
+            playerController.reset()
+            scrubPosition = 0
+            isScrubbing = false
+            isSubtitleRendererReady = false
+            isAudioPopoverPresented = false
+            isSubtitlePopoverPresented = false
+            isSpeedPopoverPresented = false
+            revealControls()
+            viewStore.send(.setPlaybackError(nil))
+        }
+        .onChange(of: playerController.timeline.currentTime) { _, newValue in
+            guard !isScrubbing else { return }
+            scrubPosition = newValue
+        }
+        .onDisappear {
+            playerController.reset()
+            scrubPosition = 0
+            isScrubbing = false
+            isSubtitleRendererReady = false
+            lastPointerLocation = nil
+            cancelFullscreenPointerTasks()
+            isFullscreen = false
+            updateWindowToolbarVisibility()
+            showCursorIfNeeded()
         }
     }
     
     private func currentTitle(for episode: Components.Schemas.LibraryBangumiEpisode) -> String {
-        var components: [String] = []
-        if let number = episode.episodeNumber, !number.isEmpty {
-            components.append("#\(number)")
-        }
         if let episodeTitle = episode.episodeTitle, !episodeTitle.isEmpty {
-            components.append(episodeTitle)
-        } else if let displayTitle = episode.displayTitle, !displayTitle.isEmpty {
-            components.append(displayTitle)
+            return episodeTitle
         }
-        return components.isEmpty ? "未命名剧集" : components.joined(separator: " ")
+        if let displayTitle = episode.displayTitle, !displayTitle.isEmpty {
+            return displayTitle
+        }
+        if let number = episode.episodeNumber, !number.isEmpty {
+            return "第\(number)话"
+        }
+        return "未命名剧集"
     }
     
     @ViewBuilder
@@ -283,6 +290,25 @@ private struct PlayerContentMainView: View {
         let displayedTime = isScrubbing ? scrubPosition : min(playerController.timeline.currentTime, effectiveDuration)
 
         VStack(spacing: 10) {
+            if let current = viewStore.currentItem {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(currentTitle(for: current.episode))
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.96))
+                        .lineLimit(1)
+                    Text(current.file.name ?? "未知文件")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(1)
+                    Text(current.stream.url.absoluteString)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.white.opacity(0.62))
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Slider(
                 value: Binding(
                     get: { displayedTime },
@@ -329,7 +355,9 @@ private struct PlayerContentMainView: View {
                 Spacer(minLength: 0)
 
                 HStack(spacing: 8) {
-                    episodeMenu(viewStore: viewStore)
+                    if isFullscreen {
+                        episodeMenu(viewStore: viewStore)
+                    }
                     speedMenu()
                     audioMenu(viewStore: viewStore)
                     subtitleMenu(viewStore: viewStore)
@@ -421,7 +449,7 @@ private struct PlayerContentMainView: View {
             revealControls()
         } label: {
             glassCapsuleLabel(
-                title: currentTitle(for: viewStore.currentItem?.episode ?? .init()),
+                title: "选集",
                 systemImage: "list.bullet.rectangle"
             )
         }
@@ -447,6 +475,66 @@ private struct PlayerContentMainView: View {
             }
             .frame(width: 280, height: min(CGFloat(max(viewStore.playlist.count, 1)) * 54, 320))
         }
+    }
+
+    @ViewBuilder
+    private func episodeSidebar(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("选集")
+                .font(.headline)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewStore.playlist) { item in
+                        Button {
+                            viewStore.send(.playItem(item.id))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(currentTitle(for: item.episode))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                Text(item.file.name ?? "未知文件")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(
+                                        viewStore.currentItem?.id == item.id
+                                        ? Color.accentColor.opacity(0.18)
+                                        : Color.white.opacity(0.06)
+                                    )
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(
+                                        viewStore.currentItem?.id == item.id
+                                        ? Color.accentColor.opacity(0.6)
+                                        : Color.white.opacity(0.08),
+                                        lineWidth: 1
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(14)
+            }
+        }
+        .padding(16)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
     }
 
     @ViewBuilder
