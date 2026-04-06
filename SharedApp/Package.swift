@@ -52,6 +52,12 @@ let package = Package(
                 "Shared"
             ]
         ),
+        .testTarget(
+            name: "SharedTests",
+            dependencies: [
+                "Shared"
+            ]
+        ),
         .target(
             name: "RemoteMediaLibrary",
             dependencies: [

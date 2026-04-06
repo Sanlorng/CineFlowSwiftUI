@@ -58,8 +58,6 @@ struct PlayerPresenter {
         var selectedSubtitle: RemoteMediaLibraryClient.Subtitle?
         var subtitleError: String?
         var activeSubtitle: LoadedSubtitle?
-        var currentSubtitleLayout: FSPlayerOptions.SubtitleLayout = .standard
-        var isSubtitleLayoutAutoAdjustEnabled = true
         var fileSelection: FileSelection?
         var playbackError: String?
         var areSubtitlesSuppressed = false
@@ -94,7 +92,6 @@ struct PlayerPresenter {
         case subtitleContentResponse(RemoteMediaLibraryClient.Subtitle, TaskResult<String>)
         case subtitleCleared
         case setSubtitlesSuppressed(Bool)
-        case subtitleLayoutChanged(FSPlayerOptions.SubtitleLayout)
         case showFilePicker
         case fileSelectionDismissed
         case fileSelected(Components.Schemas.LibraryBangumiMatchedFile)
@@ -143,7 +140,6 @@ struct PlayerPresenter {
                 state.isLoadingSubtitles = false
                 state.availableSubtitles = subtitles
                 state.subtitleError = nil
-                state.isSubtitleLayoutAutoAdjustEnabled = true
                 state.activeSubtitle = nil
                 state.selectedSubtitle = nil
                 state.isLoadingSelectedSubtitle = false
@@ -156,8 +152,6 @@ struct PlayerPresenter {
                 state.selectedSubtitle = nil
                 state.activeSubtitle = nil
                 state.subtitleError = error.localizedDescription
-                state.currentSubtitleLayout = .standard
-                state.isSubtitleLayoutAutoAdjustEnabled = true
                 state.isLoadingSelectedSubtitle = false
                 state.areSubtitlesSuppressed = false
                 return .none
@@ -194,11 +188,12 @@ struct PlayerPresenter {
                 guard state.selectedSubtitle?.id == subtitle.id else {
                     return .none
                 }
-                state.activeSubtitle = .init(fileName: subtitle.fileName, content: content)
+                let preparedContent = SubtitleSanitizer.prepareForFSPlayer(
+                    rawText: content,
+                    fileName: subtitle.fileName
+                )
                 state.subtitleError = nil
-                if state.isSubtitleLayoutAutoAdjustEnabled {
-                    state.currentSubtitleLayout = guessSubtitleLayout(for: subtitle.fileName)
-                }
+                state.activeSubtitle = .init(fileName: subtitle.fileName, content: preparedContent)
                 return .none
 
             case let .subtitleContentResponse(subtitle, .failure(error)):
@@ -214,8 +209,6 @@ struct PlayerPresenter {
                 state.activeSubtitle = nil
                 state.subtitleError = nil
                 state.areSubtitlesSuppressed = true
-                state.currentSubtitleLayout = .standard
-                state.isSubtitleLayoutAutoAdjustEnabled = true
                 state.isLoadingSelectedSubtitle = false
                 return .none
 
@@ -227,11 +220,6 @@ struct PlayerPresenter {
                     state.isLoadingSelectedSubtitle = false
                 }
                 state.subtitleError = nil
-                return .none
-
-            case let .subtitleLayoutChanged(layout):
-                state.currentSubtitleLayout = layout
-                state.isSubtitleLayoutAutoAdjustEnabled = false
                 return .none
                 
             case .showFilePicker:
@@ -269,8 +257,6 @@ struct PlayerPresenter {
                     state.selectedSubtitle = nil
                     state.activeSubtitle = nil
                     state.isLoadingSelectedSubtitle = false
-                    state.currentSubtitleLayout = .standard
-                    state.isSubtitleLayoutAutoAdjustEnabled = true
                     return loadSubtitles(for: &state)
                 } catch {
                     state.subtitleError = error.localizedDescription
@@ -295,8 +281,6 @@ struct PlayerPresenter {
             state.selectedSubtitle = nil
             state.activeSubtitle = nil
             state.isLoadingSubtitles = false
-            state.currentSubtitleLayout = .standard
-            state.isSubtitleLayoutAutoAdjustEnabled = true
             state.areSubtitlesSuppressed = false
             state.isLoadingSelectedSubtitle = false
             return .none
@@ -304,8 +288,6 @@ struct PlayerPresenter {
         guard let baseURL = state.configuration.baseURL else {
             state.subtitleError = "媒体库地址无效。"
             state.activeSubtitle = nil
-            state.currentSubtitleLayout = .standard
-            state.isSubtitleLayoutAutoAdjustEnabled = true
             state.areSubtitlesSuppressed = false
             state.isLoadingSelectedSubtitle = false
             return .none
@@ -315,8 +297,6 @@ struct PlayerPresenter {
         state.selectedSubtitle = nil
         state.activeSubtitle = nil
         state.subtitleError = nil
-        state.currentSubtitleLayout = .standard
-        state.isSubtitleLayoutAutoAdjustEnabled = true
         state.areSubtitlesSuppressed = false
         state.isLoadingSelectedSubtitle = false
         let token = state.configuration.apiToken
@@ -330,36 +310,4 @@ struct PlayerPresenter {
             )
         }
     }
-}
-
-private func guessSubtitleLayout(for fileName: String) -> FSPlayerOptions.SubtitleLayout {
-    let lowercased = fileName.lowercased()
-    let directKeywords = [
-        "bilingual",
-        "dual",
-        "双语",
-        "雙語",
-        "双語",
-        "中日",
-        "日中",
-        "中英",
-        "英中"
-    ]
-    if directKeywords.contains(where: { lowercased.contains($0) }) {
-        return .bilingual
-    }
-    
-    let chineseTokens = ["chs", "chi", "zh", "cn", "sc", "tc", "gb", "big5", "繁", "简", "漢", "汉", "中"]
-    let japaneseTokens = ["jp", "ja", "jpn", "jap", "日"]
-    let englishTokens = ["eng", "en"]
-    
-    let containsChinese = chineseTokens.contains(where: { lowercased.contains($0) })
-    let containsJapanese = japaneseTokens.contains(where: { lowercased.contains($0) })
-    let containsEnglish = englishTokens.contains(where: { lowercased.contains($0) })
-    
-    if (containsChinese && containsJapanese) || (containsChinese && containsEnglish) {
-        return .bilingual
-    }
-    
-    return .standard
 }

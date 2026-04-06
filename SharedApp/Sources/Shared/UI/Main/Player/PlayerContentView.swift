@@ -35,9 +35,7 @@ private struct PlayerContentMainView: View {
             VStack(spacing: 16) {
                 if let stream = viewStore.currentItem?.stream {
                     let options = makeOptions(
-                        for: stream,
-                        layout: viewStore.currentSubtitleLayout,
-                        forceOverrideEmbedded: !viewStore.isSubtitleLayoutAutoAdjustEnabled
+                        for: stream
                     )
                     let externalSubtitle = viewStore.activeSubtitle.map {
                         FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.content)
@@ -206,22 +204,10 @@ private struct PlayerContentMainView: View {
                                 viewStore.send(.subtitleSelected(subtitle))
                             }
                         }
-                        Divider()
                     }
-                    Picker(
-                        selection: viewStore.binding(
-                            get: \.currentSubtitleLayout,
-                            send: PlayerPresenter.Action.subtitleLayoutChanged
-                        ),
-                        label: Text("字幕布局")
-                    ) {
-                        Text("标准").tag(FSPlayerOptions.SubtitleLayout.standard)
-                        Text("双语").tag(FSPlayerOptions.SubtitleLayout.bilingual)
-                    }
-                    .disabled(viewStore.areSubtitlesSuppressed)
                 } label: {
                     Label(
-                        subtitleMenuTitle(for: viewStore.selectedSubtitle?.fileName, layout: viewStore.currentSubtitleLayout),
+                        subtitleMenuTitle(for: viewStore.selectedSubtitle?.fileName),
                         systemImage: "captions.bubble"
                     )
                 }
@@ -347,35 +333,20 @@ private struct PlayerFileSelectionView: View {
 }
 
 private func makeOptions(
-    for stream: RemoteMediaLibraryClient.StreamContext,
-    layout: FSPlayerOptions.SubtitleLayout,
-    forceOverrideEmbedded: Bool
+    for stream: RemoteMediaLibraryClient.StreamContext
 ) -> FSPlayerOptions {
     FSPlayerOptions(
         headers: stream.headers,
         enableHardwareDecoding: true,
-        allowAutoPlay: true,
-        subtitleLayout: layout,
-        forceOverrideEmbeddedStyling: forceOverrideEmbedded
+        allowAutoPlay: true
     )
 }
 
-private func subtitleMenuTitle(for fileName: String?, layout: FSPlayerOptions.SubtitleLayout) -> String {
+private func subtitleMenuTitle(for fileName: String?) -> String {
     guard let fileName, !fileName.isEmpty else {
         return "选择字幕"
     }
-    return "\(fileName) · \(layout.displayName)"
-}
-
-private extension FSPlayerOptions.SubtitleLayout {
-    var displayName: String {
-        switch self {
-        case .standard:
-            return "标准"
-        case .bilingual:
-            return "双语"
-        }
-    }
+    return fileName
 }
 
 private extension Color {

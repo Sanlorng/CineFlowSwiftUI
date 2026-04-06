@@ -2,29 +2,18 @@ import Foundation
 import FSPlayer
 
 struct FSPlayerOptions: Equatable {
-    enum SubtitleLayout: Int, CaseIterable, Hashable {
-        case standard
-        case bilingual
-    }
-
     var headers: [String: String]
     var enableHardwareDecoding: Bool
     var allowAutoPlay: Bool
-    var subtitleLayout: SubtitleLayout
-    var forceOverrideEmbeddedStyling: Bool
 
     init(
         headers: [String: String] = [:],
         enableHardwareDecoding: Bool = true,
-        allowAutoPlay: Bool = true,
-        subtitleLayout: SubtitleLayout = .standard,
-        forceOverrideEmbeddedStyling: Bool = false
+        allowAutoPlay: Bool = true
     ) {
         self.headers = headers
         self.enableHardwareDecoding = enableHardwareDecoding
         self.allowAutoPlay = allowAutoPlay
-        self.subtitleLayout = subtitleLayout
-        self.forceOverrideEmbeddedStyling = forceOverrideEmbeddedStyling
     }
 
     func makeOptions() -> FSOptions {

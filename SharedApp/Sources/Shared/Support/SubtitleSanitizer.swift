@@ -9,19 +9,37 @@ enum SubtitleSanitizer {
 
     private struct DialogueEntry {
         let index: Int
-        var fields: [String]
+        let fields: [String]
         let style: String
-        let start: String
-        let end: String
+        let styleIndex: Int
         let textIndex: Int
         let language: Language
-        let baseKey: String
-        let layer: Int?
-        let marginV: Int?
-        let alignment: Int?
+        let pairingKey: String?
     }
 
-    static func sanitizeASS(forFSPlayer rawText: String) -> String? {
+    static func prepareForFSPlayer(rawText: String, fileName: String) -> String {
+        guard isASSFile(fileName),
+              let document = parseASS(rawText),
+              document.supportsBilingualLayout else {
+            return rawText
+        }
+        return makeMergedBilingualASS(document: document)
+    }
+
+    private struct ASSDocument {
+        let lines: [String]
+        let dialogueEntries: [DialogueEntry]
+        let styleIndex: Int
+        let textIndex: Int
+        let supportsBilingualLayout: Bool
+    }
+
+    private static func isASSFile(_ fileName: String) -> Bool {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        return ext == "ass" || ext == "ssa"
+    }
+
+    private static func parseASS(_ rawText: String) -> ASSDocument? {
         let normalized = rawText.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
         guard lines.contains(where: { $0.hasPrefix("Dialogue:") }) else {
@@ -32,11 +50,6 @@ enum SubtitleSanitizer {
         var formatFieldCount = 0
         var textFieldIndex = -1
         var styleFieldIndex: Int?
-        var startFieldIndex: Int?
-        var endFieldIndex: Int?
-        var layerFieldIndex: Int?
-        var marginVFieldIndex: Int?
-        var alignmentFieldIndex: Int?
         var dialogueEntries: [DialogueEntry] = []
 
         for (index, line) in lines.enumerated() {
@@ -53,76 +66,97 @@ enum SubtitleSanitizer {
                 let uppercased = fields.map { $0.uppercased() }
                 textFieldIndex = uppercased.firstIndex(of: "TEXT") ?? -1
                 styleFieldIndex = uppercased.firstIndex(of: "STYLE")
-                startFieldIndex = uppercased.firstIndex(of: "START")
-                endFieldIndex = uppercased.firstIndex(of: "END")
-                layerFieldIndex = uppercased.firstIndex(of: "LAYER")
-                marginVFieldIndex = uppercased.firstIndex(of: "MARGINV")
-                alignmentFieldIndex = uppercased.firstIndex(of: "ALIGNMENT")
                 continue
             }
             guard trimmed.hasPrefix("Dialogue:") else { continue }
-            guard formatFieldCount > 0, textFieldIndex >= 0 else { continue }
+            guard formatFieldCount > 0,
+                  textFieldIndex >= 0,
+                  let styleIndex = styleFieldIndex else { continue }
             let payload = trimmed.dropFirst("Dialogue:".count)
             guard let fields = splitASSFields(String(payload), expected: formatFieldCount) else { continue }
-            let style = fieldValue(from: fields, preferredIndex: styleFieldIndex, fallbackIndex: 3)
-            let start = fieldValue(from: fields, preferredIndex: startFieldIndex, fallbackIndex: 1)
-            let end = fieldValue(from: fields, preferredIndex: endFieldIndex, fallbackIndex: 2)
+            let style = fields[styleIndex]
             let language = languageForStyle(style)
-            let baseKey = makeBaseStyleKey(style)
-            let layer = intValue(from: fields, at: layerFieldIndex)
-            let marginV = intValue(from: fields, at: marginVFieldIndex)
-            let alignment = intValue(from: fields, at: alignmentFieldIndex)
+            let pairingKey = makePairingKey(fields: fields, styleIndex: styleIndex, textIndex: textFieldIndex, style: style)
             let entry = DialogueEntry(
                 index: index,
                 fields: fields,
                 style: style,
-                start: start,
-                end: end,
+                styleIndex: styleIndex,
                 textIndex: textFieldIndex,
                 language: language,
-                baseKey: baseKey,
-                layer: layer,
-                marginV: marginV,
-                alignment: alignment
+                pairingKey: pairingKey
             )
             dialogueEntries.append(entry)
         }
 
-        guard !dialogueEntries.isEmpty else { return nil }
+        guard !dialogueEntries.isEmpty,
+              let styleIndex = styleFieldIndex else { return nil }
 
         var groups: [String: [DialogueEntry]] = [:]
         for entry in dialogueEntries {
-            let key = "\(entry.start)|\(entry.end)|\(entry.baseKey)"
+            guard let key = entry.pairingKey else { continue }
             groups[key, default: []].append(entry)
+        }
+
+        let supportsBilingualLayout = groups.values.contains { entries in
+            entries.contains(where: { $0.language == .japanese }) &&
+            entries.contains(where: { $0.language == .chinese })
+        }
+
+        return ASSDocument(
+            lines: lines,
+            dialogueEntries: dialogueEntries,
+            styleIndex: styleIndex,
+            textIndex: textFieldIndex,
+            supportsBilingualLayout: supportsBilingualLayout
+        )
+    }
+
+    private static func makeMergedBilingualASS(document: ASSDocument) -> String {
+        var grouped: [String: [DialogueEntry]] = [:]
+        for entry in document.dialogueEntries {
+            guard let key = entry.pairingKey else { continue }
+            grouped[key, default: []].append(entry)
         }
 
         var replacements: [Int: String] = [:]
         var skipIndices = Set<Int>()
 
-        for (_, entries) in groups {
-            let jpEntries = entries.filter { $0.language == .japanese }
-            let chEntries = entries.filter { $0.language == .chinese }
-            guard layoutIsMergeCompatible(entries) else { continue }
-            guard let primary = chEntries.first ?? jpEntries.first else { continue }
-            guard !jpEntries.isEmpty && !chEntries.isEmpty else { continue }
-            var primaryFields = primary.fields
-            let jpText = jpEntries.first?.fields[primary.textIndex] ?? ""
-            let chText = chEntries.first?.fields[primary.textIndex] ?? ""
-            let combinedText = combinedASSLine(japaneseText: jpText, japaneseStyle: jpEntries.first?.style ?? primary.style, chineseText: chText, chineseStyle: chEntries.first?.style ?? primary.style)
-            primaryFields[primary.textIndex] = combinedText
-            let newLine = "Dialogue: " + primaryFields.joined(separator: ",")
-            replacements[primary.index] = newLine
-            for entry in entries where entry.index != primary.index {
-                skipIndices.insert(entry.index)
+        for entries in grouped.values {
+            let jpEntries = entries.filter { $0.language == .japanese }.sorted { $0.index < $1.index }
+            let chEntries = entries.filter { $0.language == .chinese }.sorted { $0.index < $1.index }
+            let pairCount = min(jpEntries.count, chEntries.count)
+            guard pairCount > 0 else { continue }
+
+            for idx in 0..<pairCount {
+                let jp = jpEntries[idx]
+                let ch = chEntries[idx]
+                let primary = jp.index <= ch.index ? jp : ch
+                let secondary = primary.index == jp.index ? ch : jp
+                var fields = primary.fields
+                fields[document.textIndex] = combinedASSLine(
+                    japaneseText: jp.fields[document.textIndex],
+                    japaneseStyle: jp.style,
+                    chineseText: ch.fields[document.textIndex],
+                    chineseStyle: ch.style
+                )
+                replacements[primary.index] = "Dialogue: " + fields.joined(separator: ",")
+                skipIndices.insert(secondary.index)
             }
         }
 
-        guard !replacements.isEmpty else { return nil }
+        return render(document: document, replacements: replacements, skipIndices: skipIndices)
+    }
 
+    private static func render(
+        document: ASSDocument,
+        replacements: [Int: String],
+        skipIndices: Set<Int>
+    ) -> String {
         var output: [String] = []
-        output.reserveCapacity(lines.count)
+        output.reserveCapacity(document.lines.count)
 
-        for (index, line) in lines.enumerated() {
+        for (index, line) in document.lines.enumerated() {
             if skipIndices.contains(index) { continue }
             if let replacement = replacements[index] {
                 output.append(replacement)
@@ -153,53 +187,75 @@ enum SubtitleSanitizer {
         return fields.count == expected ? fields : nil
     }
 
-    private static func fieldValue(from fields: [String], preferredIndex: Int?, fallbackIndex: Int) -> String {
-        if let index = preferredIndex, fields.indices.contains(index) {
-            return fields[index]
-        }
-        let safeIndex = min(max(fallbackIndex, 0), fields.count - 1)
-        return fields[safeIndex]
-    }
-
-    private static func intValue(from fields: [String], at index: Int?) -> Int? {
-        guard let index, fields.indices.contains(index) else { return nil }
-        return Int(fields[index].trimmingCharacters(in: .whitespaces))
-    }
-
     private static func languageForStyle(_ style: String) -> Language {
-        let lower = style.lowercased()
-        if lower.contains("_jp") || lower.hasSuffix("jp") {
+        guard let role = styleRole(for: style) else {
+            return .other
+        }
+        switch role.language {
+        case .japanese:
             return .japanese
-        }
-        if lower.contains("_ch") || lower.hasSuffix("ch") {
+        case .chinese:
             return .chinese
+        case .other:
+            return .other
         }
-        return .other
     }
 
-    private static func makeBaseStyleKey(_ style: String) -> String {
-        var base = style
-        base = base.replacingOccurrences(of: "_JP_Top", with: "_Top", options: .caseInsensitive)
-        base = base.replacingOccurrences(of: "_CH_Top", with: "_Top", options: .caseInsensitive)
-        base = base.replacingOccurrences(of: "_JP", with: "", options: .caseInsensitive)
-        base = base.replacingOccurrences(of: "_CH", with: "", options: .caseInsensitive)
-        return base
+    private static func makePairingKey(
+        fields: [String],
+        styleIndex: Int,
+        textIndex: Int,
+        style: String
+    ) -> String? {
+        guard let role = styleRole(for: style) else {
+            return nil
+        }
+        var normalized = fields
+        normalized[styleIndex] = role.baseKey
+        normalized[textIndex] = ""
+        return normalized.joined(separator: "\u{1F}")
+    }
+
+    private struct StyleRole {
+        let language: Language
+        let baseKey: String
+    }
+
+    private static func styleRole(for style: String) -> StyleRole? {
+        let patterns = [
+            "_(JP|CH)(\\d*)$",
+            "(JP|CH)(\\d*)$"
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let range = NSRange(style.startIndex..<style.endIndex, in: style)
+            guard let match = regex.firstMatch(in: style, options: [], range: range),
+                  match.range.location != NSNotFound,
+                  let langRange = Range(match.range(at: 1), in: style) else {
+                continue
+            }
+
+            let languageToken = style[langRange].lowercased()
+            let language: Language = languageToken == "jp" ? .japanese : .chinese
+            let base = regex.stringByReplacingMatches(
+                in: style,
+                options: [],
+                range: range,
+                withTemplate: pattern.hasPrefix("_") ? "_$2" : "$2"
+            )
+            let normalizedBase = base.replacingOccurrences(of: "__", with: "_")
+            return StyleRole(language: language, baseKey: normalizedBase)
+        }
+
+        return nil
     }
 
     private static func combinedASSLine(japaneseText: String, japaneseStyle: String, chineseText: String, chineseStyle: String) -> String {
         let jpSegment = "{\\r\(japaneseStyle)}\(japaneseText)"
         let chSegment = "{\\r\(chineseStyle)}\(chineseText)"
         return jpSegment + "\\N" + chSegment
-    }
-
-    private static func layoutIsMergeCompatible(_ entries: [DialogueEntry]) -> Bool {
-        // Preserve original stacked layout when languages rely on different layers or margins.
-        guard let reference = entries.first else { return false }
-        for entry in entries {
-            if entry.layer != reference.layer { return false }
-            if entry.alignment != reference.alignment { return false }
-            if entry.marginV != reference.marginV { return false }
-        }
-        return true
     }
 }
