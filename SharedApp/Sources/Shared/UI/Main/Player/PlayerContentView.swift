@@ -132,9 +132,7 @@ private struct PlayerContentMainView: View {
                             case let .active(location):
                                 isPointerInsidePlayer = true
                                 if didPointerMove(to: location) {
-                                    showCursorIfNeeded()
-                                    revealControls()
-                                    scheduleControlBarVisibilityUpdate()
+                                    handlePlayerPointerMovement()
                                 }
                             case .ended:
                                 isPointerInsidePlayer = false
@@ -350,6 +348,7 @@ private struct PlayerContentMainView: View {
         .onHover { inside in
             isPointerInsideControls = inside
             if inside {
+                cancelControlBarAutoHide()
                 revealControls()
             }
             scheduleControlBarVisibilityUpdate()
@@ -617,7 +616,7 @@ private struct PlayerContentMainView: View {
     }
 
     private func revealControls() {
-        hideControlsTask?.cancel()
+        cancelControlBarAutoHide()
         let needsCursorReveal = isCursorHidden
         let needsControlBarReveal = !isControlBarVisible
 
@@ -632,15 +631,36 @@ private struct PlayerContentMainView: View {
     }
 
     private func scheduleControlBarVisibilityUpdate() {
-        hideControlsTask?.cancel()
+        cancelControlBarAutoHide()
 
 #if os(macOS)
-        let shouldHideLater: Bool
         if isFullscreen {
-            shouldHideLater = !isPointerInsideControls && !isAnyControlPopoverPresented
-        } else {
-            shouldHideLater = !isPointerInsidePlayer && !isAnyControlPopoverPresented
+            if isAnyControlPopoverPresented || isPointerInsideControls {
+                if isCursorHidden {
+                    showCursorIfNeeded()
+                }
+                if !isControlBarVisible {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isControlBarVisible = true
+                    }
+                }
+                return
+            }
+
+            hideControlsTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                guard isFullscreen,
+                      !isPointerInsideControls,
+                      !isAnyControlPopoverPresented else { return }
+                hideCursorIfNeeded()
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    isControlBarVisible = false
+                }
+            }
+            return
         }
+
+        let shouldHideLater = !isPointerInsidePlayer && !isAnyControlPopoverPresented
 #else
         let shouldHideLater = false
 #endif
@@ -678,6 +698,16 @@ private struct PlayerContentMainView: View {
                 isControlBarVisible = false
             }
         }
+    }
+
+    private func handlePlayerPointerMovement() {
+        revealControls()
+        scheduleControlBarVisibilityUpdate()
+    }
+
+    private func cancelControlBarAutoHide() {
+        hideControlsTask?.cancel()
+        hideControlsTask = nil
     }
 
 #if os(macOS)
