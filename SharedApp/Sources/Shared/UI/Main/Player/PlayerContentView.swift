@@ -41,6 +41,7 @@ private struct PlayerContentMainView: View {
     @State private var isAudioPopoverPresented = false
     @State private var isSubtitlePopoverPresented = false
     @State private var isSpeedPopoverPresented = false
+    @State private var isEpisodePopoverPresented = false
     @State private var observedWindow: NSWindow?
     @State private var isFullscreen = false
     @State private var hideControlsTask: Task<Void, Never>?
@@ -113,10 +114,13 @@ private struct PlayerContentMainView: View {
                     }
                         .frame(minHeight: 240)
 #if os(macOS)
-                        .onHover { inside in
-                            isPointerInsidePlayer = inside
-                            if inside {
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active:
+                                isPointerInsidePlayer = true
                                 revealControls()
+                            case .ended:
+                                isPointerInsidePlayer = false
                             }
                             scheduleControlBarVisibilityUpdate()
                         }
@@ -153,17 +157,19 @@ private struct PlayerContentMainView: View {
                         .foregroundStyle(.secondary)
                 }
                 
-                metadataSection(viewStore: viewStore)
-                playlistSection(viewStore: viewStore)
+                if !isFullscreen {
+                    metadataSection(viewStore: viewStore)
+                    playlistSection(viewStore: viewStore)
+                }
                 
-                if let error = viewStore.subtitleError {
+                if !isFullscreen, let error = viewStore.subtitleError {
                     Text(error)
                         .font(.footnote)
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
-                if let playbackError = viewStore.playbackError, !playbackError.isEmpty {
+                if !isFullscreen, let playbackError = viewStore.playbackError, !playbackError.isEmpty {
                     Text(playbackError)
                         .font(.footnote)
                         .foregroundStyle(.red)
@@ -196,6 +202,9 @@ private struct PlayerContentMainView: View {
             scheduleControlBarVisibilityUpdate()
         }
         .onChange(of: isSpeedPopoverPresented) { _, _ in
+            scheduleControlBarVisibilityUpdate()
+        }
+        .onChange(of: isEpisodePopoverPresented) { _, _ in
             scheduleControlBarVisibilityUpdate()
         }
     }
@@ -281,6 +290,7 @@ private struct PlayerContentMainView: View {
                 Spacer(minLength: 0)
 
                 HStack(spacing: 8) {
+                    episodeMenu(viewStore: viewStore)
                     speedMenu()
                     audioMenu(viewStore: viewStore)
                     subtitleMenu(viewStore: viewStore)
@@ -358,6 +368,41 @@ private struct PlayerContentMainView: View {
     }
 
     @ViewBuilder
+    private func episodeMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        Button {
+            isEpisodePopoverPresented.toggle()
+            revealControls()
+        } label: {
+            glassCapsuleLabel(
+                title: currentTitle(for: viewStore.currentItem?.episode ?? .init()),
+                systemImage: "list.bullet.rectangle"
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isEpisodePopoverPresented, arrowEdge: .bottom) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(viewStore.playlist) { item in
+                        Button {
+                            viewStore.send(.playItem(item.id))
+                            isEpisodePopoverPresented = false
+                        } label: {
+                            selectionRowLabel(
+                                title: currentTitle(for: item.episode),
+                                subtitle: item.file.name ?? "未知文件",
+                                isSelected: viewStore.currentItem?.id == item.id
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(12)
+            }
+            .frame(width: 280, height: min(CGFloat(max(viewStore.playlist.count, 1)) * 54, 320))
+        }
+    }
+
+    @ViewBuilder
     private func audioMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
         Button {
             isAudioPopoverPresented.toggle()
@@ -374,9 +419,11 @@ private struct PlayerContentMainView: View {
         .buttonStyle(.plain)
         .popover(isPresented: $isAudioPopoverPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
-                Button("自动选择") {
+                Button(action: {
                     viewStore.send(.audioTrackSelected(nil))
                     isAudioPopoverPresented = false
+                }) {
+                    selectionRowLabel(title: "自动选择", subtitle: nil, isSelected: viewStore.selectedAudioTrackID == nil)
                 }
                 .buttonStyle(.plain)
                 ForEach(viewStore.availableAudioTracks) { track in
@@ -384,11 +431,7 @@ private struct PlayerContentMainView: View {
                         viewStore.send(.audioTrackSelected(track.id))
                         isAudioPopoverPresented = false
                     } label: {
-                        if viewStore.selectedAudioTrackID == track.id {
-                            Label(track.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(track.displayName)
-                        }
+                        selectionRowLabel(title: track.displayName, subtitle: track.language, isSelected: viewStore.selectedAudioTrackID == track.id)
                     }
                     .buttonStyle(.plain)
                 }
@@ -416,13 +459,21 @@ private struct PlayerContentMainView: View {
         .buttonStyle(.plain)
         .popover(isPresented: $isSubtitlePopoverPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
-                Button(viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕") {
+                Button(action: {
                     viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
+                }) {
+                    selectionRowLabel(
+                        title: viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕",
+                        subtitle: nil,
+                        isSelected: false
+                    )
                 }
                 .buttonStyle(.plain)
-                Button("导入本地字幕…") {
+                Button(action: {
                     isImportingLocalSubtitle = true
                     isSubtitlePopoverPresented = false
+                }) {
+                    selectionRowLabel(title: "导入本地字幕…", subtitle: nil, isSelected: false)
                 }
                 .buttonStyle(.plain)
 
@@ -446,11 +497,11 @@ private struct PlayerContentMainView: View {
                                 viewStore.send(.subtitleSelected(subtitle))
                                 isSubtitlePopoverPresented = false
                             } label: {
-                                if viewStore.selectedSubtitle?.id == subtitle.id {
-                                    Label(subtitle.fileName, systemImage: "checkmark")
-                                } else {
-                                    Text(subtitle.fileName)
-                                }
+                                selectionRowLabel(
+                                    title: subtitle.fileName,
+                                    subtitle: nil,
+                                    isSelected: viewStore.selectedSubtitle?.id == subtitle.id
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -467,12 +518,11 @@ private struct PlayerContentMainView: View {
                                 viewStore.send(.embeddedSubtitleSelected(subtitle.id))
                                 isSubtitlePopoverPresented = false
                             } label: {
-                                if viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id,
-                                   viewStore.selectedSubtitle == nil {
-                                    Label(subtitle.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(subtitle.displayName)
-                                }
+                                selectionRowLabel(
+                                    title: subtitle.displayName,
+                                    subtitle: subtitle.language,
+                                    isSelected: viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.selectedSubtitle == nil
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -509,7 +559,7 @@ private struct PlayerContentMainView: View {
     }
 
     private var isAnyControlPopoverPresented: Bool {
-        isAudioPopoverPresented || isSubtitlePopoverPresented || isSpeedPopoverPresented
+        isAudioPopoverPresented || isSubtitlePopoverPresented || isSpeedPopoverPresented || isEpisodePopoverPresented
     }
 
     private func revealControls() {
@@ -764,6 +814,28 @@ private func playbackRateTitle(_ rate: Double) -> String {
     return String(format: "%.2fx", rate)
 }
 
+@MainActor
+@ViewBuilder
+private func selectionRowLabel(title: String, subtitle: String?, isSelected: Bool) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Image(systemName: "checkmark")
+            .font(.system(size: 11, weight: .semibold))
+            .frame(width: 14)
+            .opacity(isSelected ? 1 : 0)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        Spacer(minLength: 0)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.vertical, 4)
+}
+
 #if os(macOS)
 private struct PlayerWindowObserver: NSViewRepresentable {
     let onWindowChanged: (NSWindow?) -> Void
@@ -784,6 +856,7 @@ private struct PlayerWindowObserver: NSViewRepresentable {
         context.coordinator.refresh(for: view.window)
     }
 
+    @MainActor
     final class Coordinator: NSObject {
         private let onWindowChanged: (NSWindow?) -> Void
         private let onFullscreenChanged: (Bool) -> Void
@@ -798,6 +871,7 @@ private struct PlayerWindowObserver: NSViewRepresentable {
             self.onFullscreenChanged = onFullscreenChanged
         }
 
+        @MainActor
         func refresh(for window: NSWindow?) {
             guard observedWindow !== window else { return }
             notificationTokens.forEach(NotificationCenter.default.removeObserver)
@@ -813,7 +887,9 @@ private struct PlayerWindowObserver: NSViewRepresentable {
                     object: window,
                     queue: .main
                 ) { [weak self] _ in
-                    self?.onFullscreenChanged(true)
+                    Task { @MainActor in
+                        self?.onFullscreenChanged(true)
+                    }
                 }
             )
             notificationTokens.append(
@@ -822,13 +898,11 @@ private struct PlayerWindowObserver: NSViewRepresentable {
                     object: window,
                     queue: .main
                 ) { [weak self] _ in
-                    self?.onFullscreenChanged(false)
+                    Task { @MainActor in
+                        self?.onFullscreenChanged(false)
+                    }
                 }
             )
-        }
-
-        deinit {
-            notificationTokens.forEach(NotificationCenter.default.removeObserver)
         }
     }
 }
