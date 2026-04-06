@@ -457,7 +457,8 @@ private struct PlayerContentMainView: View {
         } label: {
             glassCapsuleLabel(
                 title: subtitleMenuTitle(
-                    externalSubtitle: viewStore.selectedSubtitle?.fileName ?? viewStore.activeSubtitle?.fileName,
+                    externalSubtitle: viewStore.selectedSubtitle.map(externalSubtitleDisplayTitle(_:))
+                        ?? viewStore.activeSubtitle.flatMap { externalSubtitleDisplayTitle(fileName: $0.fileName) },
                     embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
                     isSuppressed: viewStore.areSubtitlesSuppressed
                 ),
@@ -506,7 +507,7 @@ private struct PlayerContentMainView: View {
                                 isSubtitlePopoverPresented = false
                             } label: {
                                 selectionRowLabel(
-                                    title: subtitle.fileName,
+                                    title: externalSubtitleDisplayTitle(subtitle),
                                     subtitle: nil,
                                     isSelected: viewStore.selectedSubtitle?.id == subtitle.id
                                 )
@@ -963,6 +964,16 @@ private func subtitleMenuTitle(
         return embeddedSubtitle
     }
     return "选择字幕"
+}
+
+private func externalSubtitleDisplayTitle(_ subtitle: RemoteMediaLibraryClient.Subtitle) -> String {
+    externalSubtitleDisplayTitle(fileName: subtitle.fileName) ?? subtitle.fileName
+}
+
+private func externalSubtitleDisplayTitle(fileName: String) -> String? {
+    let displayName = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
+    guard !displayName.isEmpty else { return nil }
+    return displayName
 }
 
 private let supportedSubtitleContentTypes: [UTType] = {

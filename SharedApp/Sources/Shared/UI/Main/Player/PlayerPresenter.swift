@@ -172,20 +172,11 @@ struct PlayerPresenter {
                 let backendSubtitleTracks = tracks
                     .filter { $0.kind == .subtitle && !$0.isExternal }
                     .compactMap(makeEmbeddedSubtitleTrack(from:))
-                let selectedBackendSubtitleTrackID = tracks
-                    .first(where: { $0.kind == .subtitle && !$0.isExternal && $0.isSelected })?
-                    .streamIndex
-                    .map(String.init)
                 state.availableEmbeddedSubtitles = mergeEmbeddedSubtitleTracks(
                     existing: state.availableEmbeddedSubtitles,
                     incoming: backendSubtitleTracks,
                     preferIncoming: false
                 )
-                if state.selectedEmbeddedSubtitleTrackID == nil,
-                   state.selectedSubtitle == nil,
-                   let selectedBackendSubtitleTrackID {
-                    state.selectedEmbeddedSubtitleTrackID = selectedBackendSubtitleTrackID
-                }
                 if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
                    state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
                     state.selectedEmbeddedSubtitleTrackID = nil
