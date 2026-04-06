@@ -1,6 +1,6 @@
 import Foundation
 
-struct FSPlayerOptions: Equatable {
+struct PlayerLoadOptions: Equatable, Sendable {
     var headers: [String: String]
     var enableHardwareDecoding: Bool
     var allowAutoPlay: Bool

@@ -31,7 +31,6 @@ struct PlayerContentView: View {
 
 private struct PlayerContentMainView: View {
     let store: StoreOf<PlayerPresenter>
-    @StateObject private var coordinator = FSVideoPlayer.Coordinator()
     @State private var playbackTime: TimeInterval = 0
     @State private var isImportingLocalSubtitle = false
     
@@ -47,14 +46,15 @@ private struct PlayerContentMainView: View {
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
                     ZStack {
-                        FSVideoPlayer(
-                            coordinator: coordinator,
-                            url: stream.url,
+                        PlayerView(
+                            backend: .defaultDistributable,
+                            source: .init(
+                                url: stream.url,
+                                headers: stream.headers
+                            ),
                             options: options,
-                            allowEmbeddedSubtitles: false,
-                            selectedEmbeddedSubtitleStreamIndex: nil
                         )
-                            .onStateChanged { _, state in
+                            .onStateChanged { state in
                                 switch state {
                                 case .error(let message):
                                     viewStore.send(.setPlaybackError(message ?? "播放失败。"))
@@ -64,12 +64,12 @@ private struct PlayerContentMainView: View {
                                     break
                                 }
                             }
-                            .onFinish { _, error in
+                            .onFinish { error in
                                 if let error {
                                     viewStore.send(.setPlaybackError(error.localizedDescription))
                                 }
                             }
-                            .onPlaybackTimeChanged { _, time in
+                            .onPlaybackTimeChanged { time in
                                 playbackTime = time
                             }
                         SubtitleRendererOverlay(
@@ -91,7 +91,6 @@ private struct PlayerContentMainView: View {
                         }
                         .onDisappear {
                             playbackTime = 0
-                            coordinator.resetPlayer()
                         }
                 } else {
                     Text("暂无可播放内容。")
@@ -420,8 +419,8 @@ private struct PlayerFileSelectionView: View {
 
 private func makeOptions(
     for stream: RemoteMediaLibraryClient.StreamContext
-) -> FSPlayerOptions {
-    FSPlayerOptions(
+) -> PlayerLoadOptions {
+    PlayerLoadOptions(
         headers: stream.headers,
         enableHardwareDecoding: true,
         allowAutoPlay: true

@@ -10,49 +10,30 @@ import AVKit
 private typealias PlatformViewRepresentable = NSViewRepresentable
 #endif
 
-struct FSVideoPlayer {
-    // The default distributable backend stays on Apple's system player APIs.
-    var coordinator: Coordinator
-    let url: URL
-    let options: FSPlayerOptions
-    let externalSubtitle: ExternalSubtitle?
-    let allowEmbeddedSubtitles: Bool
-    let selectedEmbeddedSubtitleStreamIndex: Int?
-
-    struct ExternalSubtitle: Equatable {
-        let fileName: String
-        let content: String
-    }
-
-    init(
-        coordinator: Coordinator,
-        url: URL,
-        options: FSPlayerOptions,
-        externalSubtitle: ExternalSubtitle? = nil,
-        allowEmbeddedSubtitles: Bool = true,
-        selectedEmbeddedSubtitleStreamIndex: Int? = nil
-    ) {
-        self.coordinator = coordinator
-        self.url = url
-        self.options = options
-        self.externalSubtitle = externalSubtitle
-        self.allowEmbeddedSubtitles = allowEmbeddedSubtitles
-        self.selectedEmbeddedSubtitleStreamIndex = selectedEmbeddedSubtitleStreamIndex
-    }
+struct AVFoundationPlayerView {
+    let source: PlayerSource
+    let options: PlayerLoadOptions
+    let onStateChanged: ((PlayerPlaybackState) -> Void)?
+    let onFinish: ((Error?) -> Void)?
+    let onPlaybackTimeChanged: ((TimeInterval) -> Void)?
 }
 
-extension FSVideoPlayer: PlatformViewRepresentable {
+extension AVFoundationPlayerView: PlatformViewRepresentable {
     func makeCoordinator() -> Coordinator {
-        coordinator
+        Coordinator(
+            onStateChanged: onStateChanged,
+            onFinish: onFinish,
+            onPlaybackTimeChanged: onPlaybackTimeChanged
+        )
     }
 
 #if canImport(UIKit)
     func makeUIView(context: Context) -> PlayerContainerView {
-        context.coordinator.makeView(url: url, options: options)
+        context.coordinator.makeView(source: source, options: options)
     }
 
     func updateUIView(_ view: PlayerContainerView, context: Context) {
-        context.coordinator.updateView(view: view, url: url, options: options)
+        context.coordinator.updateView(view: view, source: source, options: options)
     }
 
     static func dismantleUIView(_ view: PlayerContainerView, coordinator: Coordinator) {
@@ -60,11 +41,11 @@ extension FSVideoPlayer: PlatformViewRepresentable {
     }
 #elseif canImport(AppKit)
     func makeNSView(context: Context) -> PlayerContainerView {
-        context.coordinator.makeView(url: url, options: options)
+        context.coordinator.makeView(source: source, options: options)
     }
 
     func updateNSView(_ view: PlayerContainerView, context: Context) {
-        context.coordinator.updateView(view: view, url: url, options: options)
+        context.coordinator.updateView(view: view, source: source, options: options)
     }
 
     static func dismantleNSView(_ view: PlayerContainerView, coordinator: Coordinator) {
@@ -73,37 +54,25 @@ extension FSVideoPlayer: PlatformViewRepresentable {
 #endif
 }
 
-@MainActor
-extension FSVideoPlayer {
+extension AVFoundationPlayerView {
     @MainActor
     final class Coordinator: NSObject, ObservableObject, @unchecked Sendable {
-        enum State: Equatable {
-            case idle
-            case preparing
-            case buffering
-            case playing
-            case paused
-            case stopped
-            case completed
-            case error(String?)
-        }
+        private var onStateChanged: ((PlayerPlaybackState) -> Void)?
+        private var onFinish: ((Error?) -> Void)?
+        private var onPlaybackTimeChanged: ((TimeInterval) -> Void)?
 
-        var onStateChanged: ((Coordinator, State) -> Void)?
-        var onFinish: ((Coordinator, Error?) -> Void)?
-        var onPlaybackTimeChanged: ((Coordinator, TimeInterval) -> Void)?
-
-        private(set) var state: State = .idle {
+        private var state: PlayerPlaybackState = .idle {
             didSet {
                 guard state != oldValue else { return }
-                onStateChanged?(self, state)
+                onStateChanged?(state)
             }
         }
 
         private weak var view: PlayerContainerView?
         private var player: AVPlayer?
         private var playerItem: AVPlayerItem?
-        private var currentURL: URL?
-        private var currentOptions: FSPlayerOptions?
+        private var currentSource: PlayerSource?
+        private var currentOptions: PlayerLoadOptions?
         private var statusObservation: NSKeyValueObservation?
         private var timeControlObservation: NSKeyValueObservation?
         private var bufferEmptyObservation: NSKeyValueObservation?
@@ -111,18 +80,28 @@ extension FSVideoPlayer {
         private var periodicTimeObserver: Any?
         private var notificationTokens: [NSObjectProtocol] = []
 
-        func makeView(url: URL, options: FSPlayerOptions) -> PlayerContainerView {
+        init(
+            onStateChanged: ((PlayerPlaybackState) -> Void)?,
+            onFinish: ((Error?) -> Void)?,
+            onPlaybackTimeChanged: ((TimeInterval) -> Void)?
+        ) {
+            self.onStateChanged = onStateChanged
+            self.onFinish = onFinish
+            self.onPlaybackTimeChanged = onPlaybackTimeChanged
+        }
+
+        func makeView(source: PlayerSource, options: PlayerLoadOptions) -> PlayerContainerView {
             let view = PlayerContainerView(frame: .zero)
             self.view = view
-            attachPlayer(to: view, url: url, options: options)
+            attachPlayer(to: view, source: source, options: options)
             return view
         }
 
-        func updateView(view: PlayerContainerView, url: URL, options: FSPlayerOptions) {
+        func updateView(view: PlayerContainerView, source: PlayerSource, options: PlayerLoadOptions) {
             self.view = view
 
-            if url != currentURL {
-                attachPlayer(to: view, url: url, options: options)
+            if source != currentSource {
+                attachPlayer(to: view, source: source, options: options)
                 return
             }
 
@@ -139,7 +118,7 @@ extension FSVideoPlayer {
             player?.pause()
             player = nil
             playerItem = nil
-            currentURL = nil
+            currentSource = nil
             currentOptions = nil
             view?.attach(player: nil)
             if state != .idle {
@@ -147,14 +126,14 @@ extension FSVideoPlayer {
             }
         }
 
-        private func attachPlayer(to view: PlayerContainerView, url: URL, options: FSPlayerOptions) {
+        private func attachPlayer(to view: PlayerContainerView, source: PlayerSource, options: PlayerLoadOptions) {
             clearObservers()
 
-            currentURL = url
+            currentSource = source
             currentOptions = options
             state = .preparing
 
-            let asset = AVURLAsset(url: url)
+            let asset = makeAsset(for: source)
             let item = AVPlayerItem(asset: asset)
             let player = AVPlayer(playerItem: item)
             player.automaticallyWaitsToMinimizeStalling = true
@@ -169,7 +148,7 @@ extension FSVideoPlayer {
             }
         }
 
-        private func observe(player: AVPlayer, item: AVPlayerItem, options: FSPlayerOptions) {
+        private func observe(player: AVPlayer, item: AVPlayerItem, options: PlayerLoadOptions) {
             timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
                 Task { @MainActor in
                     self?.updateState(for: player, item: item)
@@ -182,7 +161,7 @@ extension FSVideoPlayer {
                     if item.status == .failed {
                         let message = item.error?.localizedDescription ?? "播放失败。"
                         self.state = .error(message)
-                        self.onFinish?(self, item.error)
+                        self.onFinish?(item.error)
                         return
                     }
                     self.updateState(for: player, item: item)
@@ -211,7 +190,7 @@ extension FSVideoPlayer {
             periodicTimeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 guard let self else { return }
                 MainActor.assumeIsolated {
-                    self.onPlaybackTimeChanged?(self, time.seconds.isFinite ? time.seconds : 0)
+                    self.onPlaybackTimeChanged?(time.seconds.isFinite ? time.seconds : 0)
                 }
             }
 
@@ -224,7 +203,7 @@ extension FSVideoPlayer {
                     guard let self else { return }
                     MainActor.assumeIsolated {
                         self.state = .completed
-                        self.onFinish?(self, nil)
+                        self.onFinish?(nil)
                     }
                 }
             )
@@ -239,10 +218,19 @@ extension FSVideoPlayer {
                     let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
                     MainActor.assumeIsolated {
                         self.state = .error(error?.localizedDescription ?? "播放失败。")
-                        self.onFinish?(self, error)
+                        self.onFinish?(error)
                     }
                 }
             )
+        }
+
+        private func makeAsset(for source: PlayerSource) -> AVURLAsset {
+            guard !source.headers.isEmpty else {
+                return AVURLAsset(url: source.url)
+            }
+
+            // Query-based auth remains the primary supported path for the current backend.
+            return AVURLAsset(url: source.url)
         }
 
         private func updateState(for player: AVPlayer, item: AVPlayerItem) {
@@ -277,24 +265,6 @@ extension FSVideoPlayer {
             }
             notificationTokens.removeAll()
         }
-    }
-}
-
-@MainActor
-extension FSVideoPlayer {
-    func onStateChanged(_ handler: @escaping (Coordinator, Coordinator.State) -> Void) -> FSVideoPlayer {
-        coordinator.onStateChanged = handler
-        return self
-    }
-
-    func onFinish(_ handler: @escaping (Coordinator, Error?) -> Void) -> FSVideoPlayer {
-        coordinator.onFinish = handler
-        return self
-    }
-
-    func onPlaybackTimeChanged(_ handler: @escaping (Coordinator, TimeInterval) -> Void) -> FSVideoPlayer {
-        coordinator.onPlaybackTimeChanged = handler
-        return self
     }
 }
 
