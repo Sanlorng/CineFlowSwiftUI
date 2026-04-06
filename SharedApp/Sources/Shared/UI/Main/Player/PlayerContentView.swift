@@ -356,12 +356,12 @@ private struct PlayerContentMainView: View {
             if isFullscreen {
                 if inside {
                     cancelFullscreenPointerTasks()
-                    revealControls()
+                    revealControlsIfNeeded()
                 }
             } else {
                 if inside {
                     cancelControlBarAutoHide()
-                    revealControls()
+                    revealControlsIfNeeded()
                 }
                 scheduleControlBarVisibilityUpdate()
             }
@@ -638,27 +638,18 @@ private struct PlayerContentMainView: View {
         }
         guard needsControlBarReveal else { return }
 
-        if isFullscreen {
+        withAnimation(.easeOut(duration: 0.18)) {
             isControlBarVisible = true
-        } else {
-            withAnimation(.easeOut(duration: 0.18)) {
-                isControlBarVisible = true
-            }
         }
     }
 
-    private func revealControlsIfHiddenWithoutAnimation() {
-        if isCursorHidden {
-            showCursorIfNeeded()
-        }
-        guard !isControlBarVisible else { return }
-        if isFullscreen {
-            isControlBarVisible = true
-        } else {
-            withAnimation(.easeOut(duration: 0.18)) {
-                isControlBarVisible = true
-            }
-        }
+    private var shouldRevealControls: Bool {
+        isCursorHidden || !isControlBarVisible
+    }
+
+    private func revealControlsIfNeeded() {
+        guard shouldRevealControls else { return }
+        revealControls()
     }
 
     private func scheduleControlBarVisibilityUpdate() {
@@ -668,7 +659,7 @@ private struct PlayerContentMainView: View {
         if isFullscreen {
             if isAnyControlPopoverPresented || isPointerInsideControls {
                 cancelPointerSettleTask()
-                revealControlsIfHiddenWithoutAnimation()
+                revealControlsIfNeeded()
                 return
             }
             scheduleFullscreenHideCountdown()
@@ -681,7 +672,7 @@ private struct PlayerContentMainView: View {
 #endif
 
         guard shouldHideLater else {
-            revealControlsIfHiddenWithoutAnimation()
+            revealControlsIfNeeded()
             return
         }
 
@@ -710,7 +701,7 @@ private struct PlayerContentMainView: View {
 
     private func handlePlayerPointerMovement() {
         if isFullscreen {
-            if isCursorHidden || !isControlBarVisible {
+            if shouldRevealControls {
                 revealControls()
             } else {
                 cancelControlBarAutoHide()
@@ -726,7 +717,7 @@ private struct PlayerContentMainView: View {
             }
             return
         }
-        revealControls()
+        revealControlsIfNeeded()
         scheduleControlBarVisibilityUpdate()
     }
 
