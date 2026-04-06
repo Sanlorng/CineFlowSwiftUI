@@ -2,7 +2,10 @@
 /.vscode
 /.idea
 /.build
-/Packages
+/Packages/*
+!/Packages/SubtitleRenderer
+!/Packages/SubtitleRenderer/**
+/Packages/SubtitleRenderer/.build
 /**/xcshareddata/
 /**/Package.resolved
 xcuserdata/
