@@ -342,6 +342,7 @@ final class MPVContainerViewController: PlatformViewController {
     private func load(source: PlayerSource, options: PlayerLoadOptions) {
         guard let mpv else { return }
 
+        prepareForSourceChange()
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "videotoolbox" : "no")
         applyHTTPHeaders(source.headers, to: mpv)
         applyAudioTrackSelection(options.selectedAudioTrackID)
@@ -355,6 +356,14 @@ final class MPVContainerViewController: PlatformViewController {
         if options.allowAutoPlay {
             setPause(false)
         }
+    }
+
+    private func prepareForSourceChange() {
+        currentDuration = nil
+        eventSink.onVideoPresentationSizeChanged?(nil)
+        runCommand("stop")
+        isBuffering = false
+        isPaused = true
     }
 
     private func applyHTTPHeaders(_ headers: [String: String], to mpv: OpaquePointer) {

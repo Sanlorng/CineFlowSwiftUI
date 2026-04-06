@@ -275,6 +275,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         currentOptions = options
         guard let mpv else { return }
 
+        prepareForSourceChange()
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "auto-safe" : "no")
         applyHTTPHeaders(source.headers)
         applyAudioTrackSelection(options.selectedAudioTrackID)
@@ -289,6 +290,14 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         if options.allowAutoPlay {
             setPause(false)
         }
+    }
+
+    private func prepareForSourceChange() {
+        currentDuration = nil
+        eventSink.onVideoPresentationSizeChanged?(nil)
+        runCommand("stop", args: [])
+        isBuffering = false
+        isPaused = true
     }
 
     func apply(options: PlayerLoadOptions) {
