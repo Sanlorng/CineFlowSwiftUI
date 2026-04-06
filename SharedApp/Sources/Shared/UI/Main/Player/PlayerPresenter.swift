@@ -98,6 +98,8 @@ struct PlayerPresenter {
         case subtitleListResponse(TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
         case subtitleSelected(RemoteMediaLibraryClient.Subtitle)
         case subtitleContentResponse(RemoteMediaLibraryClient.Subtitle, TaskResult<String>)
+        case localSubtitleLoaded(fileName: String, content: String)
+        case localSubtitleLoadFailed(String)
         case embeddedSubtitleTracksChanged([FSVideoPlayer.EmbeddedSubtitleTrack], Int?)
         case embeddedSubtitleSelected(Int)
         case subtitleCleared
@@ -216,6 +218,25 @@ struct PlayerPresenter {
                     state.subtitleError = error.localizedDescription
                     state.activeSubtitle = nil
                 }
+                return .none
+
+            case let .localSubtitleLoaded(fileName, content):
+                state.areSubtitlesSuppressed = false
+                state.selectedSubtitle = nil
+                state.subtitleError = nil
+                state.isLoadingSelectedSubtitle = false
+                state.activeSubtitle = .init(
+                    fileName: fileName,
+                    rawContent: content,
+                    fsPlayerContent: SubtitleSanitizer.prepareForFSPlayer(
+                        rawText: content,
+                        fileName: fileName
+                    )
+                )
+                return .none
+
+            case let .localSubtitleLoadFailed(message):
+                state.subtitleError = message
                 return .none
 
             case let .embeddedSubtitleTracksChanged(tracks, selectedStreamIndex):

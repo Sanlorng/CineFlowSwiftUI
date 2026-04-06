@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import ComposableArchitecture
 import RemoteMediaLibrary
 import SubtitleRendererCore
@@ -34,6 +35,7 @@ private struct PlayerContentMainView: View {
     let store: StoreOf<PlayerPresenter>
     @StateObject private var coordinator = FSVideoPlayer.Coordinator()
     @State private var playbackTime: TimeInterval = 0
+    @State private var isImportingLocalSubtitle = false
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -218,6 +220,9 @@ private struct PlayerContentMainView: View {
                     Button(viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕") {
                         viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
                     }
+                    Button("导入本地字幕…") {
+                        isImportingLocalSubtitle = true
+                    }
                     if !viewStore.areSubtitlesSuppressed,
                        (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
                         Divider()
@@ -270,13 +275,31 @@ private struct PlayerContentMainView: View {
                 } label: {
                     Label(
                         subtitleMenuTitle(
-                            externalSubtitle: viewStore.selectedSubtitle?.fileName,
+                            externalSubtitle: viewStore.selectedSubtitle?.fileName ?? viewStore.activeSubtitle?.fileName,
                             embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
                             isSuppressed: viewStore.areSubtitlesSuppressed
                         ),
                         systemImage: "captions.bubble"
                     )
                 }
+            }
+        }
+        .fileImporter(
+            isPresented: $isImportingLocalSubtitle,
+            allowedContentTypes: supportedSubtitleContentTypes,
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case let .success(urls):
+                guard let url = urls.first else { return }
+                do {
+                    let content = try String(contentsOf: url, encoding: .utf8)
+                    store.send(.localSubtitleLoaded(fileName: url.lastPathComponent, content: content))
+                } catch {
+                    store.send(.localSubtitleLoadFailed(error.localizedDescription))
+                }
+            case let .failure(error):
+                store.send(.localSubtitleLoadFailed(error.localizedDescription))
             }
         }
     }
@@ -424,6 +447,16 @@ private func subtitleMenuTitle(
     }
     return "选择字幕"
 }
+
+private let supportedSubtitleContentTypes: [UTType] = {
+    [
+        UTType(filenameExtension: "ass"),
+        UTType(filenameExtension: "ssa"),
+        UTType(filenameExtension: "srt"),
+        UTType(filenameExtension: "vtt"),
+        .plainText,
+    ].compactMap { $0 }
+}()
 
 private func makeCustomSubtitleDocument(
     from subtitle: PlayerPresenter.State.LoadedSubtitle?,
