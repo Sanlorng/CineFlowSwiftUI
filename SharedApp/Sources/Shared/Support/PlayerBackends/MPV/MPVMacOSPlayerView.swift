@@ -281,11 +281,10 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         applyAudioTrackSelection(options.selectedAudioTrackID)
         stateChanged(.preparing)
 
-        var args = [source.url.absoluteString, "replace"]
         if !options.allowAutoPlay {
-            args.append("pause=yes")
+            setPause(true)
         }
-        runCommand("loadfile", args: args)
+        runCommand("loadfile", args: [source.url.absoluteString, "replace"])
         lastLoadedSource = source
         if options.allowAutoPlay {
             setPause(false)
