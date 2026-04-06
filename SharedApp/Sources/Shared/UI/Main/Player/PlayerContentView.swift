@@ -67,23 +67,16 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    if isFullscreen {
+                    HStack(alignment: .top, spacing: isFullscreen ? 0 : 18) {
                         playerStage(
                             viewStore: viewStore,
                             stream: stream,
                             options: options,
                             customSubtitleDocument: customSubtitleDocument
                         )
-                    } else {
-                        HStack(alignment: .top, spacing: 18) {
-                            playerStage(
-                                viewStore: viewStore,
-                                stream: stream,
-                                options: options,
-                                customSubtitleDocument: customSubtitleDocument
-                            )
-                            .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
 
+                        if !isFullscreen {
                             episodeSidebar(viewStore: viewStore)
                                 .frame(width: 300)
                         }
