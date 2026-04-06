@@ -26,7 +26,6 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.2.0"),
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.22.3"),
         .package(url: "https://github.com/swiftlang/swift-syntax", "509.0.0"..<"603.0.0"),
-        .package(url: "https://github.com/debugly/fsplayer-spm.git", exact: "1.0.5"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -34,14 +33,12 @@ let package = Package(
         .target(
             name: "Shared",
             dependencies: [
-                "SubtitleFFmpegBridge",
                 "RemoteMediaLibrary",
                 "DandanApi",
                 "DependenciesMacro",
                 .product(name: "SubtitleRendererCore", package: "SubtitleRenderer"),
                 .product(name: "SubtitleRendererLibass", package: "SubtitleRenderer", condition: .when(platforms: [.macOS])),
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
-                .product(name: "FSPlayer", package: "fsplayer-spm"),
             ],
             swiftSettings: [
                 .unsafeFlags(["-enable-testing"], .when(configuration: .debug))
@@ -49,10 +46,6 @@ let package = Package(
             plugins: [
                 .plugin(name: "BuildPlugin")
             ],
-        ),
-        .target(
-            name: "SubtitleFFmpegBridge",
-            publicHeadersPath: "include"
         ),
         .target(
             name: "SharedDemo",

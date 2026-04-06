@@ -1,5 +1,4 @@
 import Foundation
-import FSPlayer
 
 struct FSPlayerOptions: Equatable {
     var headers: [String: String]
@@ -17,38 +16,5 @@ struct FSPlayerOptions: Equatable {
         self.enableHardwareDecoding = enableHardwareDecoding
         self.allowAutoPlay = allowAutoPlay
         self.playbackTimeNotificationInterval = playbackTimeNotificationInterval
-    }
-
-    func makeOptions() -> FSOptions {
-        let options = FSOptions.byDefault()
-        options.showHudView = false
-#if os(macOS)
-        options.metalRenderer = true
-#endif
-        options.currentPlaybackTimeNotificationInterval = playbackTimeNotificationInterval
-        if !headers.isEmpty {
-            let headerLines = headers
-                .map { "\($0): \($1)" }
-                .joined(separator: "\r\n")
-            options.setFormatOptionValue("\(headerLines)\r\n", forKey: "headers")
-        }
-        if enableHardwareDecoding {
-            options.setPlayerOptionIntValue(1, forKey: "videotoolbox")
-        } else {
-            options.setPlayerOptionIntValue(0, forKey: "videotoolbox")
-        }
-        options.setFormatOptionIntValue(1, forKey: "reconnect")
-        options.setFormatOptionIntValue(1, forKey: "reconnect_streamed")
-        return options
-    }
-
-    func makeSubtitlePreference(
-        for subtitleFileName: String?,
-        codecName: String? = nil,
-        isEmbedded: Bool = false
-    ) -> FSSubtitlePreference {
-        var preference = fs_subtitle_default_preference()
-        preference.ForceOverride = 0
-        return preference
     }
 }
