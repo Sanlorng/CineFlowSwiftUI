@@ -99,10 +99,10 @@ private struct PlayerContentMainView: View {
                             .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
-                            if isControlBarVisible {
-                                playbackControlBar(viewStore: viewStore)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                            }
+                            playbackControlBar(viewStore: viewStore)
+                                .opacity(isControlBarVisible ? 1 : 0)
+                                .offset(y: isControlBarVisible ? 0 : 18)
+                                .allowsHitTesting(isControlBarVisible)
 #if os(macOS)
                         PlayerWindowObserver(
                             onWindowChanged: { window in
