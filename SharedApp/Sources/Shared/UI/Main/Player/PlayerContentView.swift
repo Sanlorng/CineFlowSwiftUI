@@ -264,13 +264,16 @@ private struct PlayerContentMainView: View {
     }
     
     private func currentTitle(for episode: Components.Schemas.LibraryBangumiEpisode) -> String {
-        if let number = episode.episodeNumber, let title = episode.displayTitle ?? episode.episodeTitle {
-            return "#\(number) \(title)"
+        var components: [String] = []
+        if let number = episode.episodeNumber, !number.isEmpty {
+            components.append("#\(number)")
         }
-        if let title = episode.displayTitle ?? episode.episodeTitle {
-            return title
+        if let episodeTitle = episode.episodeTitle, !episodeTitle.isEmpty {
+            components.append(episodeTitle)
+        } else if let displayTitle = episode.displayTitle, !displayTitle.isEmpty {
+            components.append(displayTitle)
         }
-        return "未命名剧集"
+        return components.isEmpty ? "未命名剧集" : components.joined(separator: " ")
     }
     
     @ViewBuilder
