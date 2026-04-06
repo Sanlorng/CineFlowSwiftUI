@@ -38,7 +38,7 @@ private struct PlayerContentMainView: View {
                         for: stream
                     )
                     let externalSubtitle = viewStore.activeSubtitle.map {
-                        FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.content)
+                        FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.fsPlayerContent)
                     }
                     FSVideoPlayer(
                         coordinator: coordinator,

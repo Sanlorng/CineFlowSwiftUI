@@ -45,7 +45,8 @@ struct PlayerPresenter {
 
         struct LoadedSubtitle: Equatable {
             let fileName: String
-            let content: String
+            let rawContent: String
+            let fsPlayerContent: String
         }
         
         let configuration: LibraryPresenter.State.Configuration
@@ -202,7 +203,11 @@ struct PlayerPresenter {
                     fileName: subtitle.fileName
                 )
                 state.subtitleError = nil
-                state.activeSubtitle = .init(fileName: subtitle.fileName, content: preparedContent)
+                state.activeSubtitle = .init(
+                    fileName: subtitle.fileName,
+                    rawContent: content,
+                    fsPlayerContent: preparedContent
+                )
                 return .none
 
             case let .subtitleContentResponse(subtitle, .failure(error)):
