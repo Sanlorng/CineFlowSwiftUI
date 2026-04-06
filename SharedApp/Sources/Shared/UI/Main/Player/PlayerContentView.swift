@@ -630,25 +630,18 @@ private struct PlayerContentMainView: View {
 
     private func revealControls() {
         cancelControlBarAutoHide()
-        let needsCursorReveal = isCursorHidden
-        let needsControlBarReveal = !isControlBarVisible
-
-        if needsCursorReveal {
-            showCursorIfNeeded()
-        }
-        guard needsControlBarReveal else { return }
-
+        showCursorIfNeeded()
+        guard !isControlBarVisible else { return }
         withAnimation(.easeOut(duration: 0.18)) {
             isControlBarVisible = true
         }
     }
 
-    private var shouldRevealControls: Bool {
-        isCursorHidden || !isControlBarVisible
-    }
-
     private func revealControlsIfNeeded() {
-        guard shouldRevealControls else { return }
+        if isCursorHidden {
+            showCursorIfNeeded()
+        }
+        guard !isControlBarVisible else { return }
         revealControls()
     }
 
@@ -701,7 +694,10 @@ private struct PlayerContentMainView: View {
 
     private func handlePlayerPointerMovement() {
         if isFullscreen {
-            if shouldRevealControls {
+            if isCursorHidden {
+                showCursorIfNeeded()
+            }
+            if !isControlBarVisible {
                 revealControls()
             } else {
                 cancelControlBarAutoHide()
