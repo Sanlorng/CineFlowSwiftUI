@@ -127,6 +127,7 @@ final class MPVContainerViewController: PlatformViewController {
     private let queue = DispatchQueue(label: "CineFlow.MPV", qos: .userInitiated)
 
     nonisolated(unsafe) private var mpv: OpaquePointer?
+    nonisolated(unsafe) private var wakeupContext: UnsafeMutableRawPointer?
     private var currentSource: PlayerSource?
     private var currentOptions: PlayerLoadOptions?
     private var isPaused = false
@@ -209,14 +210,16 @@ final class MPVContainerViewController: PlatformViewController {
         NotificationCenter.default.removeObserver(self)
         guard let mpv else { return }
         mpv_set_wakeup_callback(mpv, nil, nil)
-        let retainedSelf = Unmanaged.passUnretained(self).toOpaque()
         queue.sync {
             if let mpv = self.mpv {
                 mpv_terminate_destroy(mpv)
                 self.mpv = nil
             }
         }
-        Unmanaged<MPVContainerViewController>.fromOpaque(retainedSelf).release()
+        if let wakeupContext {
+            Unmanaged<MPVContainerViewController>.fromOpaque(wakeupContext).release()
+            self.wakeupContext = nil
+        }
     }
 
     private func initializeIfNeeded() {
@@ -235,11 +238,8 @@ final class MPVContainerViewController: PlatformViewController {
         checkError(mpv_initialize(handle), fallback: "初始化 mpv 失败。")
 
         let retainedSelf = Unmanaged.passRetained(self).toOpaque()
-        mpv_set_wakeup_callback(handle, { context in
-            guard let context else { return }
-            let controller = Unmanaged<MPVContainerViewController>.fromOpaque(context).takeUnretainedValue()
-            controller.readEvents()
-        }, retainedSelf)
+        wakeupContext = retainedSelf
+        mpv_set_wakeup_callback(handle, mpvWakeupCallback, retainedSelf)
 
         setupLifecycleNotifications()
     }
@@ -346,7 +346,7 @@ final class MPVContainerViewController: PlatformViewController {
         _ = mpv_command(mpv, &cargs)
     }
 
-    private func readEvents() {
+    func readEvents() {
         queue.async { [weak self] in
             guard let self else { return }
             while let mpv = self.mpv {
@@ -488,6 +488,14 @@ private enum MPVProperty {
 }
 
 private final class MPVMetalLayer: CAMetalLayer {}
+
+private func mpvWakeupCallback(_ context: UnsafeMutableRawPointer?) {
+    guard let context else { return }
+    let controller = Unmanaged<MPVContainerViewController>.fromOpaque(context).takeUnretainedValue()
+    Task { @MainActor in
+        controller.readEvents()
+    }
+}
 
 private extension MPVContainerViewController {
     static func parseTrackList(from node: mpv_node) -> [PlayerTrack] {
