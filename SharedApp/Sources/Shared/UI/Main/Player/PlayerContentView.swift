@@ -35,6 +35,15 @@ private struct PlayerContentMainView: View {
     @State private var isImportingLocalSubtitle = false
     @State private var scrubPosition: TimeInterval = 0
     @State private var isScrubbing = false
+    @State private var isControlBarVisible = true
+    @State private var isPointerInsidePlayer = false
+    @State private var isPointerInsideControls = false
+    @State private var isAudioPopoverPresented = false
+    @State private var isSubtitlePopoverPresented = false
+    @State private var isSpeedPopoverPresented = false
+    @State private var observedWindow: NSWindow?
+    @State private var isFullscreen = false
+    @State private var hideControlsTask: Task<Void, Never>?
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -83,18 +92,49 @@ private struct PlayerContentMainView: View {
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .allowsHitTesting(false)
-                        playbackControlBar(viewStore: viewStore)
+                        if isControlBarVisible {
+                            playbackControlBar(viewStore: viewStore)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+#if os(macOS)
+                        PlayerWindowObserver(
+                            onWindowChanged: { window in
+                                observedWindow = window
+                                isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
+                                scheduleControlBarVisibilityUpdate()
+                            },
+                            onFullscreenChanged: { fullscreen in
+                                isFullscreen = fullscreen
+                                revealControls()
+                            }
+                        )
+                        .frame(width: 0, height: 0)
+#endif
                     }
                         .frame(minHeight: 240)
+#if os(macOS)
+                        .onHover { inside in
+                            isPointerInsidePlayer = inside
+                            if inside {
+                                revealControls()
+                            }
+                            scheduleControlBarVisibilityUpdate()
+                        }
+#endif
                         .onAppear {
                             viewStore.send(.onAppear)
                             viewStore.send(.setPlaybackError(nil))
+                            revealControls()
                         }
                         .onChange(of: viewStore.currentItem?.stream) { _, newStream in
                             guard newStream != nil else { return }
                             playerController.reset()
                             scrubPosition = 0
                             isScrubbing = false
+                            isAudioPopoverPresented = false
+                            isSubtitlePopoverPresented = false
+                            isSpeedPopoverPresented = false
+                            revealControls()
                             viewStore.send(.setPlaybackError(nil))
                         }
                         .onChange(of: playerController.timeline.currentTime) { _, newValue in
@@ -105,6 +145,8 @@ private struct PlayerContentMainView: View {
                             playerController.reset()
                             scrubPosition = 0
                             isScrubbing = false
+                            hideControlsTask?.cancel()
+                            hideControlsTask = nil
                         }
                 } else {
                     Text("暂无可播放内容。")
@@ -112,7 +154,6 @@ private struct PlayerContentMainView: View {
                 }
                 
                 metadataSection(viewStore: viewStore)
-                controlsSection(viewStore: viewStore)
                 playlistSection(viewStore: viewStore)
                 
                 if let error = viewStore.subtitleError {
@@ -148,6 +189,15 @@ private struct PlayerContentMainView: View {
             }
         }
         .background(Color.platformBackground.ignoresSafeArea())
+        .onChange(of: isAudioPopoverPresented) { _, _ in
+            scheduleControlBarVisibilityUpdate()
+        }
+        .onChange(of: isSubtitlePopoverPresented) { _, _ in
+            scheduleControlBarVisibilityUpdate()
+        }
+        .onChange(of: isSpeedPopoverPresented) { _, _ in
+            scheduleControlBarVisibilityUpdate()
+        }
     }
     
     @ViewBuilder
@@ -176,32 +226,6 @@ private struct PlayerContentMainView: View {
             return title
         }
         return "未命名剧集"
-    }
-    
-    @ViewBuilder
-    private func controlsSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
-        HStack(spacing: 16) {
-            Button {
-                viewStore.send(.playPrevious)
-            } label: {
-                Label("上一集", systemImage: "backward.end.alt")
-            }
-            .disabled(viewStore.currentIndex == 0)
-            
-            Button {
-                viewStore.send(.showFilePicker)
-            } label: {
-                Label("切换匹配文件", systemImage: "rectangle.stack.badge.play")
-            }
-            .disabled(viewStore.currentItem == nil)
-            
-            Button {
-                viewStore.send(.playNext)
-            } label: {
-                Label("下一集", systemImage: "forward.end.alt")
-            }
-            .disabled(viewStore.currentIndex + 1 >= viewStore.playlist.count)
-        }
     }
     
     @ViewBuilder
@@ -237,6 +261,9 @@ private struct PlayerContentMainView: View {
                     .frame(width: 52, alignment: .leading)
 
                 HStack(spacing: 8) {
+                    glassIconButton("backward.end.alt", isDisabled: viewStore.currentIndex == 0) {
+                        viewStore.send(.playPrevious)
+                    }
                     glassIconButton("gobackward.10") {
                         playerController.seekBy(-10)
                     }
@@ -246,13 +273,24 @@ private struct PlayerContentMainView: View {
                     glassIconButton("goforward.10") {
                         playerController.seekBy(10)
                     }
+                    glassIconButton("forward.end.alt", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
+                        viewStore.send(.playNext)
+                    }
                 }
 
                 Spacer(minLength: 0)
 
                 HStack(spacing: 8) {
+                    speedMenu()
                     audioMenu(viewStore: viewStore)
                     subtitleMenu(viewStore: viewStore)
+#if os(macOS)
+                    glassIconButton(
+                        isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+                    ) {
+                        observedWindow?.toggleFullScreen(nil)
+                    }
+#endif
                 }
 
                 Text(formatPlaybackTime(duration))
@@ -275,25 +313,55 @@ private struct PlayerContentMainView: View {
         .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
         .padding(.horizontal, 18)
         .padding(.bottom, 16)
+#if os(macOS)
+        .onHover { inside in
+            isPointerInsideControls = inside
+            if inside {
+                revealControls()
+            }
+            scheduleControlBarVisibilityUpdate()
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private func speedMenu() -> some View {
+        Button {
+            isSpeedPopoverPresented.toggle()
+            revealControls()
+        } label: {
+            glassCapsuleLabel(
+                title: playbackRateTitle(playerController.playbackRate),
+                systemImage: "gauge.with.dots.needle.50percent"
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isSpeedPopoverPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                    Button {
+                        playerController.setPlaybackRate(rate)
+                        isSpeedPopoverPresented = false
+                    } label: {
+                        if abs(playerController.playbackRate - rate) < 0.001 {
+                            Label(playbackRateTitle(rate), systemImage: "checkmark")
+                        } else {
+                            Text(playbackRateTitle(rate))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(12)
+            .frame(minWidth: 120, alignment: .leading)
+        }
     }
 
     @ViewBuilder
     private func audioMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
-        Menu {
-            Button("自动选择") {
-                viewStore.send(.audioTrackSelected(nil))
-            }
-            ForEach(viewStore.availableAudioTracks) { track in
-                Button {
-                    viewStore.send(.audioTrackSelected(track.id))
-                } label: {
-                    if viewStore.selectedAudioTrackID == track.id {
-                        Label(track.displayName, systemImage: "checkmark")
-                    } else {
-                        Text(track.displayName)
-                    }
-                }
-            }
+        Button {
+            isAudioPopoverPresented.toggle()
+            revealControls()
         } label: {
             glassCapsuleLabel(
                 title: selectedAudioTrackTitle(
@@ -303,62 +371,38 @@ private struct PlayerContentMainView: View {
                 systemImage: "waveform"
             )
         }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isAudioPopoverPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 6) {
+                Button("自动选择") {
+                    viewStore.send(.audioTrackSelected(nil))
+                    isAudioPopoverPresented = false
+                }
+                .buttonStyle(.plain)
+                ForEach(viewStore.availableAudioTracks) { track in
+                    Button {
+                        viewStore.send(.audioTrackSelected(track.id))
+                        isAudioPopoverPresented = false
+                    } label: {
+                        if viewStore.selectedAudioTrackID == track.id {
+                            Label(track.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(track.displayName)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(12)
+            .frame(minWidth: 180, alignment: .leading)
+        }
     }
 
     @ViewBuilder
     private func subtitleMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
-        Menu {
-            Button(viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕") {
-                viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
-            }
-            Button("导入本地字幕…") {
-                isImportingLocalSubtitle = true
-            }
-            if !viewStore.areSubtitlesSuppressed,
-               (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
-                Divider()
-            }
-            if viewStore.availableSubtitles.isEmpty,
-               viewStore.availableEmbeddedSubtitles.isEmpty {
-                Text("暂无字幕").disabled(true)
-            } else if !viewStore.areSubtitlesSuppressed {
-                if !viewStore.availableSubtitles.isEmpty {
-                    if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                        Text("外挂字幕").disabled(true)
-                    }
-                    ForEach(viewStore.availableSubtitles) { subtitle in
-                        Button {
-                            viewStore.send(.subtitleSelected(subtitle))
-                        } label: {
-                            if viewStore.selectedSubtitle?.id == subtitle.id {
-                                Label(subtitle.fileName, systemImage: "checkmark")
-                            } else {
-                                Text(subtitle.fileName)
-                            }
-                        }
-                    }
-                }
-                if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                    if !viewStore.availableSubtitles.isEmpty {
-                        Divider()
-                    }
-                    if !viewStore.availableSubtitles.isEmpty {
-                        Text("内嵌字幕").disabled(true)
-                    }
-                    ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
-                        Button {
-                            viewStore.send(.embeddedSubtitleSelected(subtitle.id))
-                        } label: {
-                            if viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id,
-                               viewStore.selectedSubtitle == nil {
-                                Label(subtitle.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(subtitle.displayName)
-                            }
-                        }
-                    }
-                }
-            }
+        Button {
+            isSubtitlePopoverPresented.toggle()
+            revealControls()
         } label: {
             glassCapsuleLabel(
                 title: subtitleMenuTitle(
@@ -368,6 +412,75 @@ private struct PlayerContentMainView: View {
                 ),
                 systemImage: "captions.bubble"
             )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isSubtitlePopoverPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button(viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕") {
+                    viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
+                }
+                .buttonStyle(.plain)
+                Button("导入本地字幕…") {
+                    isImportingLocalSubtitle = true
+                    isSubtitlePopoverPresented = false
+                }
+                .buttonStyle(.plain)
+
+                if !viewStore.areSubtitlesSuppressed,
+                   (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
+                    Divider()
+                }
+                if viewStore.availableSubtitles.isEmpty,
+                   viewStore.availableEmbeddedSubtitles.isEmpty {
+                    Text("暂无字幕")
+                        .foregroundStyle(.secondary)
+                } else if !viewStore.areSubtitlesSuppressed {
+                    if !viewStore.availableSubtitles.isEmpty {
+                        if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                            Text("外挂字幕")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(viewStore.availableSubtitles) { subtitle in
+                            Button {
+                                viewStore.send(.subtitleSelected(subtitle))
+                                isSubtitlePopoverPresented = false
+                            } label: {
+                                if viewStore.selectedSubtitle?.id == subtitle.id {
+                                    Label(subtitle.fileName, systemImage: "checkmark")
+                                } else {
+                                    Text(subtitle.fileName)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                        if !viewStore.availableSubtitles.isEmpty {
+                            Divider()
+                            Text("内嵌字幕")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
+                            Button {
+                                viewStore.send(.embeddedSubtitleSelected(subtitle.id))
+                                isSubtitlePopoverPresented = false
+                            } label: {
+                                if viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id,
+                                   viewStore.selectedSubtitle == nil {
+                                    Label(subtitle.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(subtitle.displayName)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .frame(minWidth: 220, alignment: .leading)
         }
         .fileImporter(
             isPresented: $isImportingLocalSubtitle,
@@ -391,6 +504,57 @@ private struct PlayerContentMainView: View {
                 }
             case let .failure(error):
                 store.send(.localSubtitleLoadFailed(error.localizedDescription))
+            }
+        }
+    }
+
+    private var isAnyControlPopoverPresented: Bool {
+        isAudioPopoverPresented || isSubtitlePopoverPresented || isSpeedPopoverPresented
+    }
+
+    private func revealControls() {
+        hideControlsTask?.cancel()
+        withAnimation(.easeOut(duration: 0.18)) {
+            isControlBarVisible = true
+        }
+    }
+
+    private func scheduleControlBarVisibilityUpdate() {
+        hideControlsTask?.cancel()
+
+#if os(macOS)
+        let shouldHideLater: Bool
+        if isFullscreen {
+            shouldHideLater = !isPointerInsideControls && !isAnyControlPopoverPresented
+        } else {
+            shouldHideLater = !isPointerInsidePlayer && !isAnyControlPopoverPresented
+        }
+#else
+        let shouldHideLater = false
+#endif
+
+        guard shouldHideLater else {
+            withAnimation(.easeOut(duration: 0.18)) {
+                isControlBarVisible = true
+            }
+            return
+        }
+
+        hideControlsTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+#if os(macOS)
+            let stillEligible: Bool
+            if isFullscreen {
+                stillEligible = !isPointerInsideControls && !isAnyControlPopoverPresented
+            } else {
+                stillEligible = !isPointerInsidePlayer && !isAnyControlPopoverPresented
+            }
+#else
+            let stillEligible = false
+#endif
+            guard stillEligible else { return }
+            withAnimation(.easeInOut(duration: 0.22)) {
+                isControlBarVisible = false
             }
         }
     }
@@ -538,6 +702,7 @@ private func selectedAudioTrackTitle(
     return "自动音轨"
 }
 
+@MainActor
 private func formatPlaybackTime(_ time: TimeInterval) -> String {
     guard time.isFinite, time > 0 else { return "00:00" }
     let totalSeconds = Int(time.rounded(.down))
@@ -550,6 +715,7 @@ private func formatPlaybackTime(_ time: TimeInterval) -> String {
     return String(format: "%02d:%02d", minutes, seconds)
 }
 
+@MainActor
 @ViewBuilder
 private func glassIconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
     Button(action: action) {
@@ -566,6 +732,7 @@ private func glassIconButton(_ systemName: String, action: @escaping () -> Void)
     .foregroundStyle(.white)
 }
 
+@MainActor
 @ViewBuilder
 private func glassCapsuleLabel(title: String, systemImage: String) -> some View {
     HStack(spacing: 6) {
@@ -583,6 +750,92 @@ private func glassCapsuleLabel(title: String, systemImage: String) -> some View 
             .fill(.white.opacity(0.12))
     )
 }
+
+private func playbackRateTitle(_ rate: Double) -> String {
+    if abs(rate.rounded() - rate) < 0.001 {
+        return "\(Int(rate.rounded()))x"
+    }
+    return String(format: "%.2fx", rate)
+}
+
+#if os(macOS)
+private struct PlayerWindowObserver: NSViewRepresentable {
+    let onWindowChanged: (NSWindow?) -> Void
+    let onFullscreenChanged: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onWindowChanged: onWindowChanged, onFullscreenChanged: onFullscreenChanged)
+    }
+
+    func makeNSView(context: Context) -> WindowObserverView {
+        let view = WindowObserverView(frame: .zero)
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: WindowObserverView, context: Context) {
+        view.coordinator = context.coordinator
+        context.coordinator.refresh(for: view.window)
+    }
+
+    final class Coordinator: NSObject {
+        private let onWindowChanged: (NSWindow?) -> Void
+        private let onFullscreenChanged: (Bool) -> Void
+        private weak var observedWindow: NSWindow?
+        private var notificationTokens: [NSObjectProtocol] = []
+
+        init(
+            onWindowChanged: @escaping (NSWindow?) -> Void,
+            onFullscreenChanged: @escaping (Bool) -> Void
+        ) {
+            self.onWindowChanged = onWindowChanged
+            self.onFullscreenChanged = onFullscreenChanged
+        }
+
+        func refresh(for window: NSWindow?) {
+            guard observedWindow !== window else { return }
+            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+            notificationTokens.removeAll()
+            observedWindow = window
+            onWindowChanged(window)
+            onFullscreenChanged(window?.styleMask.contains(.fullScreen) ?? false)
+
+            guard let window else { return }
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.didEnterFullScreenNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.onFullscreenChanged(true)
+                }
+            )
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.didExitFullScreenNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.onFullscreenChanged(false)
+                }
+            )
+        }
+
+        deinit {
+            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+        }
+    }
+}
+
+private final class WindowObserverView: NSView {
+    weak var coordinator: PlayerWindowObserver.Coordinator?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        coordinator?.refresh(for: window)
+    }
+}
+#endif
 
 private func subtitleMenuTitle(
     externalSubtitle: String?,

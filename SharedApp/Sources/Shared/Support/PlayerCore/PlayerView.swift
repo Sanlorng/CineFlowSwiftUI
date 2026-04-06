@@ -4,7 +4,7 @@ struct PlayerView: View {
     let backend: PlayerBackendKind
     let source: PlayerSource
     let options: PlayerLoadOptions
-    @ObservedObject var controller: PlayerController
+    let controller: PlayerController
 
     private var onStateChangedHandler: ((PlayerPlaybackState) -> Void)?
     private var onFinishHandler: ((Error?) -> Void)?

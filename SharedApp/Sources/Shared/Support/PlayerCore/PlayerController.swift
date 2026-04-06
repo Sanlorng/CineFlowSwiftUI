@@ -5,6 +5,7 @@ import Combine
 final class PlayerController: ObservableObject {
     @Published private(set) var playbackState: PlayerPlaybackState = .idle
     @Published private(set) var timeline = PlayerTimeline()
+    @Published private(set) var playbackRate: Double = 1
 
     @Published private(set) var commandRevision: UInt64 = 0
     @Published private(set) var latestCommand: PlayerCommand?
@@ -29,6 +30,12 @@ final class PlayerController: ObservableObject {
         send(.seekTo(time))
     }
 
+    func setPlaybackRate(_ rate: Double) {
+        let sanitized = max(rate, 0.25)
+        playbackRate = sanitized
+        send(.setRate(sanitized))
+    }
+
     func updatePlaybackState(_ state: PlayerPlaybackState) {
         playbackState = state
     }
@@ -40,6 +47,7 @@ final class PlayerController: ObservableObject {
     func reset() {
         playbackState = .idle
         timeline = .init()
+        playbackRate = 1
         latestCommand = nil
     }
 

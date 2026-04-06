@@ -12,7 +12,7 @@ private typealias PlatformViewRepresentable = NSViewRepresentable
 
 struct AVFoundationPlayerView {
     let source: PlayerSource
-    @ObservedObject var controller: PlayerController
+    let controller: PlayerController
     let options: PlayerLoadOptions
     let eventSink: PlayerBackendEventSink
 }
@@ -74,6 +74,7 @@ extension AVFoundationPlayerView {
         private var periodicTimeObserver: Any?
         private var notificationTokens: [NSObjectProtocol] = []
         private var lastHandledCommandRevision: UInt64 = 0
+        private var currentPlaybackRate: Double = 1
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
@@ -113,6 +114,7 @@ extension AVFoundationPlayerView {
             playerItem = nil
             currentSource = nil
             currentOptions = nil
+            currentPlaybackRate = 1
             view?.attach(player: nil)
             if state != .idle {
                 state = .stopped
@@ -137,7 +139,7 @@ extension AVFoundationPlayerView {
             observe(player: player, item: item, options: options)
 
             if options.allowAutoPlay {
-                player.play()
+                playAtCurrentRate()
             }
         }
 
@@ -264,13 +266,18 @@ extension AVFoundationPlayerView {
                 if state == .playing {
                     player?.pause()
                 } else {
-                    player?.play()
+                    playAtCurrentRate()
                 }
             case let .setPaused(paused):
                 if paused {
                     player?.pause()
                 } else {
-                    player?.play()
+                    playAtCurrentRate()
+                }
+            case let .setRate(rate):
+                currentPlaybackRate = rate
+                if state == .playing {
+                    player?.rate = Float(rate)
                 }
             case let .seekBy(delta):
                 guard let player else { return }
@@ -279,6 +286,14 @@ extension AVFoundationPlayerView {
                 player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
             case let .seekTo(time):
                 player?.seek(to: CMTime(seconds: max(time, 0), preferredTimescale: 600))
+            }
+        }
+
+        private func playAtCurrentRate() {
+            guard let player else { return }
+            player.play()
+            if currentPlaybackRate != 1 {
+                player.rate = Float(currentPlaybackRate)
             }
         }
 

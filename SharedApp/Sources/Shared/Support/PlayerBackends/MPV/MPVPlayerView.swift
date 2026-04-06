@@ -19,7 +19,7 @@ typealias PlatformView = NSView
 
 struct MPVPlayerView {
     let source: PlayerSource
-    @ObservedObject var controller: PlayerController
+    let controller: PlayerController
     let options: PlayerLoadOptions
     let eventSink: PlayerBackendEventSink
 }

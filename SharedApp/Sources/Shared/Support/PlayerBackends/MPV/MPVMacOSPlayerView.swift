@@ -9,7 +9,7 @@ import OpenGL.GL3
 
 struct MPVMacOSPlayerView {
     let source: PlayerSource
-    @ObservedObject var controller: PlayerController
+    let controller: PlayerController
     let options: PlayerLoadOptions
     let eventSink: PlayerBackendEventSink
 }
@@ -186,6 +186,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var isBuffering = false
     private var defaultFBO: GLint = -1
     private var currentDuration: TimeInterval?
+    private var currentPlaybackRate: Double = 1
 
     init(
         frame frameRect: NSRect,
@@ -293,6 +294,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     func apply(options: PlayerLoadOptions) {
         currentOptions = options
         applyAudioTrackSelection(options.selectedAudioTrackID)
+        applyPlaybackRate(currentPlaybackRate)
         if options.allowAutoPlay {
             setPause(false)
         }
@@ -304,6 +306,9 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             setPause(!isPaused)
         case let .setPaused(paused):
             setPause(paused)
+        case let .setRate(rate):
+            currentPlaybackRate = rate
+            applyPlaybackRate(rate)
         case let .seekBy(delta):
             runCommand("seek", args: [String(delta), "relative"])
         case let .seekTo(time):
@@ -367,6 +372,12 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         } else {
             _ = mpv_set_property_string(mpv, MPVProperty.aid, "auto")
         }
+    }
+
+    private func applyPlaybackRate(_ rate: Double) {
+        guard let mpv else { return }
+        var value = rate
+        _ = mpv_set_property(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &value)
     }
 
     private func setPause(_ paused: Bool) {
@@ -550,6 +561,7 @@ private enum MPVProperty {
     static let pausedForCache = "paused-for-cache"
     static let timePos = "time-pos"
     static let duration = "duration"
+    static let speed = "speed"
     static let aid = "aid"
     static let sid = "sid"
     static let trackList = "track-list"
