@@ -424,7 +424,14 @@ final class MPVContainerViewController: PlatformViewController {
         defer {
             mpv_free_node_contents(&node)
         }
-        eventSink.onTracksChanged?(Self.parseTrackList(from: node))
+        let tracks = Self.parseTrackList(from: node)
+#if DEBUG
+        let summary = tracks
+            .map { "\($0.kind.rawValue)#\($0.id):\($0.displayName)[selected=\($0.isSelected)]" }
+            .joined(separator: ", ")
+        print("[MPV] track-list => [\(summary)]")
+#endif
+        eventSink.onTracksChanged?(tracks)
     }
 
     private func syncPlaybackState() {

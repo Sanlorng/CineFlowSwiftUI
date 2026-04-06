@@ -48,11 +48,14 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                 }
 
                 guard let tracksPointer, count > 0 else {
+#if DEBUG
+                    print("[EmbeddedSubtitleExtractor] No embedded subtitle tracks for \(mediaURL.absoluteString)")
+#endif
                     return []
                 }
 
                 let buffer = UnsafeBufferPointer(start: tracksPointer, count: Int(count))
-                return buffer.map { item in
+                let tracks = buffer.map { item in
                     SubtitleTrack(
                         id: String(item.stream_index),
                         displayName: makeDisplayName(title: item.title, language: item.language, codecName: item.codec_name, streamIndex: item.stream_index),
@@ -61,6 +64,11 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                         kind: .embedded
                     )
                 }
+#if DEBUG
+                let summary = tracks.map { "\($0.id):\($0.displayName)" }.joined(separator: ", ")
+                print("[EmbeddedSubtitleExtractor] Tracks => [\(summary)]")
+#endif
+                return tracks
             }
         }
     }
@@ -97,6 +105,9 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                     throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕失败。")
                 }
 
+#if DEBUG
+                print("[EmbeddedSubtitleExtractor] Loaded embedded subtitle track \(streamIndex)")
+#endif
                 return .ass(
                     String(cString: documentPointer),
                     fileName: "embedded-\(streamIndex).ass"

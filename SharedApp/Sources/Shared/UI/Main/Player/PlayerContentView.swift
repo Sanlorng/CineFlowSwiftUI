@@ -74,7 +74,8 @@ private struct PlayerContentMainView: View {
                                 playbackTime = time
                             }
                             .onTracksChanged { tracks in
-                                viewStore.send(.playerTracksChanged(tracks))
+                                guard let fileID = viewStore.currentFileID else { return }
+                                viewStore.send(.playerTracksChanged(fileID, tracks))
                             }
                         SubtitleRendererOverlay(
                             document: customSubtitleDocument,
