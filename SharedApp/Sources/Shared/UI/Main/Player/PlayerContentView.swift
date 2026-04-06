@@ -717,7 +717,11 @@ private func formatPlaybackTime(_ time: TimeInterval) -> String {
 
 @MainActor
 @ViewBuilder
-private func glassIconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+private func glassIconButton(
+    _ systemName: String,
+    isDisabled: Bool = false,
+    action: @escaping () -> Void
+) -> some View {
     Button(action: action) {
         Image(systemName: systemName)
             .font(.system(size: 15, weight: .semibold))
@@ -730,6 +734,8 @@ private func glassIconButton(_ systemName: String, action: @escaping () -> Void)
             .fill(.white.opacity(0.14))
     )
     .foregroundStyle(.white)
+    .opacity(isDisabled ? 0.4 : 1)
+    .disabled(isDisabled)
 }
 
 @MainActor
