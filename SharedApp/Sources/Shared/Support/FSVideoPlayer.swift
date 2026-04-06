@@ -18,10 +18,36 @@ struct FSVideoPlayer {
     let options: FSPlayerOptions
     let externalSubtitle: ExternalSubtitle?
     let allowEmbeddedSubtitles: Bool
+    let selectedEmbeddedSubtitleStreamIndex: Int?
 
     struct ExternalSubtitle: Equatable {
         let fileName: String
         let content: String
+    }
+
+    struct EmbeddedSubtitleTrack: Equatable, Identifiable {
+        let streamIndex: Int
+        let title: String?
+        let language: String?
+
+        var id: Int { streamIndex }
+
+        var displayName: String {
+            let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedLanguage = language?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let trimmedTitle, !trimmedTitle.isEmpty,
+               let trimmedLanguage, !trimmedLanguage.isEmpty {
+                return "\(trimmedTitle) (\(trimmedLanguage))"
+            }
+            if let trimmedTitle, !trimmedTitle.isEmpty {
+                return trimmedTitle
+            }
+            if let trimmedLanguage, !trimmedLanguage.isEmpty {
+                return trimmedLanguage
+            }
+            return "内嵌字幕 #\(streamIndex)"
+        }
     }
 
     init(
@@ -29,13 +55,15 @@ struct FSVideoPlayer {
         url: URL,
         options: FSPlayerOptions,
         externalSubtitle: ExternalSubtitle? = nil,
-        allowEmbeddedSubtitles: Bool = true
+        allowEmbeddedSubtitles: Bool = true,
+        selectedEmbeddedSubtitleStreamIndex: Int? = nil
     ) {
         self.coordinator = coordinator
         self.url = url
         self.options = options
         self.externalSubtitle = externalSubtitle
         self.allowEmbeddedSubtitles = allowEmbeddedSubtitles
+        self.selectedEmbeddedSubtitleStreamIndex = selectedEmbeddedSubtitleStreamIndex
     }
 }
 
@@ -50,7 +78,8 @@ extension FSVideoPlayer: PlatformViewRepresentable {
             url: url,
             options: options,
             externalSubtitle: externalSubtitle,
-            allowEmbeddedSubtitles: allowEmbeddedSubtitles
+            allowEmbeddedSubtitles: allowEmbeddedSubtitles,
+            selectedEmbeddedSubtitleStreamIndex: selectedEmbeddedSubtitleStreamIndex
         )
     }
 
@@ -60,7 +89,8 @@ extension FSVideoPlayer: PlatformViewRepresentable {
             url: url,
             options: options,
             externalSubtitle: externalSubtitle,
-            allowEmbeddedSubtitles: allowEmbeddedSubtitles
+            allowEmbeddedSubtitles: allowEmbeddedSubtitles,
+            selectedEmbeddedSubtitleStreamIndex: selectedEmbeddedSubtitleStreamIndex
         )
     }
 
@@ -73,7 +103,8 @@ extension FSVideoPlayer: PlatformViewRepresentable {
             url: url,
             options: options,
             externalSubtitle: externalSubtitle,
-            allowEmbeddedSubtitles: allowEmbeddedSubtitles
+            allowEmbeddedSubtitles: allowEmbeddedSubtitles,
+            selectedEmbeddedSubtitleStreamIndex: selectedEmbeddedSubtitleStreamIndex
         )
     }
 
@@ -83,7 +114,8 @@ extension FSVideoPlayer: PlatformViewRepresentable {
             url: url,
             options: options,
             externalSubtitle: externalSubtitle,
-            allowEmbeddedSubtitles: allowEmbeddedSubtitles
+            allowEmbeddedSubtitles: allowEmbeddedSubtitles,
+            selectedEmbeddedSubtitleStreamIndex: selectedEmbeddedSubtitleStreamIndex
         )
     }
 
@@ -110,6 +142,7 @@ extension FSVideoPlayer {
 
         var onStateChanged: ((Coordinator, State) -> Void)?
         var onFinish: ((Coordinator, Error?) -> Void)?
+        var onEmbeddedSubtitleTracksChanged: ((Coordinator, [EmbeddedSubtitleTrack], Int?) -> Void)?
 
         private(set) var state: State = .idle {
             didSet {
@@ -123,6 +156,9 @@ extension FSVideoPlayer {
         private var currentOptions: FSPlayerOptions?
         private var currentSubtitleCodecName: String?
         private var currentExternalSubtitle: ExternalSubtitle?
+        private var currentSelectedEmbeddedSubtitleStreamIndex: Int?
+        private var lastReportedEmbeddedSubtitleTracks: [EmbeddedSubtitleTrack] = []
+        private var lastReportedSelectedEmbeddedSubtitleStreamIndex: Int?
         private var externalSubtitleFileURL: URL?
         private var allowEmbeddedSubtitles = true
 
@@ -130,7 +166,8 @@ extension FSVideoPlayer {
             url: URL,
             options: FSPlayerOptions,
             externalSubtitle: ExternalSubtitle?,
-            allowEmbeddedSubtitles: Bool
+            allowEmbeddedSubtitles: Bool,
+            selectedEmbeddedSubtitleStreamIndex: Int?
         ) -> PlatformView {
 #if canImport(UIKit)
             let container = PlatformView(frame: .zero)
@@ -141,8 +178,10 @@ extension FSVideoPlayer {
             container.layer?.backgroundColor = NSColor.clear.cgColor
 #endif
             self.allowEmbeddedSubtitles = allowEmbeddedSubtitles
+            currentSelectedEmbeddedSubtitleStreamIndex = selectedEmbeddedSubtitleStreamIndex
             attachPlayer(to: container, url: url, options: options)
             handleExternalSubtitleChange(externalSubtitle)
+            synchronizeRequestedSubtitleSelection()
             return container
         }
 
@@ -151,14 +190,17 @@ extension FSVideoPlayer {
             url: URL,
             options: FSPlayerOptions,
             externalSubtitle: ExternalSubtitle?,
-            allowEmbeddedSubtitles: Bool
+            allowEmbeddedSubtitles: Bool,
+            selectedEmbeddedSubtitleStreamIndex: Int?
         ) {
             let allowChanged = allowEmbeddedSubtitles != self.allowEmbeddedSubtitles
             self.allowEmbeddedSubtitles = allowEmbeddedSubtitles
+            currentSelectedEmbeddedSubtitleStreamIndex = selectedEmbeddedSubtitleStreamIndex
 
             if url != currentURL {
                 attachPlayer(to: view, url: url, options: options)
                 handleExternalSubtitleChange(externalSubtitle)
+                synchronizeRequestedSubtitleSelection()
                 return
             }
 
@@ -174,6 +216,8 @@ extension FSVideoPlayer {
             if externalSubtitle != currentExternalSubtitle {
                 handleExternalSubtitleChange(externalSubtitle)
             }
+
+            synchronizeRequestedSubtitleSelection()
         }
 
         func resetPlayer() {
@@ -188,8 +232,10 @@ extension FSVideoPlayer {
             currentOptions = nil
             currentSubtitleCodecName = nil
             currentExternalSubtitle = nil
+            currentSelectedEmbeddedSubtitleStreamIndex = nil
             externalSubtitleFileURL = nil
             allowEmbeddedSubtitles = true
+            publishEmbeddedSubtitleTracks([], selectedStreamIndex: nil)
             if state != .idle {
                 state = .stopped
             }
@@ -339,6 +385,8 @@ extension FSVideoPlayer {
         @objc private func handlePreparedNotification(_: Notification) {
             state = .playing
             updateActiveSubtitleCodecIfNeeded()
+            refreshEmbeddedSubtitleTracks()
+            synchronizeRequestedSubtitleSelection()
         }
 
         @objc private func handleLoadStateNotification(_: Notification) {
@@ -363,6 +411,8 @@ extension FSVideoPlayer {
 
         @objc private func handleSelectedStreamChanged(_: Notification) {
             updateActiveSubtitleCodecIfNeeded()
+            refreshEmbeddedSubtitleTracks()
+            synchronizeRequestedSubtitleSelection()
         }
 
         private func handleLoadStateChange() {
@@ -432,6 +482,98 @@ extension FSVideoPlayer {
             }
         }
 
+        private func synchronizeRequestedSubtitleSelection() {
+            guard let player else { return }
+            guard allowEmbeddedSubtitles else {
+                disableEmbeddedSubtitles()
+                return
+            }
+            guard currentExternalSubtitle == nil else { return }
+            guard let streamIndex = currentSelectedEmbeddedSubtitleStreamIndex else { return }
+            guard activeEmbeddedSubtitleStreamIndex() != streamIndex else { return }
+            player.exchangeSelectedStream(Int32(streamIndex))
+        }
+
+        private func refreshEmbeddedSubtitleTracks() {
+            let tracks = fetchEmbeddedSubtitleTracks()
+            let activeStreamIndex = activeEmbeddedSubtitleStreamIndex()
+            publishEmbeddedSubtitleTracks(tracks, selectedStreamIndex: activeStreamIndex)
+        }
+
+        private func publishEmbeddedSubtitleTracks(
+            _ tracks: [EmbeddedSubtitleTrack],
+            selectedStreamIndex: Int?
+        ) {
+            guard tracks != lastReportedEmbeddedSubtitleTracks
+                || selectedStreamIndex != lastReportedSelectedEmbeddedSubtitleStreamIndex else {
+                return
+            }
+#if DEBUG
+            let labels = tracks.map { "#\($0.streamIndex): \($0.displayName)" }.joined(separator: ", ")
+            print("[FSVideoPlayer] Embedded subtitles: [\(labels)] selected=\(selectedStreamIndex.map(String.init) ?? "nil")")
+#endif
+            lastReportedEmbeddedSubtitleTracks = tracks
+            lastReportedSelectedEmbeddedSubtitleStreamIndex = selectedStreamIndex
+            onEmbeddedSubtitleTracksChanged?(self, tracks, selectedStreamIndex)
+        }
+
+        private func fetchEmbeddedSubtitleTracks() -> [EmbeddedSubtitleTrack] {
+            guard let mediaMeta = player?.monitor.mediaMeta as? [String: Any],
+                  let streams = mediaMeta["streams"] else {
+                return []
+            }
+
+            let list: [[String: Any]]
+            if let array = streams as? [[String: Any]] {
+                list = array
+            } else if let array = streams as? [Any] {
+                list = array.compactMap { $0 as? [String: Any] }
+            } else {
+                list = []
+            }
+
+            return list.compactMap { stream in
+                guard let type = (stream["type"] as? String)?.lowercased(), type == "timedtext",
+                      let streamIndex = extractInt(from: stream["stream_idx"]),
+                      isInternalSubtitleStream(stream) else {
+                    return nil
+                }
+                return EmbeddedSubtitleTrack(
+                    streamIndex: streamIndex,
+                    title: stream["title"] as? String,
+                    language: stream["language"] as? String
+                )
+            }
+            .sorted { $0.streamIndex < $1.streamIndex }
+        }
+
+        private func isInternalSubtitleStream(_ stream: [String: Any]) -> Bool {
+            guard let url = stream["ex_subtile_url"] as? String else {
+                return true
+            }
+            return url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        private func activeEmbeddedSubtitleStreamIndex() -> Int? {
+            guard let mediaMeta = player?.monitor.mediaMeta as? [String: Any],
+                  let streamIndex = extractInt(from: mediaMeta["timedtext"]),
+                  fetchEmbeddedSubtitleTracks().contains(where: { $0.streamIndex == streamIndex }) else {
+                return nil
+            }
+            return streamIndex
+        }
+
+        private func extractInt(from value: Any?) -> Int? {
+            switch value {
+            case let number as NSNumber:
+                return number.intValue
+            case let string as String:
+                return Int(string)
+            default:
+                return nil
+            }
+        }
+
         private func fetchActiveSubtitleCodecName() -> String? {
             guard let player else { return nil }
             if let subtitleMeta = player.monitor.subtitleMeta as? [String: Any],
@@ -490,6 +632,13 @@ extension FSVideoPlayer {
 
     func onFinish(_ handler: @escaping (Coordinator, Error?) -> Void) -> FSVideoPlayer {
         coordinator.onFinish = handler
+        return self
+    }
+
+    func onEmbeddedSubtitleTracksChanged(
+        _ handler: @escaping (Coordinator, [EmbeddedSubtitleTrack], Int?) -> Void
+    ) -> FSVideoPlayer {
+        coordinator.onEmbeddedSubtitleTracksChanged = handler
         return self
     }
 }

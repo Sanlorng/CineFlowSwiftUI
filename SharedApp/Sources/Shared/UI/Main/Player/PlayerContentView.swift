@@ -45,7 +45,10 @@ private struct PlayerContentMainView: View {
                         url: stream.url,
                         options: options,
                         externalSubtitle: externalSubtitle,
-                        allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed
+                        allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed,
+                        selectedEmbeddedSubtitleStreamIndex: viewStore.selectedSubtitle == nil ?
+                            viewStore.selectedEmbeddedSubtitleStreamIndex :
+                            nil
                     )
                         .onStateChanged { _, state in
                             switch state {
@@ -61,6 +64,9 @@ private struct PlayerContentMainView: View {
                             if let error {
                                 viewStore.send(.setPlaybackError(error.localizedDescription))
                             }
+                        }
+                        .onEmbeddedSubtitleTracksChanged { _, tracks, selectedStreamIndex in
+                            viewStore.send(.embeddedSubtitleTracksChanged(tracks, selectedStreamIndex))
                         }
                         .frame(minHeight: 240)
                         .onAppear {
@@ -193,21 +199,61 @@ private struct PlayerContentMainView: View {
                         viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
                     }
                     if !viewStore.areSubtitlesSuppressed,
-                       viewStore.availableSubtitles.isEmpty == false {
+                       (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
                         Divider()
                     }
-                    if viewStore.availableSubtitles.isEmpty {
+                    if viewStore.availableSubtitles.isEmpty,
+                       viewStore.availableEmbeddedSubtitles.isEmpty {
                         Text("暂无字幕").disabled(true)
+                    } else if !viewStore.areSubtitlesSuppressed {
+                        if !viewStore.availableSubtitles.isEmpty {
+                            if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                                Text("外挂字幕").disabled(true)
+                            }
+                            ForEach(viewStore.availableSubtitles) { subtitle in
+                                Button {
+                                    viewStore.send(.subtitleSelected(subtitle))
+                                } label: {
+                                    if viewStore.selectedSubtitle?.id == subtitle.id {
+                                        Label(subtitle.fileName, systemImage: "checkmark")
+                                    } else {
+                                        Text(subtitle.fileName)
+                                    }
+                                }
+                            }
+                        }
+                        if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                            if !viewStore.availableSubtitles.isEmpty {
+                                Divider()
+                            }
+                            if !viewStore.availableSubtitles.isEmpty {
+                                Text("内嵌字幕").disabled(true)
+                            }
+                            ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
+                                Button {
+                                    viewStore.send(.embeddedSubtitleSelected(subtitle.streamIndex))
+                                } label: {
+                                    if viewStore.selectedEmbeddedSubtitleStreamIndex == subtitle.streamIndex,
+                                       viewStore.selectedSubtitle == nil {
+                                        Label(subtitle.displayName, systemImage: "checkmark")
+                                    } else {
+                                        Text(subtitle.displayName)
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         ForEach(viewStore.availableSubtitles) { subtitle in
-                            Button(subtitle.fileName) {
-                                viewStore.send(.subtitleSelected(subtitle))
-                            }
+                            Text(subtitle.fileName).disabled(true)
                         }
                     }
                 } label: {
                     Label(
-                        subtitleMenuTitle(for: viewStore.selectedSubtitle?.fileName),
+                        subtitleMenuTitle(
+                            externalSubtitle: viewStore.selectedSubtitle?.fileName,
+                            embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
+                            isSuppressed: viewStore.areSubtitlesSuppressed
+                        ),
                         systemImage: "captions.bubble"
                     )
                 }
@@ -342,11 +388,21 @@ private func makeOptions(
     )
 }
 
-private func subtitleMenuTitle(for fileName: String?) -> String {
-    guard let fileName, !fileName.isEmpty else {
-        return "选择字幕"
+private func subtitleMenuTitle(
+    externalSubtitle: String?,
+    embeddedSubtitle: String?,
+    isSuppressed: Bool
+) -> String {
+    if isSuppressed {
+        return "字幕已关闭"
     }
-    return fileName
+    if let externalSubtitle, !externalSubtitle.isEmpty {
+        return externalSubtitle
+    }
+    if let embeddedSubtitle, !embeddedSubtitle.isEmpty {
+        return embeddedSubtitle
+    }
+    return "选择字幕"
 }
 
 private extension Color {

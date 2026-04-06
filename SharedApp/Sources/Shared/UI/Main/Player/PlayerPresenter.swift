@@ -55,7 +55,9 @@ struct PlayerPresenter {
         
         var isLoadingSubtitles = false
         var availableSubtitles: [RemoteMediaLibraryClient.Subtitle] = []
+        var availableEmbeddedSubtitles: [FSVideoPlayer.EmbeddedSubtitleTrack] = []
         var selectedSubtitle: RemoteMediaLibraryClient.Subtitle?
+        var selectedEmbeddedSubtitleStreamIndex: Int?
         var subtitleError: String?
         var activeSubtitle: LoadedSubtitle?
         var fileSelection: FileSelection?
@@ -79,6 +81,11 @@ struct PlayerPresenter {
             guard playlist.indices.contains(currentIndex) else { return nil }
             return playlist[currentIndex]
         }
+
+        var selectedEmbeddedSubtitle: FSVideoPlayer.EmbeddedSubtitleTrack? {
+            guard let selectedEmbeddedSubtitleStreamIndex else { return nil }
+            return availableEmbeddedSubtitles.first { $0.streamIndex == selectedEmbeddedSubtitleStreamIndex }
+        }
     }
     
     enum Action: Equatable {
@@ -90,6 +97,8 @@ struct PlayerPresenter {
         case subtitleListResponse(TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
         case subtitleSelected(RemoteMediaLibraryClient.Subtitle)
         case subtitleContentResponse(RemoteMediaLibraryClient.Subtitle, TaskResult<String>)
+        case embeddedSubtitleTracksChanged([FSVideoPlayer.EmbeddedSubtitleTrack], Int?)
+        case embeddedSubtitleSelected(Int)
         case subtitleCleared
         case setSubtitlesSuppressed(Bool)
         case showFilePicker
@@ -168,6 +177,7 @@ struct PlayerPresenter {
                 }
                 state.areSubtitlesSuppressed = false
                 state.selectedSubtitle = subtitle
+                state.selectedEmbeddedSubtitleStreamIndex = nil
                 state.subtitleError = nil
                 state.activeSubtitle = nil
                 state.isLoadingSelectedSubtitle = true
@@ -203,9 +213,31 @@ struct PlayerPresenter {
                     state.activeSubtitle = nil
                 }
                 return .none
+
+            case let .embeddedSubtitleTracksChanged(tracks, selectedStreamIndex):
+                state.availableEmbeddedSubtitles = tracks
+                if state.areSubtitlesSuppressed || state.selectedSubtitle != nil {
+                    state.selectedEmbeddedSubtitleStreamIndex = nil
+                } else {
+                    state.selectedEmbeddedSubtitleStreamIndex = selectedStreamIndex
+                }
+                return .none
+
+            case let .embeddedSubtitleSelected(streamIndex):
+                guard state.availableEmbeddedSubtitles.contains(where: { $0.streamIndex == streamIndex }) else {
+                    return .none
+                }
+                state.areSubtitlesSuppressed = false
+                state.selectedSubtitle = nil
+                state.selectedEmbeddedSubtitleStreamIndex = streamIndex
+                state.subtitleError = nil
+                state.activeSubtitle = nil
+                state.isLoadingSelectedSubtitle = false
+                return .none
                 
             case .subtitleCleared:
                 state.selectedSubtitle = nil
+                state.selectedEmbeddedSubtitleStreamIndex = nil
                 state.activeSubtitle = nil
                 state.subtitleError = nil
                 state.areSubtitlesSuppressed = true
@@ -216,6 +248,7 @@ struct PlayerPresenter {
                 state.areSubtitlesSuppressed = suppressed
                 if suppressed {
                     state.selectedSubtitle = nil
+                    state.selectedEmbeddedSubtitleStreamIndex = nil
                     state.activeSubtitle = nil
                     state.isLoadingSelectedSubtitle = false
                 }
@@ -255,6 +288,7 @@ struct PlayerPresenter {
                     state.fileSelection = nil
                     state.playbackError = nil
                     state.selectedSubtitle = nil
+                    state.selectedEmbeddedSubtitleStreamIndex = nil
                     state.activeSubtitle = nil
                     state.isLoadingSelectedSubtitle = false
                     return loadSubtitles(for: &state)
@@ -278,7 +312,9 @@ struct PlayerPresenter {
               let fileID = currentItem.file.id,
               !fileID.isEmpty else {
             state.availableSubtitles = []
+            state.availableEmbeddedSubtitles = []
             state.selectedSubtitle = nil
+            state.selectedEmbeddedSubtitleStreamIndex = nil
             state.activeSubtitle = nil
             state.isLoadingSubtitles = false
             state.areSubtitlesSuppressed = false
@@ -294,7 +330,9 @@ struct PlayerPresenter {
         }
         state.isLoadingSubtitles = true
         state.availableSubtitles = []
+        state.availableEmbeddedSubtitles = []
         state.selectedSubtitle = nil
+        state.selectedEmbeddedSubtitleStreamIndex = nil
         state.activeSubtitle = nil
         state.subtitleError = nil
         state.areSubtitlesSuppressed = false
