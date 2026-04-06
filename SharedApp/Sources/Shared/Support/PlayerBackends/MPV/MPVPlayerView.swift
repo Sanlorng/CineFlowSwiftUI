@@ -361,7 +361,6 @@ final class MPVContainerViewController: PlatformViewController {
     private func prepareForSourceChange() {
         currentDuration = nil
         eventSink.onVideoPresentationSizeChanged?(nil)
-        runCommand("stop")
         isBuffering = false
         isPaused = true
     }

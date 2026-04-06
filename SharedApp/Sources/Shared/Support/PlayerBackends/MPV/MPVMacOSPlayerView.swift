@@ -295,7 +295,6 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private func prepareForSourceChange() {
         currentDuration = nil
         eventSink.onVideoPresentationSizeChanged?(nil)
-        runCommand("stop", args: [])
         isBuffering = false
         isPaused = true
     }
