@@ -142,6 +142,7 @@ extension FSVideoPlayer {
 
         var onStateChanged: ((Coordinator, State) -> Void)?
         var onFinish: ((Coordinator, Error?) -> Void)?
+        var onPlaybackTimeChanged: ((Coordinator, TimeInterval) -> Void)?
         var onEmbeddedSubtitleTracksChanged: ((Coordinator, [EmbeddedSubtitleTrack], Int?) -> Void)?
 
         private(set) var state: State = .idle {
@@ -372,6 +373,7 @@ extension FSVideoPlayer {
             center.addObserver(self, selector: #selector(handlePreparedNotification), name: .FSPlayerIsPreparedToPlay, object: player)
             center.addObserver(self, selector: #selector(handleLoadStateNotification), name: .FSPlayerLoadStateDidChange, object: player)
             center.addObserver(self, selector: #selector(handlePlaybackStateNotification), name: .FSPlayerPlaybackStateDidChange, object: player)
+            center.addObserver(self, selector: #selector(handlePlaybackTimeNotification(_:)), name: .FSPlayerCurrentPlaybackTimeDidChange, object: player)
             center.addObserver(self, selector: #selector(handleDidFinishNotification(_:)), name: .FSPlayerDidFinish, object: player)
             center.addObserver(self, selector: #selector(handleDecoderFatalNotification(_:)), name: .FSPlayerVideoDecoderFatal, object: player)
             center.addObserver(self, selector: #selector(handleNoCodecNotification(_:)), name: .FSPlayerNoCodecFound, object: player)
@@ -395,6 +397,11 @@ extension FSVideoPlayer {
 
         @objc private func handlePlaybackStateNotification(_: Notification) {
             handlePlaybackStateChange()
+        }
+
+        @objc private func handlePlaybackTimeNotification(_ notification: Notification) {
+            guard let player = notification.object as? FSPlayer else { return }
+            onPlaybackTimeChanged?(self, player.currentPlaybackTime)
         }
 
         @objc private func handleDidFinishNotification(_ notification: Notification) {
@@ -632,6 +639,11 @@ extension FSVideoPlayer {
 
     func onFinish(_ handler: @escaping (Coordinator, Error?) -> Void) -> FSVideoPlayer {
         coordinator.onFinish = handler
+        return self
+    }
+
+    func onPlaybackTimeChanged(_ handler: @escaping (Coordinator, TimeInterval) -> Void) -> FSVideoPlayer {
+        coordinator.onPlaybackTimeChanged = handler
         return self
     }
 

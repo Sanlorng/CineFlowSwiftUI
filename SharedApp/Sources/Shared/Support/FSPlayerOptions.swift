@@ -5,15 +5,18 @@ struct FSPlayerOptions: Equatable {
     var headers: [String: String]
     var enableHardwareDecoding: Bool
     var allowAutoPlay: Bool
+    var playbackTimeNotificationInterval: TimeInterval
 
     init(
         headers: [String: String] = [:],
         enableHardwareDecoding: Bool = true,
-        allowAutoPlay: Bool = true
+        allowAutoPlay: Bool = true,
+        playbackTimeNotificationInterval: TimeInterval = 1 / 30
     ) {
         self.headers = headers
         self.enableHardwareDecoding = enableHardwareDecoding
         self.allowAutoPlay = allowAutoPlay
+        self.playbackTimeNotificationInterval = playbackTimeNotificationInterval
     }
 
     func makeOptions() -> FSOptions {
@@ -22,6 +25,7 @@ struct FSPlayerOptions: Equatable {
 #if os(macOS)
         options.metalRenderer = true
 #endif
+        options.currentPlaybackTimeNotificationInterval = playbackTimeNotificationInterval
         if !headers.isEmpty {
             let headerLines = headers
                 .map { "\($0): \($1)" }
