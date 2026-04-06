@@ -351,14 +351,8 @@ private struct PlayerContentMainView: View {
                     glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
                         viewStore.send(.playNext)
                     }
-                    glassIconButton("gobackward.10") {
-                        playerController.seekBy(-10)
-                    }
                     glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
                         playerController.togglePlayPause()
-                    }
-                    glassIconButton("goforward.10") {
-                        playerController.seekBy(10)
                     }
                 }
 
@@ -368,7 +362,13 @@ private struct PlayerContentMainView: View {
                     if isFullscreen {
                         episodeMenu(viewStore: viewStore)
                     }
+                    glassIconButton("gobackward.10") {
+                        playerController.seekBy(-10)
+                    }
                     speedMenu()
+                    glassIconButton("goforward.10") {
+                        playerController.seekBy(10)
+                    }
                     audioMenu(viewStore: viewStore)
                     subtitleMenu(viewStore: viewStore)
 #if os(macOS)
