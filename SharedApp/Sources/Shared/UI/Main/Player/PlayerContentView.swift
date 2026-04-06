@@ -44,6 +44,7 @@ private struct PlayerContentMainView: View {
     @State private var isEpisodePopoverPresented = false
     @State private var observedWindow: NSWindow?
     @State private var isFullscreen = false
+    @State private var isCursorHidden = false
     @State private var hideControlsTask: Task<Void, Never>?
     
     var body: some View {
@@ -106,6 +107,9 @@ private struct PlayerContentMainView: View {
                             },
                             onFullscreenChanged: { fullscreen in
                                 isFullscreen = fullscreen
+                                if !fullscreen {
+                                    showCursorIfNeeded()
+                                }
                                 revealControls()
                             }
                         )
@@ -119,6 +123,7 @@ private struct PlayerContentMainView: View {
                             switch phase {
                             case .active:
                                 isPointerInsidePlayer = true
+                                showCursorIfNeeded()
                                 revealControls()
                             case .ended:
                                 isPointerInsidePlayer = false
@@ -152,6 +157,7 @@ private struct PlayerContentMainView: View {
                             isScrubbing = false
                             hideControlsTask?.cancel()
                             hideControlsTask = nil
+                            showCursorIfNeeded()
                         }
                 } else {
                     Text("暂无可播放内容。")
@@ -566,6 +572,7 @@ private struct PlayerContentMainView: View {
 
     private func revealControls() {
         hideControlsTask?.cancel()
+        showCursorIfNeeded()
         withAnimation(.easeOut(duration: 0.18)) {
             isControlBarVisible = true
         }
@@ -586,6 +593,7 @@ private struct PlayerContentMainView: View {
 #endif
 
         guard shouldHideLater else {
+            showCursorIfNeeded()
             withAnimation(.easeOut(duration: 0.18)) {
                 isControlBarVisible = true
             }
@@ -593,7 +601,8 @@ private struct PlayerContentMainView: View {
         }
 
         hideControlsTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
+            let delay: Duration = isFullscreen ? .seconds(3) : .seconds(2)
+            try? await Task.sleep(for: delay)
 #if os(macOS)
             let stillEligible: Bool
             if isFullscreen {
@@ -605,11 +614,31 @@ private struct PlayerContentMainView: View {
             let stillEligible = false
 #endif
             guard stillEligible else { return }
+            if isFullscreen {
+                hideCursorIfNeeded()
+            }
             withAnimation(.easeInOut(duration: 0.22)) {
                 isControlBarVisible = false
             }
         }
     }
+
+#if os(macOS)
+    private func hideCursorIfNeeded() {
+        guard !isCursorHidden else { return }
+        NSCursor.hide()
+        isCursorHidden = true
+    }
+
+    private func showCursorIfNeeded() {
+        guard isCursorHidden else { return }
+        NSCursor.unhide()
+        isCursorHidden = false
+    }
+#else
+    private func hideCursorIfNeeded() {}
+    private func showCursorIfNeeded() {}
+#endif
     
     @ViewBuilder
     private func playlistSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
