@@ -45,6 +45,7 @@ private struct PlayerContentMainView: View {
     @State private var observedWindow: NSWindow?
     @State private var isFullscreen = false
     @State private var isCursorHidden = false
+    @State private var lastPointerLocation: CGPoint?
     @State private var hideControlsTask: Task<Void, Never>?
     
     var body: some View {
@@ -123,16 +124,20 @@ private struct PlayerContentMainView: View {
                         .frame(minHeight: 240, maxHeight: isFullscreen ? .infinity : nil)
                         .clipped()
 #if os(macOS)
-                        .onContinuousHover { phase in
+                        .onContinuousHover(coordinateSpace: .local) { phase in
                             switch phase {
-                            case .active:
+                            case let .active(location):
                                 isPointerInsidePlayer = true
-                                showCursorIfNeeded()
-                                revealControls()
+                                if didPointerMove(to: location) {
+                                    showCursorIfNeeded()
+                                    revealControls()
+                                    scheduleControlBarVisibilityUpdate()
+                                }
                             case .ended:
                                 isPointerInsidePlayer = false
+                                lastPointerLocation = nil
+                                scheduleControlBarVisibilityUpdate()
                             }
-                            scheduleControlBarVisibilityUpdate()
                         }
 #endif
                         .onAppear {
@@ -159,6 +164,7 @@ private struct PlayerContentMainView: View {
                             playerController.reset()
                             scrubPosition = 0
                             isScrubbing = false
+                            lastPointerLocation = nil
                             hideControlsTask?.cancel()
                             hideControlsTask = nil
                             showCursorIfNeeded()
@@ -597,6 +603,13 @@ private struct PlayerContentMainView: View {
             width: max(videoPresentationSize.width * scale, 1),
             height: max(videoPresentationSize.height * scale, 1)
         )
+    }
+
+    private func didPointerMove(to location: CGPoint) -> Bool {
+        defer { lastPointerLocation = location }
+        guard let lastPointerLocation else { return true }
+        return abs(location.x - lastPointerLocation.x) > 0.5
+            || abs(location.y - lastPointerLocation.y) > 0.5
     }
 
     private func revealControls() {
