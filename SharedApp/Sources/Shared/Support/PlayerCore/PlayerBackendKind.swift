@@ -5,7 +5,11 @@ enum PlayerBackendKind: String, CaseIterable, Sendable {
     case mpv
 
     static var defaultDistributable: Self {
+#if canImport(Libmpv)
+        .mpv
+#else
         .avFoundation
+#endif
     }
 
     var displayName: String {
@@ -14,6 +18,19 @@ enum PlayerBackendKind: String, CaseIterable, Sendable {
             return "AVFoundation"
         case .mpv:
             return "mpv"
+        }
+    }
+
+    var isAvailableInCurrentBuild: Bool {
+        switch self {
+        case .avFoundation:
+            return true
+        case .mpv:
+#if canImport(Libmpv)
+            return true
+#else
+            return false
+#endif
         }
     }
 
@@ -34,4 +51,10 @@ struct PlayerBackendCapabilities: OptionSet, Sendable {
     static let audioTrackSelection = Self(rawValue: 1 << 1)
     static let externalSubtitleInjection = Self(rawValue: 1 << 2)
     static let embeddedSubtitleTracks = Self(rawValue: 1 << 3)
+}
+
+extension PlayerBackendKind {
+    static var availableBackendsInCurrentBuild: [Self] {
+        allCases.filter(\.isAvailableInCurrentBuild)
+    }
 }

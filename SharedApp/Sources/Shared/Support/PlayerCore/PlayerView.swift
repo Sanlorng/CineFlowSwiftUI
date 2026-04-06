@@ -32,9 +32,14 @@ struct PlayerView: View {
                 )
             )
         case .mpv:
-            UnsupportedPlayerBackendView(
-                backend: backend,
-                onStateChanged: onStateChangedHandler
+            MPVPlayerView(
+                source: source,
+                options: options,
+                eventSink: .init(
+                    onStateChanged: onStateChangedHandler,
+                    onFinish: onFinishHandler,
+                    onPlaybackTimeChanged: onPlaybackTimeChangedHandler
+                )
             )
         }
     }
@@ -57,27 +62,5 @@ extension PlayerView {
         var copy = self
         copy.onPlaybackTimeChangedHandler = handler
         return copy
-    }
-}
-
-private struct UnsupportedPlayerBackendView: View {
-    let backend: PlayerBackendKind
-    let onStateChanged: ((PlayerPlaybackState) -> Void)?
-
-    var body: some View {
-        Rectangle()
-            .fill(Color.black)
-            .overlay {
-                VStack(spacing: 10) {
-                    Image(systemName: "play.slash")
-                        .font(.system(size: 28, weight: .medium))
-                    Text("\(backend.displayName) 后端尚未接入当前构建")
-                        .font(.callout)
-                }
-                .foregroundStyle(.white.opacity(0.88))
-            }
-            .onAppear {
-                onStateChanged?(.error("\(backend.displayName) 后端尚未接入当前构建。"))
-            }
     }
 }
