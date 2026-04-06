@@ -345,7 +345,7 @@ private struct PlayerContentMainView: View {
                     .frame(width: 52, alignment: .leading)
 
                 HStack(spacing: 8) {
-                    glassIconButton("backward.end.alt", isDisabled: viewStore.currentIndex == 0) {
+                    glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
                         viewStore.send(.playPrevious)
                     }
                     glassIconButton("gobackward.10") {
@@ -357,7 +357,7 @@ private struct PlayerContentMainView: View {
                     glassIconButton("goforward.10") {
                         playerController.seekBy(10)
                     }
-                    glassIconButton("forward.end.alt", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
+                    glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
                         viewStore.send(.playNext)
                     }
                 }
