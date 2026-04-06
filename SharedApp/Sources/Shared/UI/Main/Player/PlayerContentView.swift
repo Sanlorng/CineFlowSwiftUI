@@ -191,6 +191,12 @@ private struct PlayerContentMainView: View {
                 .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
+                DanmakuRenderOverlay(
+                    payload: viewStore.activeDanmaku?.payload,
+                    playbackTime: playerController.timeline.currentTime
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
                 playbackControlBar(viewStore: viewStore)
                     .opacity(isControlBarVisible ? 1 : 0)
                     .offset(y: isControlBarVisible ? 0 : 28)
