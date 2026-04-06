@@ -1000,7 +1000,7 @@ private struct PlayerContentMainView: View {
         }
 
         hideControlsTask = Task { @MainActor in
-            let delay: Duration = isFullscreen ? .seconds(3) : .seconds(2)
+            let delay: Duration = .seconds(1.5)
             let expectedMovementInstant = lastPointerMovementAt
             try? await Task.sleep(for: delay)
 #if os(macOS)
@@ -1056,7 +1056,7 @@ private struct PlayerContentMainView: View {
         cancelControlBarAutoHide()
         let expectedMovementInstant = lastPointerMovementAt
         hideControlsTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(1.5))
             guard isFullscreen,
                   lastPointerMovementAt == expectedMovementInstant,
                   !isPointerInsideControls,
