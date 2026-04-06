@@ -18,8 +18,7 @@ enum SubtitleSanitizer {
     }
 
     static func prepareForFSPlayer(rawText: String, fileName: String) -> String {
-        guard isASSFile(fileName),
-              let document = parseASS(rawText),
+        guard let document = parseASS(rawText),
               document.supportsBilingualLayout else {
             return rawText
         }
@@ -34,15 +33,11 @@ enum SubtitleSanitizer {
         let supportsBilingualLayout: Bool
     }
 
-    private static func isASSFile(_ fileName: String) -> Bool {
-        let ext = (fileName as NSString).pathExtension.lowercased()
-        return ext == "ass" || ext == "ssa"
-    }
-
     private static func parseASS(_ rawText: String) -> ASSDocument? {
         let normalized = rawText.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
-        guard lines.contains(where: { $0.hasPrefix("Dialogue:") }) else {
+        guard lines.contains(where: { $0.hasPrefix("[Events]") }),
+              lines.contains(where: { $0.hasPrefix("Dialogue:") }) else {
             return nil
         }
 
@@ -223,8 +218,8 @@ enum SubtitleSanitizer {
 
     private static func styleRole(for style: String) -> StyleRole? {
         let patterns = [
-            "_(JP|CH)(\\d*)$",
-            "(JP|CH)(\\d*)$"
+            "_(JP|JPN|JA|CH|SC|TC|ZH|CN)(\\d*)$",
+            "(JP|JPN|JA|CH|SC|TC|ZH|CN)(\\d*)$"
         ]
 
         for pattern in patterns {
@@ -239,7 +234,15 @@ enum SubtitleSanitizer {
             }
 
             let languageToken = style[langRange].lowercased()
-            let language: Language = languageToken == "jp" ? .japanese : .chinese
+            let language: Language
+            switch languageToken {
+            case "jp", "jpn", "ja":
+                language = .japanese
+            case "ch", "sc", "tc", "zh", "cn":
+                language = .chinese
+            default:
+                language = .other
+            }
             let base = regex.stringByReplacingMatches(
                 in: style,
                 options: [],
@@ -247,6 +250,7 @@ enum SubtitleSanitizer {
                 withTemplate: pattern.hasPrefix("_") ? "_$2" : "$2"
             )
             let normalizedBase = base.replacingOccurrences(of: "__", with: "_")
+            guard language != .other else { continue }
             return StyleRole(language: language, baseKey: normalizedBase)
         }
 
