@@ -46,17 +46,16 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    let externalSubtitle = customSubtitleDocument == nil ? viewStore.activeSubtitle.map {
-                        FSVideoPlayer.ExternalSubtitle(fileName: $0.fileName, content: $0.fsPlayerContent)
-                    } : nil
+                    let usesCustomSubtitleRenderer = viewStore.activeSubtitle != nil && !viewStore.areSubtitlesSuppressed
+                    let externalSubtitle: FSVideoPlayer.ExternalSubtitle? = nil
                     ZStack {
                         FSVideoPlayer(
                             coordinator: coordinator,
                             url: stream.url,
                             options: options,
                             externalSubtitle: externalSubtitle,
-                            allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed,
-                            selectedEmbeddedSubtitleStreamIndex: viewStore.selectedSubtitle == nil ?
+                            allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed && !usesCustomSubtitleRenderer,
+                            selectedEmbeddedSubtitleStreamIndex: viewStore.selectedSubtitle == nil && !usesCustomSubtitleRenderer ?
                                 viewStore.selectedEmbeddedSubtitleStreamIndex :
                                 nil
                         )
@@ -436,9 +435,7 @@ private func makeCustomSubtitleDocument(
 #else
     return nil
 #endif
-    let ext = (subtitle.fileName as NSString).pathExtension.lowercased()
-    guard ext == "ass" || ext == "ssa" else { return nil }
-    return .ass(subtitle.rawContent, fileName: subtitle.fileName)
+    return .detecting(rawText: subtitle.rawContent, fileName: subtitle.fileName)
 }
 
 private extension Color {

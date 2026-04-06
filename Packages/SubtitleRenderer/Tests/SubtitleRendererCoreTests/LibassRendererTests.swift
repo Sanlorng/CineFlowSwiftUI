@@ -18,6 +18,19 @@ func libassRendererProducesVisiblePixelsForSimpleASS() throws {
     #expect(alphaSum(of: frame.image) > 0)
 }
 
+@Test
+func libassRendererProducesVisiblePixelsForSimpleSRT() throws {
+    let renderer = try LibassRenderer(
+        viewport: SubtitleViewport(size: CGSize(width: 640, height: 360))
+    )
+
+    try renderer.updateDocument(.srt(LibassRendererFixture.srt, fileName: "demo.srt"))
+    let renderedFrame = try renderer.renderFrame(at: 1.2)
+    let frame = try #require(renderedFrame)
+
+    #expect(alphaSum(of: frame.image) > 0)
+}
+
 private func alphaSum(of image: CGImage) -> Int {
     let width = image.width
     let height = image.height
@@ -54,5 +67,11 @@ private enum LibassRendererFixture {
     [Events]
     Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,Hello from libass
+    """
+
+    static let srt = """
+    1
+    00:00:01,000 --> 00:00:02,000
+    Hello from SubRip
     """
 }

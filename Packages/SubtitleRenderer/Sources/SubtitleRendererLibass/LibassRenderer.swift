@@ -69,16 +69,16 @@ public final class LibassRenderer: SubtitleRenderingBackend {
     }
 
     public func updateDocument(_ document: SubtitleDocument) throws {
-        guard document.format == .ass else {
-            throw LibassRendererError.unsupportedFormat(document.format)
-        }
-
         if let track {
             runtime.assFreeTrack(track)
             self.track = nil
         }
 
-        let utf8 = Array(document.text.utf8CString)
+        guard let assText = LibassSubtitleCompiler.compile(document) else {
+            throw LibassRendererError.failedToParseDocument
+        }
+
+        let utf8 = Array(assText.utf8CString)
         guard let newTrack = utf8.withUnsafeBufferPointer({ buffer -> UnsafeMutablePointer<ASS_Track>? in
             guard let baseAddress = buffer.baseAddress else { return nil }
             let mutable = UnsafeMutablePointer(mutating: baseAddress)
