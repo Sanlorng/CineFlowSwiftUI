@@ -4,23 +4,27 @@ import SubtitleRendererCore
 #if os(macOS) && arch(arm64)
 import AppKit
 import QuartzCore
-import SubtitleRendererLibass
 
-struct SubtitleRendererOverlay: NSViewRepresentable {
-    let document: SubtitleDocument?
-    let playbackTime: TimeInterval
+public struct SubtitleRendererOverlay: NSViewRepresentable {
+    public let document: SubtitleDocument?
+    public let playbackTime: TimeInterval
 
-    func makeCoordinator() -> Coordinator {
+    public init(document: SubtitleDocument?, playbackTime: TimeInterval) {
+        self.document = document
+        self.playbackTime = playbackTime
+    }
+
+    public func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
-    func makeNSView(context: Context) -> SubtitleOverlayView {
+    public func makeNSView(context: Context) -> SubtitleOverlayView {
         let view = SubtitleOverlayView(frame: .zero)
         context.coordinator.attach(to: view)
         return view
     }
 
-    func updateNSView(_ view: SubtitleOverlayView, context: Context) {
+    public func updateNSView(_ view: SubtitleOverlayView, context: Context) {
         context.coordinator.update(
             view: view,
             document: document,
@@ -28,11 +32,12 @@ struct SubtitleRendererOverlay: NSViewRepresentable {
         )
     }
 
-    static func dismantleNSView(_ view: SubtitleOverlayView, coordinator: Coordinator) {
+    public static func dismantleNSView(_ view: SubtitleOverlayView, coordinator: Coordinator) {
         coordinator.detach(from: view)
     }
 
-    final class Coordinator {
+    @MainActor
+    public final class Coordinator {
         private var renderer: LibassRenderer?
         private var currentDocument: SubtitleDocument?
         private var currentViewport: SubtitleViewport?
@@ -116,15 +121,20 @@ struct SubtitleRendererOverlay: NSViewRepresentable {
     }
 }
 
-final class SubtitleOverlayView: NSView {
-    override var isFlipped: Bool { true }
+public final class SubtitleOverlayView: NSView {
+    public override var isFlipped: Bool { true }
 }
 #else
-struct SubtitleRendererOverlay: View {
-    let document: SubtitleDocument?
-    let playbackTime: TimeInterval
+public struct SubtitleRendererOverlay: View {
+    public let document: SubtitleDocument?
+    public let playbackTime: TimeInterval
 
-    var body: some View {
+    public init(document: SubtitleDocument?, playbackTime: TimeInterval) {
+        self.document = document
+        self.playbackTime = playbackTime
+    }
+
+    public var body: some View {
         Color.clear
     }
 }

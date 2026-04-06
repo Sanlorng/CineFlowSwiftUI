@@ -66,6 +66,7 @@ final class LibassRuntime {
 #if os(macOS) && arch(arm64)
         let bundleName = "SubtitleRenderer_SubtitleRendererLibass.bundle"
         let bundleCandidates: [URL?] = [
+            Bundle.module.bundleURL,
             Bundle.main.resourceURL?.appendingPathComponent(bundleName),
             Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(bundleName),
             Bundle.main.bundleURL.appendingPathComponent("Contents/Resources").appendingPathComponent(bundleName),
