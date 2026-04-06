@@ -508,6 +508,7 @@ private extension MPVContainerViewController {
         let title = stringValue(in: map, key: "title")?.trimmingCharacters(in: .whitespacesAndNewlines)
         let language = stringValue(in: map, key: "lang")?.trimmingCharacters(in: .whitespacesAndNewlines)
         let codec = stringValue(in: map, key: "codec")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ffIndex = int64Value(in: map, key: "ff-index").flatMap(Int.init)
         let selected = boolValue(in: map, key: "selected") ?? false
         let external = boolValue(in: map, key: "external") ?? false
 
@@ -530,6 +531,7 @@ private extension MPVContainerViewController {
             displayName: displayName,
             language: language,
             codec: codec,
+            streamIndex: ffIndex,
             isSelected: selected,
             isExternal: external
         )

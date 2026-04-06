@@ -12,6 +12,7 @@ struct PlayerTrack: Equatable, Identifiable, Sendable {
     var displayName: String
     var language: String?
     var codec: String?
+    var streamIndex: Int?
     var isSelected: Bool
     var isExternal: Bool
 
@@ -21,6 +22,7 @@ struct PlayerTrack: Equatable, Identifiable, Sendable {
         displayName: String,
         language: String? = nil,
         codec: String? = nil,
+        streamIndex: Int? = nil,
         isSelected: Bool = false,
         isExternal: Bool = false
     ) {
@@ -29,6 +31,7 @@ struct PlayerTrack: Equatable, Identifiable, Sendable {
         self.displayName = displayName
         self.language = language
         self.codec = codec
+        self.streamIndex = streamIndex
         self.isSelected = isSelected
         self.isExternal = isExternal
     }

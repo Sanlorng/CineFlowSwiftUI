@@ -167,6 +167,18 @@ struct PlayerPresenter {
                           audioTracks.contains(where: { $0.id == selectedAudioTrackID }) == false {
                     state.selectedAudioTrackID = nil
                 }
+                let backendSubtitleTracks = tracks
+                    .filter { $0.kind == .subtitle && !$0.isExternal }
+                    .compactMap(makeEmbeddedSubtitleTrack(from:))
+                state.availableEmbeddedSubtitles = mergeEmbeddedSubtitleTracks(
+                    existing: state.availableEmbeddedSubtitles,
+                    incoming: backendSubtitleTracks,
+                    preferIncoming: false
+                )
+                if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
+                   state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
+                    state.selectedEmbeddedSubtitleTrackID = nil
+                }
                 return .none
 
             case let .audioTrackSelected(trackID):
@@ -190,9 +202,13 @@ struct PlayerPresenter {
             case let .embeddedSubtitleTracksResponse(fileID, .success(tracks)):
                 guard state.currentFileID == fileID else { return .none }
                 state.isLoadingEmbeddedSubtitles = false
-                state.availableEmbeddedSubtitles = tracks
+                state.availableEmbeddedSubtitles = mergeEmbeddedSubtitleTracks(
+                    existing: state.availableEmbeddedSubtitles,
+                    incoming: tracks,
+                    preferIncoming: true
+                )
                 if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
-                   tracks.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
+                   state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
                     state.selectedEmbeddedSubtitleTrackID = nil
                 }
                 state.subtitleError = nil
@@ -487,4 +503,61 @@ private func makeLoadedSubtitle(
         fileName: document.fileName ?? fallbackFileName,
         document: document
     )
+}
+
+private func makeEmbeddedSubtitleTrack(from track: PlayerTrack) -> SubtitleTrack? {
+    let trackID: String
+    if let streamIndex = track.streamIndex {
+        trackID = String(streamIndex)
+    } else if Int(track.id) != nil {
+        trackID = track.id
+    } else {
+        return nil
+    }
+
+    return SubtitleTrack(
+        id: trackID,
+        displayName: track.displayName,
+        language: track.language,
+        formatHint: subtitleFormatHint(for: track.codec),
+        kind: .embedded
+    )
+}
+
+private func subtitleFormatHint(for codec: String?) -> SubtitleFormat? {
+    guard let codec = codec?.lowercased() else { return nil }
+    switch codec {
+    case "ass", "ssa":
+        return .ass
+    case "subrip", "srt", "mov_text", "text":
+        return .srt
+    case "webvtt":
+        return .webvtt
+    default:
+        return nil
+    }
+}
+
+private func mergeEmbeddedSubtitleTracks(
+    existing: [SubtitleTrack],
+    incoming: [SubtitleTrack],
+    preferIncoming: Bool
+) -> [SubtitleTrack] {
+    var merged: [String: SubtitleTrack] = [:]
+
+    for track in preferIncoming ? existing : incoming {
+        merged[track.id] = track
+    }
+    for track in preferIncoming ? incoming : existing {
+        merged[track.id] = track
+    }
+
+    return merged.values.sorted { lhs, rhs in
+        let lhsID = Int(lhs.id) ?? .max
+        let rhsID = Int(rhs.id) ?? .max
+        if lhsID != rhsID {
+            return lhsID < rhsID
+        }
+        return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+    }
 }
