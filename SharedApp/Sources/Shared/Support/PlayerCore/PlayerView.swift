@@ -4,6 +4,7 @@ struct PlayerView: View {
     let backend: PlayerBackendKind
     let source: PlayerSource
     let options: PlayerLoadOptions
+    @ObservedObject var controller: PlayerController
 
     private var onStateChangedHandler: ((PlayerPlaybackState) -> Void)?
     private var onFinishHandler: ((Error?) -> Void)?
@@ -13,10 +14,12 @@ struct PlayerView: View {
     init(
         backend: PlayerBackendKind = .defaultDistributable,
         source: PlayerSource,
+        controller: PlayerController,
         options: PlayerLoadOptions
     ) {
         self.backend = backend
         self.source = source
+        self.controller = controller
         self.options = options
     }
 
@@ -25,11 +28,18 @@ struct PlayerView: View {
         case .avFoundation:
             AVFoundationPlayerView(
                 source: source,
+                controller: controller,
                 options: options,
                 eventSink: .init(
-                    onStateChanged: onStateChangedHandler,
+                    onStateChanged: { state in
+                        controller.updatePlaybackState(state)
+                        onStateChangedHandler?(state)
+                    },
                     onFinish: onFinishHandler,
                     onPlaybackTimeChanged: onPlaybackTimeChangedHandler,
+                    onTimelineChanged: { timeline in
+                        controller.updateTimeline(currentTime: timeline.currentTime, duration: timeline.duration)
+                    },
                     onTracksChanged: onTracksChangedHandler
                 )
             )
@@ -37,22 +47,36 @@ struct PlayerView: View {
 #if os(macOS)
             MPVMacOSPlayerView(
                 source: source,
+                controller: controller,
                 options: options,
                 eventSink: .init(
-                    onStateChanged: onStateChangedHandler,
+                    onStateChanged: { state in
+                        controller.updatePlaybackState(state)
+                        onStateChangedHandler?(state)
+                    },
                     onFinish: onFinishHandler,
                     onPlaybackTimeChanged: onPlaybackTimeChangedHandler,
+                    onTimelineChanged: { timeline in
+                        controller.updateTimeline(currentTime: timeline.currentTime, duration: timeline.duration)
+                    },
                     onTracksChanged: onTracksChangedHandler
                 )
             )
 #else
             MPVPlayerView(
                 source: source,
+                controller: controller,
                 options: options,
                 eventSink: .init(
-                    onStateChanged: onStateChangedHandler,
+                    onStateChanged: { state in
+                        controller.updatePlaybackState(state)
+                        onStateChangedHandler?(state)
+                    },
                     onFinish: onFinishHandler,
                     onPlaybackTimeChanged: onPlaybackTimeChangedHandler,
+                    onTimelineChanged: { timeline in
+                        controller.updateTimeline(currentTime: timeline.currentTime, duration: timeline.duration)
+                    },
                     onTracksChanged: onTracksChangedHandler
                 )
             )

@@ -31,8 +31,10 @@ struct PlayerContentView: View {
 
 private struct PlayerContentMainView: View {
     let store: StoreOf<PlayerPresenter>
-    @State private var playbackTime: TimeInterval = 0
+    @StateObject private var playerController = PlayerController()
     @State private var isImportingLocalSubtitle = false
+    @State private var scrubPosition: TimeInterval = 0
+    @State private var isScrubbing = false
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -46,13 +48,14 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    ZStack {
+                    ZStack(alignment: .bottom) {
                         PlayerView(
                             backend: .defaultDistributable,
                             source: .init(
                                 url: stream.url,
                                 headers: stream.headers
                             ),
+                            controller: playerController,
                             options: options,
                         )
                             .onStateChanged { state in
@@ -70,19 +73,17 @@ private struct PlayerContentMainView: View {
                                     viewStore.send(.setPlaybackError(error.localizedDescription))
                                 }
                             }
-                            .onPlaybackTimeChanged { time in
-                                playbackTime = time
-                            }
                             .onTracksChanged { tracks in
                                 guard let fileID = viewStore.currentFileID else { return }
                                 viewStore.send(.playerTracksChanged(fileID, tracks))
                             }
                         SubtitleRendererOverlay(
                             document: customSubtitleDocument,
-                            playbackTime: playbackTime
+                            playbackTime: playerController.timeline.currentTime
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .allowsHitTesting(false)
+                        playbackControlBar(viewStore: viewStore)
                     }
                         .frame(minHeight: 240)
                         .onAppear {
@@ -91,11 +92,19 @@ private struct PlayerContentMainView: View {
                         }
                         .onChange(of: viewStore.currentItem?.stream) { _, newStream in
                             guard newStream != nil else { return }
-                            playbackTime = 0
+                            playerController.reset()
+                            scrubPosition = 0
+                            isScrubbing = false
                             viewStore.send(.setPlaybackError(nil))
                         }
+                        .onChange(of: playerController.timeline.currentTime) { _, newValue in
+                            guard !isScrubbing else { return }
+                            scrubPosition = newValue
+                        }
                         .onDisappear {
-                            playbackTime = 0
+                            playerController.reset()
+                            scrubPosition = 0
+                            isScrubbing = false
                         }
                 } else {
                     Text("暂无可播放内容。")
@@ -104,8 +113,6 @@ private struct PlayerContentMainView: View {
                 
                 metadataSection(viewStore: viewStore)
                 controlsSection(viewStore: viewStore)
-                audioSection(viewStore: viewStore)
-                subtitleSection(viewStore: viewStore)
                 playlistSection(viewStore: viewStore)
                 
                 if let error = viewStore.subtitleError {
@@ -198,87 +205,169 @@ private struct PlayerContentMainView: View {
     }
     
     @ViewBuilder
-    private func subtitleSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("字幕")
-                    .font(.headline)
-                if viewStore.isLoadingSubtitles || viewStore.isLoadingEmbeddedSubtitles {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                if viewStore.isLoadingSelectedSubtitle {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                Spacer()
-                Menu {
-                    Button(viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕") {
-                        viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
-                    }
-                    Button("导入本地字幕…") {
-                        isImportingLocalSubtitle = true
-                    }
-                    if !viewStore.areSubtitlesSuppressed,
-                       (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
-                        Divider()
-                    }
-                    if viewStore.availableSubtitles.isEmpty,
-                       viewStore.availableEmbeddedSubtitles.isEmpty {
-                        Text("暂无字幕").disabled(true)
-                    } else if !viewStore.areSubtitlesSuppressed {
-                        if !viewStore.availableSubtitles.isEmpty {
-                            if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                                Text("外挂字幕").disabled(true)
-                            }
-                            ForEach(viewStore.availableSubtitles) { subtitle in
-                                Button {
-                                    viewStore.send(.subtitleSelected(subtitle))
-                                } label: {
-                                    if viewStore.selectedSubtitle?.id == subtitle.id {
-                                        Label(subtitle.fileName, systemImage: "checkmark")
-                                    } else {
-                                        Text(subtitle.fileName)
-                                    }
-                                }
-                            }
-                        }
-                        if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                            if !viewStore.availableSubtitles.isEmpty {
-                                Divider()
-                            }
-                            if !viewStore.availableSubtitles.isEmpty {
-                                Text("内嵌字幕").disabled(true)
-                            }
-                            ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
-                                Button {
-                                    viewStore.send(.embeddedSubtitleSelected(subtitle.id))
-                                } label: {
-                                    if viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id,
-                                       viewStore.selectedSubtitle == nil {
-                                        Label(subtitle.displayName, systemImage: "checkmark")
-                                    } else {
-                                        Text(subtitle.displayName)
-                                    }
-                                }
-                            }
-                        }
+    private func playbackControlBar(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        let duration = max(playerController.timeline.duration ?? 0, 0)
+        let effectiveDuration = max(duration, 1)
+        let displayedTime = isScrubbing ? scrubPosition : min(playerController.timeline.currentTime, effectiveDuration)
+
+        VStack(spacing: 10) {
+            Slider(
+                value: Binding(
+                    get: { displayedTime },
+                    set: { scrubPosition = $0 }
+                ),
+                in: 0...effectiveDuration,
+                onEditingChanged: { editing in
+                    if editing {
+                        isScrubbing = true
+                        scrubPosition = playerController.timeline.currentTime
                     } else {
-                        ForEach(viewStore.availableSubtitles) { subtitle in
-                            Text(subtitle.fileName).disabled(true)
-                        }
+                        isScrubbing = false
+                        playerController.seekTo(scrubPosition)
                     }
+                }
+            )
+            .tint(.white.opacity(0.92))
+            .disabled(duration <= 0)
+
+            HStack(spacing: 14) {
+                Text(formatPlaybackTime(displayedTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.78))
+                    .frame(width: 52, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    glassIconButton("gobackward.10") {
+                        playerController.seekBy(-10)
+                    }
+                    glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
+                        playerController.togglePlayPause()
+                    }
+                    glassIconButton("goforward.10") {
+                        playerController.seekBy(10)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 8) {
+                    audioMenu(viewStore: viewStore)
+                    subtitleMenu(viewStore: viewStore)
+                }
+
+                Text(formatPlaybackTime(duration))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.78))
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 760)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 16)
+    }
+
+    @ViewBuilder
+    private func audioMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        Menu {
+            Button("自动选择") {
+                viewStore.send(.audioTrackSelected(nil))
+            }
+            ForEach(viewStore.availableAudioTracks) { track in
+                Button {
+                    viewStore.send(.audioTrackSelected(track.id))
                 } label: {
-                    Label(
-                        subtitleMenuTitle(
-                            externalSubtitle: viewStore.selectedSubtitle?.fileName ?? viewStore.activeSubtitle?.fileName,
-                            embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
-                            isSuppressed: viewStore.areSubtitlesSuppressed
-                        ),
-                        systemImage: "captions.bubble"
-                    )
+                    if viewStore.selectedAudioTrackID == track.id {
+                        Label(track.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(track.displayName)
+                    }
                 }
             }
+        } label: {
+            glassCapsuleLabel(
+                title: selectedAudioTrackTitle(
+                    tracks: viewStore.availableAudioTracks,
+                    selectedAudioTrackID: viewStore.selectedAudioTrackID
+                ),
+                systemImage: "waveform"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func subtitleMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+        Menu {
+            Button(viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕") {
+                viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
+            }
+            Button("导入本地字幕…") {
+                isImportingLocalSubtitle = true
+            }
+            if !viewStore.areSubtitlesSuppressed,
+               (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
+                Divider()
+            }
+            if viewStore.availableSubtitles.isEmpty,
+               viewStore.availableEmbeddedSubtitles.isEmpty {
+                Text("暂无字幕").disabled(true)
+            } else if !viewStore.areSubtitlesSuppressed {
+                if !viewStore.availableSubtitles.isEmpty {
+                    if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                        Text("外挂字幕").disabled(true)
+                    }
+                    ForEach(viewStore.availableSubtitles) { subtitle in
+                        Button {
+                            viewStore.send(.subtitleSelected(subtitle))
+                        } label: {
+                            if viewStore.selectedSubtitle?.id == subtitle.id {
+                                Label(subtitle.fileName, systemImage: "checkmark")
+                            } else {
+                                Text(subtitle.fileName)
+                            }
+                        }
+                    }
+                }
+                if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                    if !viewStore.availableSubtitles.isEmpty {
+                        Divider()
+                    }
+                    if !viewStore.availableSubtitles.isEmpty {
+                        Text("内嵌字幕").disabled(true)
+                    }
+                    ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
+                        Button {
+                            viewStore.send(.embeddedSubtitleSelected(subtitle.id))
+                        } label: {
+                            if viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id,
+                               viewStore.selectedSubtitle == nil {
+                                Label(subtitle.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(subtitle.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            glassCapsuleLabel(
+                title: subtitleMenuTitle(
+                    externalSubtitle: viewStore.selectedSubtitle?.fileName ?? viewStore.activeSubtitle?.fileName,
+                    embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
+                    isSuppressed: viewStore.areSubtitlesSuppressed
+                ),
+                systemImage: "captions.bubble"
+            )
         }
         .fileImporter(
             isPresented: $isImportingLocalSubtitle,
@@ -302,43 +391,6 @@ private struct PlayerContentMainView: View {
                 }
             case let .failure(error):
                 store.send(.localSubtitleLoadFailed(error.localizedDescription))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func audioSection(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
-        if !viewStore.availableAudioTracks.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("音轨")
-                        .font(.headline)
-                    Spacer()
-                    Menu {
-                        Button("自动选择") {
-                            viewStore.send(.audioTrackSelected(nil))
-                        }
-                        ForEach(viewStore.availableAudioTracks) { track in
-                            Button {
-                                viewStore.send(.audioTrackSelected(track.id))
-                            } label: {
-                                if viewStore.selectedAudioTrackID == track.id {
-                                    Label(track.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(track.displayName)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(
-                            selectedAudioTrackTitle(
-                                tracks: viewStore.availableAudioTracks,
-                                selectedAudioTrackID: viewStore.selectedAudioTrackID
-                            ),
-                            systemImage: "waveform"
-                        )
-                    }
-                }
             }
         }
     }
@@ -484,6 +536,52 @@ private func selectedAudioTrackTitle(
         return autoSelectedTrack.displayName
     }
     return "自动音轨"
+}
+
+private func formatPlaybackTime(_ time: TimeInterval) -> String {
+    guard time.isFinite, time > 0 else { return "00:00" }
+    let totalSeconds = Int(time.rounded(.down))
+    let seconds = totalSeconds % 60
+    let minutes = (totalSeconds / 60) % 60
+    let hours = totalSeconds / 3600
+    if hours > 0 {
+        return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+    }
+    return String(format: "%02d:%02d", minutes, seconds)
+}
+
+@ViewBuilder
+private func glassIconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        Image(systemName: systemName)
+            .font(.system(size: 15, weight: .semibold))
+            .frame(width: 34, height: 34)
+            .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .background(
+        Circle()
+            .fill(.white.opacity(0.14))
+    )
+    .foregroundStyle(.white)
+}
+
+@ViewBuilder
+private func glassCapsuleLabel(title: String, systemImage: String) -> some View {
+    HStack(spacing: 6) {
+        Image(systemName: systemImage)
+            .font(.system(size: 11, weight: .semibold))
+        Text(title)
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+    }
+    .foregroundStyle(.white.opacity(0.9))
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(
+        Capsule(style: .continuous)
+            .fill(.white.opacity(0.12))
+    )
 }
 
 private func subtitleMenuTitle(

@@ -9,6 +9,7 @@ import OpenGL.GL3
 
 struct MPVMacOSPlayerView {
     let source: PlayerSource
+    @ObservedObject var controller: PlayerController
     let options: PlayerLoadOptions
     let eventSink: PlayerBackendEventSink
 }
@@ -19,11 +20,11 @@ extension MPVMacOSPlayerView: NSViewControllerRepresentable {
     }
 
     func makeNSViewController(context: Context) -> MPVMacOSViewController {
-        context.coordinator.makeView(source: source, options: options)
+        context.coordinator.makeView(source: source, controller: controller, options: options)
     }
 
     func updateNSViewController(_ nsViewController: MPVMacOSViewController, context: Context) {
-        context.coordinator.updateView(view: nsViewController, source: source, options: options)
+        context.coordinator.updateView(view: nsViewController, source: source, controller: controller, options: options)
     }
 
     static func dismantleNSViewController(_ nsViewController: MPVMacOSViewController, coordinator: Coordinator) {
@@ -47,35 +48,40 @@ extension MPVMacOSPlayerView {
                 eventSink.onStateChanged?(state)
             }
         }
+        private var lastHandledCommandRevision: UInt64 = 0
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
         }
 
-        func makeView(source: PlayerSource, options: PlayerLoadOptions) -> MPVMacOSViewController {
-            let controller = MPVMacOSViewController(eventSink: eventSink) { [weak self] state in
+        func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> MPVMacOSViewController {
+            let surfaceController = MPVMacOSViewController(eventSink: eventSink) { [weak self] state in
                 self?.state = state
             }
-            self.controller = controller
+            self.controller = surfaceController
             self.currentSource = source
             self.currentOptions = options
-            controller.configure(source: source, options: options)
-            return controller
+            surfaceController.configure(source: source, options: options)
+            handleCommandIfNeeded(from: controller)
+            return surfaceController
         }
 
-        func updateView(view controller: MPVMacOSViewController, source: PlayerSource, options: PlayerLoadOptions) {
-            self.controller = controller
+        func updateView(view surfaceController: MPVMacOSViewController, source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) {
+            self.controller = surfaceController
 
             if source != currentSource {
                 currentSource = source
                 currentOptions = options
-                controller.configure(source: source, options: options)
+                surfaceController.configure(source: source, options: options)
+                handleCommandIfNeeded(from: controller)
                 return
             }
 
-            guard currentOptions != options else { return }
-            currentOptions = options
-            controller.apply(options: options)
+            if currentOptions != options {
+                currentOptions = options
+                surfaceController.apply(options: options)
+            }
+            handleCommandIfNeeded(from: controller)
         }
 
         func reset() {
@@ -86,6 +92,15 @@ extension MPVMacOSPlayerView {
             if state != .idle {
                 state = .stopped
             }
+        }
+
+        private func handleCommandIfNeeded(from controller: PlayerController) {
+            guard controller.commandRevision != lastHandledCommandRevision,
+                  let command = controller.latestCommand else {
+                return
+            }
+            lastHandledCommandRevision = controller.commandRevision
+            self.controller?.handle(command: command)
         }
     }
 }
@@ -147,6 +162,10 @@ final class MPVMacOSViewController: NSViewController {
         glView?.apply(options: options)
     }
 
+    func handle(command: PlayerCommand) {
+        glView?.handle(command: command)
+    }
+
     func shutdown() {
         glView?.shutdown()
         glView = nil
@@ -166,6 +185,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var isPaused = false
     private var isBuffering = false
     private var defaultFBO: GLint = -1
+    private var currentDuration: TimeInterval?
 
     init(
         frame frameRect: NSRect,
@@ -263,7 +283,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         if !options.allowAutoPlay {
             args.append("pause=yes")
         }
-        command("loadfile", args: args)
+        runCommand("loadfile", args: args)
         lastLoadedSource = source
         if options.allowAutoPlay {
             setPause(false)
@@ -275,6 +295,19 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         applyAudioTrackSelection(options.selectedAudioTrackID)
         if options.allowAutoPlay {
             setPause(false)
+        }
+    }
+
+    func handle(command playerCommand: PlayerCommand) {
+        switch playerCommand {
+        case .togglePlayPause:
+            setPause(!isPaused)
+        case let .setPaused(paused):
+            setPause(paused)
+        case let .seekBy(delta):
+            runCommand("seek", args: [String(delta), "relative"])
+        case let .seekTo(time):
+            runCommand("seek", args: [String(max(time, 0)), "absolute"])
         }
     }
 
@@ -299,6 +332,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         mpv_observe_property(handle, 0, MPVProperty.pause, MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 0, MPVProperty.pausedForCache, MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 0, MPVProperty.timePos, MPV_FORMAT_DOUBLE)
+        mpv_observe_property(handle, 0, MPVProperty.duration, MPV_FORMAT_DOUBLE)
         mpv_observe_property(handle, 0, MPVProperty.aid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.sid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.trackList, MPV_FORMAT_NODE)
@@ -343,7 +377,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         syncPlaybackState()
     }
 
-    private func command(_ command: String, args: [String]) {
+    private func runCommand(_ command: String, args: [String]) {
         guard let mpv else { return }
         var cargs: [UnsafePointer<CChar>?] = ([command] + args).map { UnsafePointer(strdup($0)) } + [nil]
         defer {
@@ -409,7 +443,17 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             }
         case MPVProperty.timePos:
             let time = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee ?? 0
-            DispatchQueue.main.async { self.eventSink.onPlaybackTimeChanged?(time) }
+            DispatchQueue.main.async {
+                self.eventSink.onPlaybackTimeChanged?(time)
+                self.eventSink.onTimelineChanged?(.init(currentTime: time, duration: self.currentDuration))
+            }
+        case MPVProperty.duration:
+            let duration = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee
+            DispatchQueue.main.async {
+                self.currentDuration = duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                let current = self.currentPlaybackTime
+                self.eventSink.onTimelineChanged?(.init(currentTime: current, duration: self.currentDuration))
+            }
         case MPVProperty.trackList, MPVProperty.aid, MPVProperty.sid:
             DispatchQueue.main.async { self.publishTracksSnapshot() }
         default:
@@ -439,6 +483,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         } else {
             stateChanged(.playing)
         }
+        eventSink.onTimelineChanged?(.init(currentTime: currentPlaybackTime, duration: currentDuration))
     }
 
     private func checkError(_ status: Int32, fallback: String) {
@@ -504,12 +549,21 @@ private enum MPVProperty {
     static let pause = "pause"
     static let pausedForCache = "paused-for-cache"
     static let timePos = "time-pos"
+    static let duration = "duration"
     static let aid = "aid"
     static let sid = "sid"
     static let trackList = "track-list"
 }
 
 private extension MPVMacOSOpenGLView {
+    var currentPlaybackTime: TimeInterval {
+        guard let mpv else { return 0 }
+        var value = 0.0
+        let status = mpv_get_property(mpv, MPVProperty.timePos, MPV_FORMAT_DOUBLE, &value)
+        guard status >= 0, value.isFinite else { return 0 }
+        return value
+    }
+
     static func parseTrackList(from node: mpv_node) -> [PlayerTrack] {
         guard node.format == MPV_FORMAT_NODE_ARRAY || node.format == MPV_FORMAT_NODE_MAP,
               let list = node.u.list else {

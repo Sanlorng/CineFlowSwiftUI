@@ -19,6 +19,7 @@ typealias PlatformView = NSView
 
 struct MPVPlayerView {
     let source: PlayerSource
+    @ObservedObject var controller: PlayerController
     let options: PlayerLoadOptions
     let eventSink: PlayerBackendEventSink
 }
@@ -30,11 +31,11 @@ extension MPVPlayerView: PlatformViewControllerRepresentable {
 
 #if canImport(UIKit)
     func makeUIViewController(context: Context) -> MPVContainerViewController {
-        context.coordinator.makeView(source: source, options: options)
+        context.coordinator.makeView(source: source, controller: controller, options: options)
     }
 
     func updateUIViewController(_ uiViewController: MPVContainerViewController, context: Context) {
-        context.coordinator.updateView(view: uiViewController, source: source, options: options)
+        context.coordinator.updateView(view: uiViewController, source: source, controller: controller, options: options)
     }
 
     static func dismantleUIViewController(_ uiViewController: MPVContainerViewController, coordinator: Coordinator) {
@@ -42,11 +43,11 @@ extension MPVPlayerView: PlatformViewControllerRepresentable {
     }
 #elseif canImport(AppKit)
     func makeNSViewController(context: Context) -> MPVContainerViewController {
-        context.coordinator.makeView(source: source, options: options)
+        context.coordinator.makeView(source: source, controller: controller, options: options)
     }
 
     func updateNSViewController(_ nsViewController: MPVContainerViewController, context: Context) {
-        context.coordinator.updateView(view: nsViewController, source: source, options: options)
+        context.coordinator.updateView(view: nsViewController, source: source, controller: controller, options: options)
     }
 
     static func dismantleNSViewController(_ nsViewController: MPVContainerViewController, coordinator: Coordinator) {
@@ -71,35 +72,40 @@ extension MPVPlayerView {
                 eventSink.onStateChanged?(state)
             }
         }
+        private var lastHandledCommandRevision: UInt64 = 0
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
         }
 
-        func makeView(source: PlayerSource, options: PlayerLoadOptions) -> MPVContainerViewController {
-            let controller = MPVContainerViewController(eventSink: eventSink) { [weak self] newState in
+        func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> MPVContainerViewController {
+            let surfaceController = MPVContainerViewController(eventSink: eventSink) { [weak self] newState in
                 self?.state = newState
             }
-            self.controller = controller
+            self.controller = surfaceController
             self.currentSource = source
             self.currentOptions = options
-            controller.configure(source: source, options: options)
-            return controller
+            surfaceController.configure(source: source, options: options)
+            handleCommandIfNeeded(from: controller)
+            return surfaceController
         }
 
-        func updateView(view controller: MPVContainerViewController, source: PlayerSource, options: PlayerLoadOptions) {
-            self.controller = controller
+        func updateView(view surfaceController: MPVContainerViewController, source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) {
+            self.controller = surfaceController
 
             if source != currentSource {
                 currentSource = source
                 currentOptions = options
-                controller.configure(source: source, options: options)
+                surfaceController.configure(source: source, options: options)
+                handleCommandIfNeeded(from: controller)
                 return
             }
 
-            guard currentOptions != options else { return }
-            currentOptions = options
-            controller.apply(options: options)
+            if currentOptions != options {
+                currentOptions = options
+                surfaceController.apply(options: options)
+            }
+            handleCommandIfNeeded(from: controller)
         }
 
         func reset() {
@@ -110,6 +116,15 @@ extension MPVPlayerView {
             if state != .idle {
                 state = .stopped
             }
+        }
+
+        private func handleCommandIfNeeded(from controller: PlayerController) {
+            guard controller.commandRevision != lastHandledCommandRevision,
+                  let command = controller.latestCommand else {
+                return
+            }
+            lastHandledCommandRevision = controller.commandRevision
+            self.controller?.handle(command: command)
         }
     }
 }
@@ -133,6 +148,7 @@ final class MPVContainerViewController: PlatformViewController {
     private var lastLoadedSource: PlayerSource?
     private var isPaused = false
     private var isBuffering = false
+    private var currentDuration: TimeInterval?
 
     init(
         eventSink: PlayerBackendEventSink,
@@ -220,6 +236,19 @@ final class MPVContainerViewController: PlatformViewController {
         }
     }
 
+    func handle(command playerCommand: PlayerCommand) {
+        switch playerCommand {
+        case .togglePlayPause:
+            setPause(!isPaused)
+        case let .setPaused(paused):
+            setPause(paused)
+        case let .seekBy(delta):
+            runCommand("seek", args: [String(delta), "relative"])
+        case let .seekTo(time):
+            runCommand("seek", args: [String(max(time, 0)), "absolute"])
+        }
+    }
+
     func shutdown() {
         NotificationCenter.default.removeObserver(self)
         guard let mpv else { return }
@@ -302,6 +331,7 @@ final class MPVContainerViewController: PlatformViewController {
         mpv_observe_property(handle, 0, MPVProperty.pause, MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 0, MPVProperty.pausedForCache, MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 0, MPVProperty.timePos, MPV_FORMAT_DOUBLE)
+        mpv_observe_property(handle, 0, MPVProperty.duration, MPV_FORMAT_DOUBLE)
         mpv_observe_property(handle, 0, MPVProperty.aid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.sid, MPV_FORMAT_INT64)
         mpv_observe_property(handle, 0, MPVProperty.trackList, MPV_FORMAT_NODE)
@@ -365,7 +395,7 @@ final class MPVContainerViewController: PlatformViewController {
         }
     }
 
-    private func command(_ command: String, args: [String] = []) {
+    private func runCommand(_ command: String, args: [String] = []) {
         guard let mpv else { return }
         var cargs: [UnsafePointer<CChar>?] = ([command] + args).map { UnsafePointer(strdup($0)) } + [nil]
         defer {
@@ -436,6 +466,13 @@ final class MPVContainerViewController: PlatformViewController {
             let time = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee ?? 0
             DispatchQueue.main.async {
                 self.eventSink.onPlaybackTimeChanged?(time)
+                self.eventSink.onTimelineChanged?(.init(currentTime: time, duration: self.currentDuration))
+            }
+        case MPVProperty.duration:
+            let duration = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee
+            DispatchQueue.main.async {
+                self.currentDuration = duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                self.eventSink.onTimelineChanged?(.init(currentTime: self.currentPlaybackTime, duration: self.currentDuration))
             }
         case MPVProperty.trackList, MPVProperty.aid, MPVProperty.sid:
             DispatchQueue.main.async {
@@ -472,6 +509,7 @@ final class MPVContainerViewController: PlatformViewController {
         } else {
             stateChanged(.playing)
         }
+        eventSink.onTimelineChanged?(.init(currentTime: currentPlaybackTime, duration: currentDuration))
     }
 
     private func checkError(_ status: Int32, fallback: String) {
@@ -512,6 +550,7 @@ private enum MPVProperty {
     static let pause = "pause"
     static let pausedForCache = "paused-for-cache"
     static let timePos = "time-pos"
+    static let duration = "duration"
     static let aid = "aid"
     static let sid = "sid"
     static let trackList = "track-list"
@@ -528,6 +567,14 @@ private func mpvWakeupCallback(_ context: UnsafeMutableRawPointer?) {
 }
 
 private extension MPVContainerViewController {
+    var currentPlaybackTime: TimeInterval {
+        guard let mpv else { return 0 }
+        var value = 0.0
+        let status = mpv_get_property(mpv, MPVProperty.timePos, MPV_FORMAT_DOUBLE, &value)
+        guard status >= 0, value.isFinite else { return 0 }
+        return value
+    }
+
     static func parseTrackList(from node: mpv_node) -> [PlayerTrack] {
         guard node.format == MPV_FORMAT_NODE_ARRAY || node.format == MPV_FORMAT_NODE_MAP,
               let list = node.u.list else {

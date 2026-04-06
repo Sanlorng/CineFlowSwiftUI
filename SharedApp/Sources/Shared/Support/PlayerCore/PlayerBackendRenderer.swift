@@ -5,17 +5,20 @@ struct PlayerBackendEventSink {
     var onStateChanged: ((PlayerPlaybackState) -> Void)?
     var onFinish: ((Error?) -> Void)?
     var onPlaybackTimeChanged: ((TimeInterval) -> Void)?
+    var onTimelineChanged: ((PlayerTimeline) -> Void)?
     var onTracksChanged: (([PlayerTrack]) -> Void)?
 
     init(
         onStateChanged: ((PlayerPlaybackState) -> Void)? = nil,
         onFinish: ((Error?) -> Void)? = nil,
         onPlaybackTimeChanged: ((TimeInterval) -> Void)? = nil,
+        onTimelineChanged: ((PlayerTimeline) -> Void)? = nil,
         onTracksChanged: (([PlayerTrack]) -> Void)? = nil
     ) {
         self.onStateChanged = onStateChanged
         self.onFinish = onFinish
         self.onPlaybackTimeChanged = onPlaybackTimeChanged
+        self.onTimelineChanged = onTimelineChanged
         self.onTracksChanged = onTracksChanged
     }
 }
@@ -29,7 +32,7 @@ protocol PlayerBackendRenderer: AnyObject, ObservableObject {
 
     init(eventSink: PlayerBackendEventSink)
 
-    func makeView(source: PlayerSource, options: PlayerLoadOptions) -> SurfaceView
-    func updateView(view: SurfaceView, source: PlayerSource, options: PlayerLoadOptions)
+    func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> SurfaceView
+    func updateView(view: SurfaceView, source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions)
     func reset()
 }

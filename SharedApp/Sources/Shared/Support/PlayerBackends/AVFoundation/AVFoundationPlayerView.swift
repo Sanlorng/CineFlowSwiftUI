@@ -12,6 +12,7 @@ private typealias PlatformViewRepresentable = NSViewRepresentable
 
 struct AVFoundationPlayerView {
     let source: PlayerSource
+    @ObservedObject var controller: PlayerController
     let options: PlayerLoadOptions
     let eventSink: PlayerBackendEventSink
 }
@@ -23,11 +24,11 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
 
 #if canImport(UIKit)
     func makeUIView(context: Context) -> PlayerContainerView {
-        context.coordinator.makeView(source: source, options: options)
+        context.coordinator.makeView(source: source, controller: controller, options: options)
     }
 
     func updateUIView(_ view: PlayerContainerView, context: Context) {
-        context.coordinator.updateView(view: view, source: source, options: options)
+        context.coordinator.updateView(view: view, source: source, controller: controller, options: options)
     }
 
     static func dismantleUIView(_ view: PlayerContainerView, coordinator: Coordinator) {
@@ -35,11 +36,11 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
     }
 #elseif canImport(AppKit)
     func makeNSView(context: Context) -> PlayerContainerView {
-        context.coordinator.makeView(source: source, options: options)
+        context.coordinator.makeView(source: source, controller: controller, options: options)
     }
 
     func updateNSView(_ view: PlayerContainerView, context: Context) {
-        context.coordinator.updateView(view: view, source: source, options: options)
+        context.coordinator.updateView(view: view, source: source, controller: controller, options: options)
     }
 
     static func dismantleNSView(_ view: PlayerContainerView, coordinator: Coordinator) {
@@ -72,32 +73,37 @@ extension AVFoundationPlayerView {
         private var likelyToKeepUpObservation: NSKeyValueObservation?
         private var periodicTimeObserver: Any?
         private var notificationTokens: [NSObjectProtocol] = []
+        private var lastHandledCommandRevision: UInt64 = 0
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
         }
 
-        func makeView(source: PlayerSource, options: PlayerLoadOptions) -> PlayerContainerView {
+        func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> PlayerContainerView {
             let view = PlayerContainerView(frame: .zero)
             self.view = view
             attachPlayer(to: view, source: source, options: options)
+            handleCommandIfNeeded(from: controller)
             return view
         }
 
-        func updateView(view: PlayerContainerView, source: PlayerSource, options: PlayerLoadOptions) {
+        func updateView(view: PlayerContainerView, source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) {
             self.view = view
 
             if source != currentSource {
                 attachPlayer(to: view, source: source, options: options)
+                handleCommandIfNeeded(from: controller)
                 return
             }
 
-            guard currentOptions != options else { return }
-            currentOptions = options
+            if currentOptions != options {
+                currentOptions = options
 
-            if options.allowAutoPlay, state != .completed {
-                player?.play()
+                if options.allowAutoPlay, state != .completed {
+                    player?.play()
+                }
             }
+            handleCommandIfNeeded(from: controller)
         }
 
         func reset() {
@@ -176,8 +182,12 @@ extension AVFoundationPlayerView {
             let interval = CMTime(seconds: max(options.playbackTimeNotificationInterval, 1 / 30), preferredTimescale: 600)
             periodicTimeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 guard let self else { return }
+                let currentTime = time.seconds.isFinite ? time.seconds : 0
+                let durationSeconds = item.duration.seconds
+                let duration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : nil
                 MainActor.assumeIsolated {
-                    self.eventSink.onPlaybackTimeChanged?(time.seconds.isFinite ? time.seconds : 0)
+                    self.eventSink.onPlaybackTimeChanged?(currentTime)
+                    self.eventSink.onTimelineChanged?(.init(currentTime: currentTime, duration: duration))
                 }
             }
 
@@ -235,6 +245,40 @@ extension AVFoundationPlayerView {
                 state = .playing
             @unknown default:
                 state = .buffering
+            }
+            let currentTime = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
+            let durationSeconds = item.duration.seconds
+            let duration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : nil
+            eventSink.onTimelineChanged?(.init(currentTime: currentTime, duration: duration))
+        }
+
+        private func handleCommandIfNeeded(from controller: PlayerController) {
+            guard controller.commandRevision != lastHandledCommandRevision,
+                  let command = controller.latestCommand else {
+                return
+            }
+            lastHandledCommandRevision = controller.commandRevision
+
+            switch command {
+            case .togglePlayPause:
+                if state == .playing {
+                    player?.pause()
+                } else {
+                    player?.play()
+                }
+            case let .setPaused(paused):
+                if paused {
+                    player?.pause()
+                } else {
+                    player?.play()
+                }
+            case let .seekBy(delta):
+                guard let player else { return }
+                let current = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
+                let target = max(current + delta, 0)
+                player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+            case let .seekTo(time):
+                player?.seek(to: CMTime(seconds: max(time, 0), preferredTimescale: 600))
             }
         }
 
