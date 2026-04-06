@@ -102,8 +102,10 @@ private struct PlayerContentMainView: View {
                             .allowsHitTesting(false)
                             playbackControlBar(viewStore: viewStore)
                                 .opacity(isControlBarVisible ? 1 : 0)
-                                .offset(y: isControlBarVisible ? 0 : 18)
+                                .offset(y: isControlBarVisible ? 0 : 28)
+                                .scaleEffect(isControlBarVisible ? 1 : 0.97, anchor: .bottom)
                                 .allowsHitTesting(isControlBarVisible)
+                                .animation(.easeInOut(duration: 0.22), value: isControlBarVisible)
 #if os(macOS)
                         PlayerWindowObserver(
                             onWindowChanged: { window in
