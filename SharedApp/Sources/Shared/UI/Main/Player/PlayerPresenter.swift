@@ -159,6 +159,7 @@ struct PlayerPresenter {
                 return loadSubtitles(for: &state)
 
             case let .playerTracksChanged(tracks):
+                state.isLoadingEmbeddedSubtitles = false
                 let audioTracks = tracks.filter { $0.kind == .audio }
                 state.availableAudioTracks = audioTracks
                 if let selectedAudioTrack = audioTracks.first(where: \.isSelected) {
@@ -431,8 +432,9 @@ struct PlayerPresenter {
             return .none
         }
         let stream = currentItem.stream
+        let prefersBackendEmbeddedTracks = PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks)
         state.isLoadingSubtitles = state.configuration.baseURL != nil
-        state.isLoadingEmbeddedSubtitles = true
+        state.isLoadingEmbeddedSubtitles = prefersBackendEmbeddedTracks
         state.availableSubtitles = []
         state.availableEmbeddedSubtitles = []
         state.availableAudioTracks = []
@@ -461,16 +463,22 @@ struct PlayerPresenter {
             subtitleListEffect = .none
         }
 
-        let embeddedTracksEffect: Effect<Action> = .run { send in
-            let extractor = EmbeddedSubtitleExtractor()
-            await send(
-                .embeddedSubtitleTracksResponse(
-                    fileID,
-                    TaskResult {
-                        try await extractor.availableTracks(for: stream.url, headers: stream.headers)
-                    }
+        let embeddedTracksEffect: Effect<Action>
+        if prefersBackendEmbeddedTracks {
+            embeddedTracksEffect = .none
+        } else {
+            state.isLoadingEmbeddedSubtitles = true
+            embeddedTracksEffect = .run { send in
+                let extractor = EmbeddedSubtitleExtractor()
+                await send(
+                    .embeddedSubtitleTracksResponse(
+                        fileID,
+                        TaskResult {
+                            try await extractor.availableTracks(for: stream.url, headers: stream.headers)
+                        }
+                    )
                 )
-            )
+            }
         }
 
         return .merge(subtitleListEffect, embeddedTracksEffect)
