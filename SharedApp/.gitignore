@@ -1,4 +1,4 @@
-Secrets.env
+secrets.env
 .idea
 .swiftpm/xcode/
 .build
