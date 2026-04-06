@@ -48,7 +48,7 @@ private struct PlayerContentMainView: View {
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
-            VStack(spacing: 16) {
+            VStack(spacing: isFullscreen ? 0 : 16) {
                 if let stream = viewStore.currentItem?.stream {
                     let options = makeOptions(
                         for: stream,
@@ -112,7 +112,8 @@ private struct PlayerContentMainView: View {
                         .frame(width: 0, height: 0)
 #endif
                     }
-                        .frame(minHeight: 240)
+                        .frame(minHeight: 240, maxHeight: isFullscreen ? .infinity : nil)
+                        .clipped()
 #if os(macOS)
                         .onContinuousHover { phase in
                             switch phase {
@@ -176,7 +177,8 @@ private struct PlayerContentMainView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(isFullscreen ? 0 : 16)
             .sheet(
                 item: viewStore.binding(
                     get: \.fileSelection,
