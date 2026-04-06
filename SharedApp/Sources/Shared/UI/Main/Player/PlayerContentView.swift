@@ -46,6 +46,7 @@ private struct PlayerContentMainView: View {
     @State private var isFullscreen = false
     @State private var isCursorHidden = false
     @State private var lastPointerLocation: CGPoint?
+    @State private var lastPointerMovementAt: ContinuousClock.Instant?
     @State private var isSubtitleRendererReady = false
     @State private var selectedEpisodePageIndex = 0
     @State private var pointerSettleTask: Task<Void, Never>?
@@ -910,13 +911,18 @@ private struct PlayerContentMainView: View {
 
         hideControlsTask = Task { @MainActor in
             let delay: Duration = isFullscreen ? .seconds(3) : .seconds(2)
+            let expectedMovementInstant = lastPointerMovementAt
             try? await Task.sleep(for: delay)
 #if os(macOS)
             let stillEligible: Bool
             if isFullscreen {
-                stillEligible = !isPointerInsideControls && !isAnyControlPopoverPresented
+                stillEligible = lastPointerMovementAt == expectedMovementInstant
+                    && !isPointerInsideControls
+                    && !isAnyControlPopoverPresented
             } else {
-                stillEligible = !isPointerInsidePlayer && !isAnyControlPopoverPresented
+                stillEligible = lastPointerMovementAt == expectedMovementInstant
+                    && !isPointerInsidePlayer
+                    && !isAnyControlPopoverPresented
             }
 #else
             let stillEligible = false
@@ -932,6 +938,7 @@ private struct PlayerContentMainView: View {
     }
 
     private func handlePlayerPointerMovement() {
+        lastPointerMovementAt = .now
         if isFullscreen {
             if isCursorHidden {
                 showCursorIfNeeded()
@@ -973,9 +980,11 @@ private struct PlayerContentMainView: View {
 
     private func scheduleFullscreenHideCountdown() {
         cancelControlBarAutoHide()
+        let expectedMovementInstant = lastPointerMovementAt
         hideControlsTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
             guard isFullscreen,
+                  lastPointerMovementAt == expectedMovementInstant,
                   !isPointerInsideControls,
                   !isAnyControlPopoverPresented else { return }
             hideCursorIfNeeded()
