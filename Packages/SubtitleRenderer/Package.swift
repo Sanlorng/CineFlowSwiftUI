@@ -34,7 +34,8 @@ let package = Package(
                 "CLibass",
             ],
             resources: [
-                .copy("Resources")
+                .copy("Resources/Runtime"),
+                .copy("Resources/ThirdPartyLicenses"),
             ]
         ),
         .testTarget(

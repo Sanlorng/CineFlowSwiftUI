@@ -4,6 +4,7 @@ import Foundation
 
 enum LibassRuntimeError: Error, Equatable {
     case unsupportedPlatform
+    case resourceBundleNotFound(String)
     case runtimeNotFound(String)
     case failedToLoadRuntime(String)
     case missingSymbol(String)
@@ -63,8 +64,25 @@ final class LibassRuntime {
 
     init() throws {
 #if os(macOS) && arch(arm64)
-        guard let runtimeURL = Bundle.module.resourceURL?.appendingPathComponent("Runtime/macos-arm64/libass.9.dylib"),
-              FileManager.default.fileExists(atPath: runtimeURL.path) else {
+        let bundleName = "SubtitleRenderer_SubtitleRendererLibass.bundle"
+        let bundleCandidates: [URL?] = [
+            Bundle.main.resourceURL?.appendingPathComponent(bundleName),
+            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(bundleName),
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources").appendingPathComponent(bundleName),
+        ]
+
+        let bundleURL = bundleCandidates
+            .compactMap { $0 }
+            .first(where: { FileManager.default.fileExists(atPath: $0.path) })
+
+        guard let bundleURL,
+              let bundle = Bundle(url: bundleURL),
+              let resourceURL = bundle.resourceURL else {
+            throw LibassRuntimeError.resourceBundleNotFound(bundleName)
+        }
+
+        let runtimeURL = resourceURL.appendingPathComponent("Runtime/macos-arm64/libass.9.dylib")
+        guard FileManager.default.fileExists(atPath: runtimeURL.path) else {
             throw LibassRuntimeError.runtimeNotFound("Runtime/macos-arm64/libass.9.dylib")
         }
 
