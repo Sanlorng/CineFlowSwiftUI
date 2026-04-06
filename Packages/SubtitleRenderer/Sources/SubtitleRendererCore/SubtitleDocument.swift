@@ -6,7 +6,7 @@ public enum SubtitleFormat: String, CaseIterable, Sendable {
     case webvtt
 }
 
-public struct SubtitleDocument: Equatable {
+public struct SubtitleDocument: Equatable, Sendable {
     public var format: SubtitleFormat
     public var text: String
     public var fileName: String?

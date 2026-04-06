@@ -46,18 +46,13 @@ private struct PlayerContentMainView: View {
                         from: viewStore.activeSubtitle,
                         isSuppressed: viewStore.areSubtitlesSuppressed
                     )
-                    let usesCustomSubtitleRenderer = viewStore.activeSubtitle != nil && !viewStore.areSubtitlesSuppressed
-                    let externalSubtitle: FSVideoPlayer.ExternalSubtitle? = nil
                     ZStack {
                         FSVideoPlayer(
                             coordinator: coordinator,
                             url: stream.url,
                             options: options,
-                            externalSubtitle: externalSubtitle,
-                            allowEmbeddedSubtitles: !viewStore.areSubtitlesSuppressed && !usesCustomSubtitleRenderer,
-                            selectedEmbeddedSubtitleStreamIndex: viewStore.selectedSubtitle == nil && !usesCustomSubtitleRenderer ?
-                                viewStore.selectedEmbeddedSubtitleStreamIndex :
-                                nil
+                            allowEmbeddedSubtitles: false,
+                            selectedEmbeddedSubtitleStreamIndex: nil
                         )
                             .onStateChanged { _, state in
                                 switch state {
@@ -76,9 +71,6 @@ private struct PlayerContentMainView: View {
                             }
                             .onPlaybackTimeChanged { _, time in
                                 playbackTime = time
-                            }
-                            .onEmbeddedSubtitleTracksChanged { _, tracks, selectedStreamIndex in
-                                viewStore.send(.embeddedSubtitleTracksChanged(tracks, selectedStreamIndex))
                             }
                         SubtitleRendererOverlay(
                             document: customSubtitleDocument,
@@ -206,7 +198,7 @@ private struct PlayerContentMainView: View {
             HStack {
                 Text("字幕")
                     .font(.headline)
-                if viewStore.isLoadingSubtitles {
+                if viewStore.isLoadingSubtitles || viewStore.isLoadingEmbeddedSubtitles {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -255,9 +247,9 @@ private struct PlayerContentMainView: View {
                             }
                             ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
                                 Button {
-                                    viewStore.send(.embeddedSubtitleSelected(subtitle.streamIndex))
+                                    viewStore.send(.embeddedSubtitleSelected(subtitle.id))
                                 } label: {
-                                    if viewStore.selectedEmbeddedSubtitleStreamIndex == subtitle.streamIndex,
+                                    if viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id,
                                        viewStore.selectedSubtitle == nil {
                                         Label(subtitle.displayName, systemImage: "checkmark")
                                     } else {
@@ -470,10 +462,10 @@ private func makeCustomSubtitleDocument(
     guard !isSuppressed, let subtitle else { return nil }
 #if os(macOS) && arch(arm64)
     guard LibassRenderer.isRuntimeAvailable else { return nil }
+    return subtitle.document
 #else
     return nil
 #endif
-    return .detecting(rawText: subtitle.rawContent, fileName: subtitle.fileName)
 }
 
 private extension Color {

@@ -34,6 +34,7 @@ let package = Package(
         .target(
             name: "Shared",
             dependencies: [
+                "SubtitleFFmpegBridge",
                 "RemoteMediaLibrary",
                 "DandanApi",
                 "DependenciesMacro",
@@ -48,6 +49,10 @@ let package = Package(
             plugins: [
                 .plugin(name: "BuildPlugin")
             ],
+        ),
+        .target(
+            name: "SubtitleFFmpegBridge",
+            publicHeadersPath: "include"
         ),
         .target(
             name: "SharedDemo",
