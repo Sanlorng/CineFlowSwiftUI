@@ -45,6 +45,7 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
 
         func attach(to view: DanmakuCanvasHostView) {
             engine.speed = 1
+            engine.layoutStyle = .nonOverlapping
             engine.start()
             isEngineStarted = true
             view.attach(canvas: engine.canvas)
@@ -90,11 +91,13 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             engine.start()
             isEngineStarted = true
             engine.speed = 1
+            engine.layoutStyle = .nonOverlapping
             engine.time = playbackTime
+            let currentSecond = max(Int(playbackTime.rounded(.towardZero)), 0)
             enqueueSecondBuckets(
                 payload.commentsBySecond,
-                from: max(Int(playbackTime.rounded(.towardZero)) - 12, 0),
-                through: Int(playbackTime.rounded(.towardZero))
+                from: currentSecond,
+                through: currentSecond
             )
         }
 
