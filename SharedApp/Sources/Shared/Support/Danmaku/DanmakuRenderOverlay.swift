@@ -34,6 +34,8 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         private var lastPlaybackTime: TimeInterval = 0
 
         func attach(to view: DanmakuCanvasHostView) {
+            engine.speed = 0
+            engine.start()
             view.attach(canvas: engine.canvas)
         }
 
