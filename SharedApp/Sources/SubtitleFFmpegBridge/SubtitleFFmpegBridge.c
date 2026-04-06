@@ -217,17 +217,29 @@ static int bridge_append_text_dialogue(
     const char *text,
     int64_t subtitle_pts,
     int64_t packet_pts,
+    int64_t packet_duration,
     AVRational time_base,
     uint32_t start_display_time,
     uint32_t end_display_time
 ) {
-    int64_t base = subtitle_pts != AV_NOPTS_VALUE ? (subtitle_pts / 1000) : bridge_pts_to_milliseconds(packet_pts, time_base);
+    int64_t base = bridge_pts_to_milliseconds(packet_pts, time_base);
+    if (base < 0 && subtitle_pts != AV_NOPTS_VALUE) {
+        base = subtitle_pts / 1000;
+    }
     if (base < 0) {
         base = 0;
     }
 
     int start_ms = (int) (base + start_display_time);
-    int end_ms = (int) (base + (end_display_time > start_display_time ? end_display_time : (start_display_time + 1000)));
+    int64_t packet_duration_ms = bridge_pts_to_milliseconds(packet_duration, time_base);
+    int end_ms = 0;
+    if (end_display_time > start_display_time) {
+        end_ms = (int) (base + end_display_time);
+    } else if (packet_duration_ms > 0) {
+        end_ms = (int) (base + packet_duration_ms);
+    } else {
+        end_ms = start_ms + 1000;
+    }
 
     char start_buffer[32];
     char end_buffer[32];
@@ -248,6 +260,7 @@ static int bridge_append_ass_event_dialogue(
     const char *ass_event,
     int64_t subtitle_pts,
     int64_t packet_pts,
+    int64_t packet_duration,
     AVRational time_base,
     uint32_t start_display_time,
     uint32_t end_display_time
@@ -263,13 +276,24 @@ static int bridge_append_ass_event_dialogue(
         return bridge_builder_append_string(builder, "\n");
     }
 
-    int64_t base = subtitle_pts != AV_NOPTS_VALUE ? (subtitle_pts / 1000) : bridge_pts_to_milliseconds(packet_pts, time_base);
+    int64_t base = bridge_pts_to_milliseconds(packet_pts, time_base);
+    if (base < 0 && subtitle_pts != AV_NOPTS_VALUE) {
+        base = subtitle_pts / 1000;
+    }
     if (base < 0) {
         base = 0;
     }
 
     int start_ms = (int) (base + start_display_time);
-    int end_ms = (int) (base + (end_display_time > start_display_time ? end_display_time : (start_display_time + 1000)));
+    int64_t packet_duration_ms = bridge_pts_to_milliseconds(packet_duration, time_base);
+    int end_ms = 0;
+    if (end_display_time > start_display_time) {
+        end_ms = (int) (base + end_display_time);
+    } else if (packet_duration_ms > 0) {
+        end_ms = (int) (base + packet_duration_ms);
+    } else {
+        end_ms = start_ms + 1000;
+    }
 
     char start_buffer[32];
     char end_buffer[32];
@@ -487,6 +511,7 @@ int subtitle_bridge_copy_ass_document(
                         rect->ass,
                         subtitle.pts,
                         packet->pts,
+                        packet->duration,
                         target_stream->time_base,
                         subtitle.start_display_time,
                         subtitle.end_display_time
@@ -498,6 +523,7 @@ int subtitle_bridge_copy_ass_document(
                         rect->text,
                         subtitle.pts,
                         packet->pts,
+                        packet->duration,
                         target_stream->time_base,
                         subtitle.start_display_time,
                         subtitle.end_display_time
