@@ -8,10 +8,16 @@ import QuartzCore
 public struct SubtitleRendererOverlay: NSViewRepresentable {
     public let document: SubtitleDocument?
     public let playbackTime: TimeInterval
+    public let onReadinessChanged: (@MainActor (Bool) -> Void)?
 
-    public init(document: SubtitleDocument?, playbackTime: TimeInterval) {
+    public init(
+        document: SubtitleDocument?,
+        playbackTime: TimeInterval,
+        onReadinessChanged: (@MainActor (Bool) -> Void)? = nil
+    ) {
         self.document = document
         self.playbackTime = playbackTime
+        self.onReadinessChanged = onReadinessChanged
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -28,7 +34,8 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
         context.coordinator.update(
             view: view,
             document: document,
-            playbackTime: playbackTime
+            playbackTime: playbackTime,
+            onReadinessChanged: onReadinessChanged
         )
     }
 
@@ -41,6 +48,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
         private var renderer: LibassRenderer?
         private var currentDocument: SubtitleDocument?
         private var currentViewport: SubtitleViewport?
+        private var isReady = false
 
         func attach(to view: SubtitleOverlayView) {
             view.wantsLayer = true
@@ -51,6 +59,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
 
         func detach(from view: SubtitleOverlayView) {
             view.layer?.contents = nil
+            updateReadiness(false, onReadinessChanged: nil)
             renderer = nil
             currentDocument = nil
             currentViewport = nil
@@ -59,10 +68,11 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
         func update(
             view: SubtitleOverlayView,
             document: SubtitleDocument?,
-            playbackTime: TimeInterval
+            playbackTime: TimeInterval,
+            onReadinessChanged: (@MainActor (Bool) -> Void)?
         ) {
             guard let document else {
-                clear(view: view)
+                clear(view: view, onReadinessChanged: onReadinessChanged)
                 return
             }
 
@@ -75,7 +85,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
 #if DEBUG
                 print("[SubtitleRendererOverlay] Skip rendering because viewport is zero for \(document.fileName ?? "unknown")")
 #endif
-                clear(view: view)
+                clear(view: view, onReadinessChanged: onReadinessChanged)
                 return
             }
 
@@ -91,6 +101,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
                 if currentDocument != document {
                     try renderer?.updateDocument(document)
                     currentDocument = document
+                    updateReadiness(true, onReadinessChanged: onReadinessChanged)
 #if DEBUG
                     print("[SubtitleRendererOverlay] Loaded subtitle document \(document.fileName ?? "unknown") format=\(document.format.rawValue)")
 #endif
@@ -108,15 +119,28 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
 #if DEBUG
                 print("[SubtitleRendererOverlay] Failed to render subtitle frame:", error)
 #endif
-                clear(view: view)
+                clear(view: view, onReadinessChanged: onReadinessChanged)
             }
         }
 
-        private func clear(view: SubtitleOverlayView) {
+        private func clear(
+            view: SubtitleOverlayView,
+            onReadinessChanged: (@MainActor (Bool) -> Void)?
+        ) {
             view.layer?.contents = nil
+            updateReadiness(false, onReadinessChanged: onReadinessChanged)
             renderer = nil
             currentDocument = nil
             currentViewport = nil
+        }
+
+        private func updateReadiness(
+            _ ready: Bool,
+            onReadinessChanged: (@MainActor (Bool) -> Void)?
+        ) {
+            guard isReady != ready else { return }
+            isReady = ready
+            onReadinessChanged?(ready)
         }
     }
 }
@@ -128,10 +152,16 @@ public final class SubtitleOverlayView: NSView {
 public struct SubtitleRendererOverlay: View {
     public let document: SubtitleDocument?
     public let playbackTime: TimeInterval
+    public let onReadinessChanged: (@MainActor (Bool) -> Void)?
 
-    public init(document: SubtitleDocument?, playbackTime: TimeInterval) {
+    public init(
+        document: SubtitleDocument?,
+        playbackTime: TimeInterval,
+        onReadinessChanged: (@MainActor (Bool) -> Void)? = nil
+    ) {
         self.document = document
         self.playbackTime = playbackTime
+        self.onReadinessChanged = onReadinessChanged
     }
 
     public var body: some View {

@@ -46,6 +46,7 @@ private struct PlayerContentMainView: View {
     @State private var isFullscreen = false
     @State private var isCursorHidden = false
     @State private var lastPointerLocation: CGPoint?
+    @State private var isSubtitleRendererReady = false
     @State private var pointerSettleTask: Task<Void, Never>?
     @State private var hideControlsTask: Task<Void, Never>?
     
@@ -56,7 +57,10 @@ private struct PlayerContentMainView: View {
                     let options = makeOptions(
                         for: stream,
                         selectedAudioTrackID: viewStore.selectedAudioTrackID,
-                        allowAutoPlay: shouldAllowAutoPlay(viewStore: viewStore)
+                        allowAutoPlay: shouldAllowAutoPlay(
+                            viewStore: viewStore,
+                            isSubtitleRendererReady: isSubtitleRendererReady
+                        )
                     )
                     let customSubtitleDocument = makeCustomSubtitleDocument(
                         from: viewStore.activeSubtitle,
@@ -95,7 +99,10 @@ private struct PlayerContentMainView: View {
                                 }
                             SubtitleRendererOverlay(
                                 document: customSubtitleDocument,
-                                playbackTime: playerController.timeline.currentTime
+                                playbackTime: playerController.timeline.currentTime,
+                                onReadinessChanged: { ready in
+                                    isSubtitleRendererReady = ready
+                                }
                             )
                             .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -158,6 +165,7 @@ private struct PlayerContentMainView: View {
                             playerController.reset()
                             scrubPosition = 0
                             isScrubbing = false
+                            isSubtitleRendererReady = false
                             isAudioPopoverPresented = false
                             isSubtitlePopoverPresented = false
                             isSpeedPopoverPresented = false
@@ -172,6 +180,7 @@ private struct PlayerContentMainView: View {
                             playerController.reset()
                             scrubPosition = 0
                             isScrubbing = false
+                            isSubtitleRendererReady = false
                             lastPointerLocation = nil
                             cancelFullscreenPointerTasks()
                             isFullscreen = false
@@ -900,7 +909,8 @@ private func makeOptions(
 
 @MainActor
 private func shouldAllowAutoPlay(
-    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+    isSubtitleRendererReady: Bool
 ) -> Bool {
     if viewStore.areSubtitlesSuppressed {
         return true
@@ -909,8 +919,11 @@ private func shouldAllowAutoPlay(
        !viewStore.isLoadingSelectedSubtitle {
         return true
     }
-    if viewStore.selectedEmbeddedSubtitleTrackID != nil {
-        return true
+    if viewStore.activeSubtitle != nil {
+        return isSubtitleRendererReady
+    }
+    if viewStore.selectedEmbeddedSubtitleTrackID != nil || viewStore.selectedSubtitle != nil {
+        return false
     }
     if !viewStore.availableEmbeddedSubtitles.isEmpty {
         return false
