@@ -37,8 +37,8 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         private weak var controller: PlayerController?
         private var currentDanmakuID: UUID?
         private var currentPayload: DanmakuPayload?
-        private var nextCommentIndex = 0
         private var lastPlaybackTime: TimeInterval = 0
+        private var lastEnqueuedSecond: UInt?
         private var isEngineStarted = false
         private var timelineCancellable: AnyCancellable?
         private var stateCancellable: AnyCancellable?
@@ -58,8 +58,8 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             controller = nil
             currentDanmakuID = nil
             currentPayload = nil
-            nextCommentIndex = 0
             lastPlaybackTime = 0
+            lastEnqueuedSecond = nil
         }
 
         func update(
@@ -82,8 +82,8 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             engine.stop()
             isEngineStarted = false
             currentPayload = payload
-            nextCommentIndex = 0
             lastPlaybackTime = playbackTime
+            lastEnqueuedSecond = nil
 
             guard let payload else { return }
 
@@ -91,15 +91,10 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             isEngineStarted = true
             engine.speed = 1
             engine.time = playbackTime
-            let lowerBound = max(playbackTime - 12, 0)
-            while nextCommentIndex < payload.comments.count,
-                  payload.comments[nextCommentIndex].appearTime < lowerBound {
-                nextCommentIndex += 1
-            }
-            enqueueComments(
-                payload.comments,
-                from: lowerBound,
-                through: playbackTime
+            enqueueSecondBuckets(
+                payload.commentsBySecond,
+                from: max(Int(playbackTime.rounded(.towardZero)) - 12, 0),
+                through: Int(playbackTime.rounded(.towardZero))
             )
         }
 
@@ -130,10 +125,12 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
                 return
             }
 
-            enqueueComments(
-                payload.comments,
-                from: lastPlaybackTime,
-                through: clampedTime + 0.35
+            let upperSecond = Int((clampedTime + 0.35).rounded(.towardZero))
+            let lowerSecond = Int(lastPlaybackTime.rounded(.towardZero))
+            enqueueSecondBuckets(
+                payload.commentsBySecond,
+                from: lowerSecond,
+                through: upperSecond
             )
             lastPlaybackTime = clampedTime
         }
@@ -155,21 +152,23 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
             }
         }
 
-        private func enqueueComments(
-            _ comments: [DanmakuPayload.Comment],
-            from lowerBound: TimeInterval,
-            through upperBound: TimeInterval
+        private func enqueueSecondBuckets(
+            _ commentsBySecond: [UInt: [DanmakuPayload.Comment]],
+            from lowerSecond: Int,
+            through upperSecond: Int
         ) {
-            while nextCommentIndex < comments.count {
-                let comment = comments[nextCommentIndex]
-                if comment.appearTime > upperBound {
-                    break
+            guard upperSecond >= lowerSecond else { return }
+            let startSecond = max(lastEnqueuedSecond.map { Int($0) + 1 } ?? lowerSecond, lowerSecond)
+            guard upperSecond >= startSecond else { return }
+
+            for second in startSecond...upperSecond {
+                guard let comments = commentsBySecond[UInt(second)] else { continue }
+                for comment in comments {
+                    if let danmaku = makeDanmaku(from: comment) {
+                        engine.send(danmaku)
+                    }
                 }
-                if comment.appearTime >= lowerBound,
-                   let danmaku = makeDanmaku(from: comment) {
-                    engine.send(danmaku)
-                }
-                nextCommentIndex += 1
+                lastEnqueuedSecond = UInt(second)
             }
         }
 

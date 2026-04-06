@@ -36,6 +36,7 @@ struct DanmakuPayload: Equatable, Sendable {
     }
 
     let comments: [Comment]
+    let commentsBySecond: [UInt: [Comment]]
 }
 
 enum BilibiliDanmakuParser {
@@ -66,12 +67,21 @@ private final class Parser: NSObject, XMLParserDelegate {
                 ?? parser.parserError
                 ?? NSError(domain: "BilibiliDanmakuParser", code: 1, userInfo: [NSLocalizedDescriptionKey: "弹幕 XML 解析失败。"])
         }
-        return DanmakuPayload(comments: comments.sorted { lhs, rhs in
+        let sortedComments = comments.sorted { lhs, rhs in
             if lhs.appearTime != rhs.appearTime {
                 return lhs.appearTime < rhs.appearTime
             }
             return lhs.id < rhs.id
-        })
+        }
+        var commentsBySecond: [UInt: [DanmakuPayload.Comment]] = [:]
+        for comment in sortedComments {
+            let second = UInt(max(comment.appearTime, 0).rounded(.towardZero))
+            commentsBySecond[second, default: []].append(comment)
+        }
+        return DanmakuPayload(
+            comments: sortedComments,
+            commentsBySecond: commentsBySecond
+        )
     }
 
     func parser(
