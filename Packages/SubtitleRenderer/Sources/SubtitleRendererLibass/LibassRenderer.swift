@@ -241,15 +241,15 @@ public final class LibassRenderer: SubtitleRenderingBackend {
 
         var bytes = Data(count: width * height)
         bytes.withUnsafeMutableBytes { rawBuffer in
-            guard let destination = rawBuffer.baseAddress else { return }
+            guard let destination = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
             for row in 0..<height {
                 let sourceOffset = row * stride
                 let destinationOffset = row * width
-                memcpy(
-                    destination.advanced(by: destinationOffset),
-                    source.baseAddress?.advanced(by: sourceOffset),
-                    width
-                )
+                guard let sourceBaseAddress = source.baseAddress else { continue }
+                for column in 0..<width {
+                    let sourceAlpha = sourceBaseAddress[sourceOffset + column]
+                    destination[destinationOffset + column] = 255 &- sourceAlpha
+                }
             }
         }
         return bytes

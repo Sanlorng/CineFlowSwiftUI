@@ -16,6 +16,7 @@ func libassRendererProducesVisiblePixelsForSimpleASS() throws {
     #expect(frame.image.width == 640)
     #expect(frame.image.height == 360)
     #expect(alphaSum(of: frame.image) > 0)
+    #expect(alpha(atX: 0, y: 0, in: frame.image) == 0)
 }
 
 @Test
@@ -32,6 +33,17 @@ func libassRendererProducesVisiblePixelsForSimpleSRT() throws {
 }
 
 private func alphaSum(of image: CGImage) -> Int {
+    let bytes = rgbaBytes(of: image)
+    return stride(from: 3, to: bytes.count, by: 4).reduce(0) { $0 + Int(bytes[$1]) }
+}
+
+private func alpha(atX x: Int, y: Int, in image: CGImage) -> UInt8 {
+    let bytes = rgbaBytes(of: image)
+    let offset = (y * image.width + x) * 4 + 3
+    return bytes[offset]
+}
+
+private func rgbaBytes(of image: CGImage) -> [UInt8] {
     let width = image.width
     let height = image.height
     let bytesPerRow = width * 4
@@ -46,11 +58,11 @@ private func alphaSum(of image: CGImage) -> Int {
         space: CGColorSpaceCreateDeviceRGB(),
         bitmapInfo: CGBitmapInfo.byteOrder32Big.union(.init(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)).rawValue
     ) else {
-        return 0
+        return []
     }
 
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-    return stride(from: 3, to: bytes.count, by: 4).reduce(0) { $0 + Int(bytes[$1]) }
+    return bytes
 }
 
 private enum LibassRendererFixture {
