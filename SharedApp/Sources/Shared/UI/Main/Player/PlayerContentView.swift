@@ -864,8 +864,7 @@ private struct PlayerContentMainView: View {
     private func didPointerMove(to location: CGPoint) -> Bool {
         defer { lastPointerLocation = location }
         guard let lastPointerLocation else { return true }
-        return abs(location.x - lastPointerLocation.x) > 0.5
-            || abs(location.y - lastPointerLocation.y) > 0.5
+        return location != lastPointerLocation
     }
 
     private func revealControls() {
