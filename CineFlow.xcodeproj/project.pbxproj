@@ -34,9 +34,22 @@
 		12DA0CBA2E87C43500B86F57 /* SharedApp */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = SharedApp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		126F7E392EABCB93008A166B /* Exceptions for "CineFlow" folder in "CineFlow" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 128408D52E7F1ABF0021B3BC /* CineFlow */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		128408D82E7F1ABF0021B3BC /* CineFlow */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				126F7E392EABCB93008A166B /* Exceptions for "CineFlow" folder in "CineFlow" target */,
+			);
 			path = CineFlow;
 			sourceTree = "<group>";
 		};
@@ -211,6 +224,9 @@
 			);
 			mainGroup = 128408CD2E7F1ABF0021B3BC;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				12DA0CBE2E87C43A00B86F57 /* XCLocalSwiftPackageReference "SharedApp" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 128408D72E7F1ABF0021B3BC /* Products */;
 			projectDirPath = "";
@@ -425,6 +441,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CineFlow/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -468,6 +485,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CineFlow/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -606,9 +624,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		12DA0CBE2E87C43A00B86F57 /* XCLocalSwiftPackageReference "SharedApp" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = SharedApp;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		12DA0CBC2E87C44A00B86F57 /* Shared */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 12DA0CBE2E87C43A00B86F57 /* XCLocalSwiftPackageReference "SharedApp" */;
 			productName = Shared;
 		};
 /* End XCSwiftPackageProductDependency section */

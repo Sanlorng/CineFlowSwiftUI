@@ -195,15 +195,20 @@ struct LibraryPresenter {
     struct Path {
         enum State: Equatable {
             case bangumiDetail(BangumiDetailPresenter.State)
+            case player(PlayerPresenter.State)
         }
 
         enum Action: Equatable {
             case bangumiDetail(BangumiDetailPresenter.Action)
+            case player(PlayerPresenter.Action)
         }
 
         var body: some ReducerOf<Self> {
             Scope(state: /State.bangumiDetail, action: /Action.bangumiDetail) {
                 BangumiDetailPresenter()
+            }
+            Scope(state: /State.player, action: /Action.player) {
+                PlayerPresenter()
             }
         }
     }
@@ -217,6 +222,10 @@ struct LibraryPresenter {
                     return .none
                 }
                 state.path.append(.bangumiDetail(.init(summary: item, configuration: configuration)))
+                return .none
+
+            case let .path(.element(id: _, action: .bangumiDetail(.delegate(.startPlayback(playerState))))):
+                state.path.append(.player(playerState))
                 return .none
 
             case .path:
@@ -546,10 +555,24 @@ struct RemoteMediaLibraryClient {
         let version: String?
         let tokenRequired: Bool
     }
+
+    struct StreamContext: Equatable {
+        let url: URL
+        let headers: [String: String]
+    }
+
+    struct Subtitle: Equatable, Identifiable {
+        var id: String { fileName }
+        let fileName: String
+        let fileSize: Int?
+    }
     
     var fetchWelcome: @Sendable (_ baseURL: URL, _ token: String?) async throws -> Welcome
     var fetchBangumiList: @Sendable (_ baseURL: URL, _ token: String?, _ sort: LibraryPresenter.SortOption) async throws -> [Components.Schemas.LibraryBangumiSummary]
     var fetchBangumiDetail: @Sendable (_ baseURL: URL, _ token: String?, _ animeId: Int) async throws -> Components.Schemas.LibraryBangumiDetailsResponse
+    var makeStreamContext: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) throws -> StreamContext
+    var fetchSubtitleInfo: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String) async throws -> [Subtitle]
+    var fetchSubtitleFile: @Sendable (_ baseURL: URL, _ token: String?, _ fileID: String, _ fileName: String) async throws -> String
 }
 
 extension RemoteMediaLibraryClient: DependencyKey {
@@ -604,6 +627,56 @@ extension RemoteMediaLibraryClient: DependencyKey {
                 return try await api.fetch {
                     try await api.getBangumiDetails(.init(path: .init(animeId: animeId)))
                 }
+            },
+            makeStreamContext: { baseURL, token, fileID in
+                let path = "/api/v1/stream/id/\(fileID)"
+                var queryItems: [URLQueryItem] = []
+                var headers: [String: String] = [:]
+                headers["Accept"] = "video/*"
+                if let token, !token.isEmpty {
+                    headers["Authorization"] = "Bearer \(token)"
+                    queryItems.append(.init(name: "token", value: token))
+                }
+                let url = buildOperationURL(baseURL: baseURL, path: path, queryItems: queryItems)
+                return StreamContext(url: url, headers: headers)
+            },
+            fetchSubtitleInfo: { baseURL, token, fileID in
+                let api = try makeClient(baseURL: baseURL, token: token)
+                let output = try await api.getSubtitleInfo(.init(path: .init(id: fileID)))
+                switch output {
+                case let .ok(ok):
+                    let info = try ok.body.json
+                    return (info.subtitles ?? []).map { payload in
+                        let name: String
+                        if let fileName = payload.fileName, !fileName.isEmpty {
+                            name = fileName
+                        } else {
+                            name = "subtitle-\(UUID().uuidString)"
+                        }
+                        return Subtitle(
+                            fileName: name,
+                            fileSize: payload.fileSize
+                        )
+                    }
+                case let .undocumented(statusCode, _):
+                    throw APIError.serverError(statusCode: statusCode)
+                }
+            },
+            fetchSubtitleFile: { baseURL, token, fileID, fileName in
+                let api = try makeClient(baseURL: baseURL, token: token)
+                let output = try await api.getSubtitleFile(
+                    .init(
+                        path: .init(id: fileID),
+                        query: .init(fileName: fileName)
+                    )
+                )
+                switch output {
+                case let .ok(ok):
+                    let body = try ok.body.plainText
+                    return try await String(collecting: body, upTo: 5 * 1024 * 1024)
+                case let .undocumented(statusCode, _):
+                    throw APIError.serverError(statusCode: statusCode)
+                }
             }
         )
     }
@@ -656,7 +729,50 @@ extension RemoteMediaLibraryClient: DependencyKey {
                             displayTitle: "Episode 1",
                             airStatus: 1,
                             localMatchedExists: true,
-                            localMatchedFiles: [],
+                            localMatchedFiles: [
+                                .init(
+                                    animeId: animeId,
+                                    episodeId: 1,
+                                    animeTitle: "Preview Anime Detail",
+                                    episodeTitle: "Episode 1",
+                                    id: UUID().uuidString,
+                                    hash: UUID().uuidString,
+                                    name: "Preview.Episode.01.mkv",
+                                    path: "/preview/Preview.Episode.01.mkv",
+                                    dirPath: "/preview",
+                                    size: 500 * 1_024 * 1_024,
+                                    rate: 9,
+                                    isStandalone: true,
+                                    created: Date(),
+                                    lastMatch: Date(),
+                                    includeTime: Date(),
+                                    lastPlay: nil,
+                                    lastThumbnail: nil,
+                                    thumbFailed: 0,
+                                    duration: 1_350
+                                ),
+                                .init(
+                                    animeId: animeId,
+                                    episodeId: 1,
+                                    animeTitle: "Preview Anime Detail",
+                                    episodeTitle: "Episode 1",
+                                    id: UUID().uuidString,
+                                    hash: UUID().uuidString,
+                                    name: "Preview.Episode.01.alt.mkv",
+                                    path: "/preview/Preview.Episode.01.alt.mkv",
+                                    dirPath: "/preview",
+                                    size: 520 * 1_024 * 1_024,
+                                    rate: 8,
+                                    isStandalone: true,
+                                    created: Date(),
+                                    lastMatch: Date(),
+                                    includeTime: Date(),
+                                    lastPlay: nil,
+                                    lastThumbnail: nil,
+                                    thumbFailed: 0,
+                                    duration: 1_350
+                                )
+                            ],
                             canMarkAsWatched: true
                         ),
                         .init(
@@ -670,12 +786,52 @@ extension RemoteMediaLibraryClient: DependencyKey {
                             airDate: Date(),
                             displayTitle: "Episode 2",
                             airStatus: 1,
-                            localMatchedExists: false,
-                            localMatchedFiles: [],
+                            localMatchedExists: true,
+                            localMatchedFiles: [
+                                .init(
+                                    animeId: animeId,
+                                    episodeId: 2,
+                                    animeTitle: "Preview Anime Detail",
+                                    episodeTitle: "Episode 2",
+                                    id: UUID().uuidString,
+                                    hash: UUID().uuidString,
+                                    name: "Preview.Episode.02.mkv",
+                                    path: "/preview/Preview.Episode.02.mkv",
+                                    dirPath: "/preview",
+                                    size: 510 * 1_024 * 1_024,
+                                    rate: 8,
+                                    isStandalone: true,
+                                    created: Date(),
+                                    lastMatch: Date(),
+                                    includeTime: Date(),
+                                    lastPlay: nil,
+                                    lastThumbnail: nil,
+                                    thumbFailed: 0,
+                                    duration: 1_360
+                                )
+                            ],
                             canMarkAsWatched: true
                         )
                     ]
                 )
+            },
+            makeStreamContext: { baseURL, token, fileID in
+                let path = "/preview/\(fileID)"
+                let url = buildOperationURL(
+                    baseURL: baseURL,
+                    path: path,
+                    queryItems: token?.isEmpty == false ? [.init(name: "token", value: token)] : []
+                )
+                return .init(url: url, headers: ["Accept": "video/*"])
+            },
+            fetchSubtitleInfo: { _, _, fileID in
+                [
+                    .init(fileName: "Preview-\(fileID).sc.ass", fileSize: 42_000),
+                    .init(fileName: "Preview-\(fileID).en.srt", fileSize: 38_000)
+                ]
+            },
+            fetchSubtitleFile: { _, _, _, fileName in
+                "Preview subtitles for \(fileName)"
             }
         )
     }
@@ -688,7 +844,17 @@ extension RemoteMediaLibraryClient: DependencyKey {
             fetchBangumiList: { _, _, _ in [] },
             fetchBangumiDetail: { _, _, _ in
                 Components.Schemas.LibraryBangumiDetailsResponse()
-            }
+            },
+            makeStreamContext: { baseURL, _, fileID in
+                let url = buildOperationURL(
+                    baseURL: baseURL,
+                    path: "/api/v1/stream/id/\(fileID)",
+                    queryItems: []
+                )
+                return .init(url: url, headers: ["Accept": "video/*"])
+            },
+            fetchSubtitleInfo: { _, _, _ in [] },
+            fetchSubtitleFile: { _, _, _, _ in "" }
         )
     }
     
@@ -701,6 +867,26 @@ extension RemoteMediaLibraryClient: DependencyKey {
             transport: TokenTransport(token: token, next: URLSessionTransport())
         )
     }
+}
+
+private func buildOperationURL(
+    baseURL: URL,
+    path: String,
+    queryItems: [URLQueryItem]
+) -> URL {
+    guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+        return baseURL
+    }
+    var encodedPath = components.path
+    if encodedPath.isEmpty || !encodedPath.hasSuffix("/") {
+        encodedPath += "/"
+    }
+    let trimmedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+    components.path = encodedPath + trimmedPath
+    if queryItems.isEmpty == false {
+        components.queryItems = (components.queryItems ?? []) + queryItems
+    }
+    return components.url ?? baseURL.appendingPathComponent(trimmedPath)
 }
 
 extension DependencyValues {

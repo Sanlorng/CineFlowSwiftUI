@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Foundation
 import ComposableArchitecture
 import RemoteMediaLibrary
 #if os(macOS)
@@ -25,6 +26,23 @@ struct BangumiDetailView: View {
                 .task {
                     viewStore.send(.onAppear)
                 }
+            }
+            .sheet(
+                item: viewStore.binding(
+                    get: \.fileSelection,
+                    send: { _ in .fileSelectionDismissed }
+                )
+            ) { selection in
+
+                FileSelectionView(
+                    selection: selection,
+                    onSelect: { file in
+                        viewStore.send(.fileSelected(file))
+                    },
+                    onCancel: {
+                        viewStore.send(.fileSelectionDismissed)
+                    }
+                )
             }
             .background {
                 backgroundLayer(for: viewStore.summary.coverURL)
@@ -58,7 +76,7 @@ struct BangumiDetailView: View {
                 Text(error)
                     .foregroundColor(.secondary)
             } else if let detail = viewStore.detail {
-                episodesSection(detail: detail)
+                episodesSection(viewStore: viewStore, detail: detail)
             } else {
                 Text("暂无可显示的详情。")
                     .foregroundColor(.secondary)
@@ -106,7 +124,10 @@ struct BangumiDetailView: View {
     }
     
     @ViewBuilder
-    private func episodesSection(detail: Components.Schemas.LibraryBangumiDetailsResponse) -> some View {
+    private func episodesSection(
+        viewStore: ViewStore<BangumiDetailPresenter.State, BangumiDetailPresenter.Action>,
+        detail: Components.Schemas.LibraryBangumiDetailsResponse
+    ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("剧集列表")
                 .font(.headline)
@@ -119,7 +140,9 @@ struct BangumiDetailView: View {
                     spacing: 16
                 ) {
                     ForEach(episodes, id: \.self) { episode in
-                        EpisodeCard(episode: episode)
+                        EpisodeCard(episode: episode) {
+                            viewStore.send(.episodeTapped(episode))
+                        }.disabled(episode.localMatchedFiles?.isEmpty ?? true)
                     }
                 }
             } else {
@@ -167,47 +190,54 @@ struct BangumiDetailView: View {
 
 private struct EpisodeCard: View {
     let episode: Components.Schemas.LibraryBangumiEpisode
+    let onTap: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                .lineLimit(2...2)
-                    .font(.headline)
-                if episode.isLatestWatched == true {
-                    TagView(text: "最近观看")
-                }
-                Spacer()
-            }
-            
-            HStack(spacing: 12) {
-                if let airDate = episode.airDate {
-                    Label {
-                        Text(airDate, style: .date)
-                    } icon: {
-                        Image(systemName: "calendar")
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .lineLimit(2...2)
+                        .font(.headline)
+                    if episode.isLatestWatched == true {
+                        TagView(text: "最近观看")
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Spacer()
                 }
                 
-                if let matched = episode.localMatchedExists {
-                    Label(matched ? "已匹配文件" : "无匹配文件", systemImage: matched ? "checkmark.circle" : "exclamationmark.circle")
+                HStack(spacing: 12) {
+                    if let airDate = episode.airDate {
+                        Label {
+                            Text(airDate, style: .date)
+                        } icon: {
+                            Image(systemName: "calendar")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    
+                    if let matched = episode.localMatchedExists {
+                        Label(
+                            matched ? "已匹配文件" : "无匹配文件",
+                            systemImage: matched ? "checkmark.circle" : "exclamationmark.circle"
+                        )
                         .font(.caption)
                         .foregroundStyle(matched ? .green : .orange)
+                    }
                 }
             }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.platformBackground.opacity(0.25))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.platformBackground.opacity(0.25), lineWidth: 1)
+            )
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.platformBackground.opacity(0.25))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.platformBackground.opacity(0.25), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
     }
     
     private var title: String {
@@ -242,6 +272,79 @@ private struct TagView: View {
 }
 
 // MARK: - Helpers
+
+private struct FileSelectionView: View {
+    let selection: BangumiDetailPresenter.State.FileSelection
+    let onSelect: (Components.Schemas.LibraryBangumiMatchedFile) -> Void
+    let onCancel: () -> Void
+    
+    private let formatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB, .useKB]
+        formatter.countStyle = .file
+        return formatter
+    }()
+    
+    var body: some View {
+        NavigationStack {
+            content
+                .navigationTitle("选择播放文件")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消", action: onCancel)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if selection.files.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "questionmark.square.dashed")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                Text("没有可用的匹配文件")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(selection.files.enumerated()), id: \.offset) { _, file in
+                        Button {
+                            onSelect(file)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(file.name ?? "未知文件")
+                                    .font(.headline)
+                                if let size = file.size {
+                                    Text(formatter.string(fromByteCount: size))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let path = file.dirPath {
+                                    Text(path)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.platformBackground.opacity(0.3))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+}
 
 @ViewBuilder
 private func backgroundLayer(for url: URL?) -> some View {

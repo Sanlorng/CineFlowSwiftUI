@@ -25,6 +25,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.1.0"),
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.22.3"),
         .package(url: "https://github.com/swiftlang/swift-syntax", "509.0.0"..<"603.0.0"),
+        .package(url: "https://github.com/debugly/fsplayer-spm.git", exact: "1.0.5"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -36,6 +37,7 @@ let package = Package(
                 "DandanApi",
                 "DependenciesMacro",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                .product(name: "FSPlayer", package: "fsplayer-spm"),
             ],
             swiftSettings: [
                 .unsafeFlags(["-enable-testing"], .when(configuration: .debug))

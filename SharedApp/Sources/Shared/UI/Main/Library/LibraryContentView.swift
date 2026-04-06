@@ -34,6 +34,13 @@ struct LibraryContentView: View {
                 ),
                 then: BangumiDetailView.init(store:)
             )
+            IfLetStore(
+                destination.scope(
+                    state: /LibraryPresenter.Path.State.player,
+                    action: { .player($0) }
+                ),
+                then: PlayerContentView.init(store:)
+            )
         }
     }
     
