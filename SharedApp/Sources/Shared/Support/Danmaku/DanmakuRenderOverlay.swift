@@ -7,6 +7,7 @@ import DanmakuRender
 struct DanmakuRenderOverlay: NSViewRepresentable {
     let payload: DanmakuPayload?
     let playbackTime: TimeInterval
+    let playbackState: PlayerPlaybackState
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -19,7 +20,12 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
     }
 
     func updateNSView(_ view: DanmakuCanvasHostView, context: Context) {
-        context.coordinator.update(view: view, payload: payload, playbackTime: playbackTime)
+        context.coordinator.update(
+            view: view,
+            payload: payload,
+            playbackTime: playbackTime,
+            playbackState: playbackState
+        )
     }
 
     static func dismantleNSView(_ view: DanmakuCanvasHostView, coordinator: Coordinator) {
@@ -32,15 +38,18 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         private var currentPayload: DanmakuPayload?
         private var nextCommentIndex = 0
         private var lastPlaybackTime: TimeInterval = 0
+        private var isEngineStarted = false
 
         func attach(to view: DanmakuCanvasHostView) {
-            engine.speed = 0
+            engine.speed = 1
             engine.start()
+            isEngineStarted = true
             view.attach(canvas: engine.canvas)
         }
 
         func detach(from view: DanmakuCanvasHostView) {
             engine.stop()
+            isEngineStarted = false
             currentPayload = nil
             nextCommentIndex = 0
             lastPlaybackTime = 0
@@ -49,10 +58,12 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
         func update(
             view: DanmakuCanvasHostView,
             payload: DanmakuPayload?,
-            playbackTime: TimeInterval
+            playbackTime: TimeInterval,
+            playbackState: PlayerPlaybackState
         ) {
             let clampedTime = max(playbackTime, 0)
             view.layoutSubtreeIfNeeded()
+            updateEnginePlaybackState(playbackState)
 
             if currentPayload != payload {
                 replacePayload(payload, at: clampedTime)
@@ -70,23 +81,26 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
                 return
             }
 
-            engine.time = clampedTime
             enqueueComments(
                 payload.comments,
                 from: lastPlaybackTime,
-                through: clampedTime
+                through: clampedTime + 0.35
             )
             lastPlaybackTime = clampedTime
         }
 
         private func replacePayload(_ payload: DanmakuPayload?, at playbackTime: TimeInterval) {
             engine.stop()
+            isEngineStarted = false
             currentPayload = payload
             nextCommentIndex = 0
             lastPlaybackTime = playbackTime
 
             guard let payload else { return }
 
+            engine.start()
+            isEngineStarted = true
+            engine.speed = 1
             engine.time = playbackTime
             let lowerBound = max(playbackTime - 12, 0)
             while nextCommentIndex < payload.comments.count,
@@ -98,6 +112,23 @@ struct DanmakuRenderOverlay: NSViewRepresentable {
                 from: lowerBound,
                 through: playbackTime
             )
+        }
+
+        private func updateEnginePlaybackState(_ playbackState: PlayerPlaybackState) {
+            switch playbackState {
+            case .playing, .buffering:
+                if !isEngineStarted {
+                    engine.start()
+                    isEngineStarted = true
+                }
+            case .paused, .stopped, .completed, .idle, .error:
+                if isEngineStarted {
+                    engine.pause()
+                    isEngineStarted = false
+                }
+            case .preparing:
+                break
+            }
         }
 
         private func enqueueComments(
@@ -196,6 +227,7 @@ final class DanmakuCanvasHostView: NSView {
 struct DanmakuRenderOverlay: View {
     let payload: DanmakuPayload?
     let playbackTime: TimeInterval
+    let playbackState: PlayerPlaybackState
 
     var body: some View {
         Color.clear
