@@ -796,88 +796,272 @@ private struct ConfigurationFormView: View {
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
-            NavigationStack {
-                Form {
-                    Section("基本信息") {
-                        TextField(
-                            "配置名称",
-                            text: Binding(
-                                get: { viewStore.formName },
-                                set: { viewStore.send(.setFormName($0)) }
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        configurationPanel {
+                            configurationPanelHeader(
+                                title: "添加媒体库",
+                                subtitle: "输入媒体库名称、地址和访问令牌。保存前会先验证连接是否可用。"
                             )
-                        )
-                        TextField(
-                            "IP 地址或域名",
-                            text: Binding(
-                                get: { viewStore.formIP },
-                                set: { viewStore.send(.setFormIP($0)) }
-                            )
-                        )
+
+                            configurationDivider()
+
+                            configurationListRow(label: "配置名称") {
+                                TextField(
+                                    "例如：家里 NAS",
+                                    text: Binding(
+                                        get: { viewStore.formName },
+                                        set: { viewStore.send(.setFormName($0)) }
+                                    )
+                                )
+                                .textFieldStyle(.plain)
+                            }
+
+                            configurationDivider()
+
+                            configurationListRow(label: "地址") {
+                                TextField(
+                                    "IP 地址或域名",
+                                    text: Binding(
+                                        get: { viewStore.formIP },
+                                        set: { viewStore.send(.setFormIP($0)) }
+                                    )
+                                )
+                                .textFieldStyle(.plain)
 #if os(iOS)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
 #endif
-                        TextField(
-                            "端口",
-                            text: Binding(
-                                get: { viewStore.formPort },
-                                set: { viewStore.send(.setFormPort($0)) }
-                            )
-                        )
+                            }
+
+                            configurationDivider()
+
+                            configurationListRow(label: "端口") {
+                                TextField(
+                                    "9999",
+                                    text: Binding(
+                                        get: { viewStore.formPort },
+                                        set: { viewStore.send(.setFormPort($0)) }
+                                    )
+                                )
+                                .textFieldStyle(.plain)
 #if os(iOS)
-                        .keyboardType(.numberPad)
+                                .keyboardType(.numberPad)
 #endif
-                    }
-                    
-                    Section("安全") {
-                        SecureField(
-                            "API Token（如需要）",
-                            text: Binding(
-                                get: { viewStore.formToken },
-                                set: { viewStore.send(.setFormToken($0)) }
-                            )
-                        )
+                            }
+
+                            configurationDivider()
+
+                            configurationListRow(label: "API Token") {
+                                SecureField(
+                                    "如需要",
+                                    text: Binding(
+                                        get: { viewStore.formToken },
+                                        set: { viewStore.send(.setFormToken($0)) }
+                                    )
+                                )
+                                .textFieldStyle(.plain)
 #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
+                                .textInputAutocapitalization(.never)
+                                .disableAutocorrection(true)
 #endif
-                        if viewStore.formRequiresToken == true {
-                            Text("已检测到该媒体库启用了 API 加密，必须提供 Token。")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    if let error = viewStore.formError {
-                        Section {
-                            Text(error)
-                                .foregroundColor(.red)
-                        }
-                    }
-                }
-                .disabled(viewStore.isCheckingWelcome)
-                .navigationTitle("新增媒体库")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") {
-                            viewStore.send(.setIsShowingForm(false))
-                        }
-                        .disabled(viewStore.isCheckingWelcome)
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button {
-                            viewStore.send(.saveNewConfiguration)
-                        } label: {
-                            if viewStore.isCheckingWelcome {
-                                ProgressView()
-                            } else {
-                                Text("保存")
+                            }
+
+                            if viewStore.formRequiresToken == true {
+                                configurationDivider()
+                                configurationInlineNotice(
+                                    "已检测到该媒体库启用了 API 加密，必须提供 Token。"
+                                )
                             }
                         }
-                        .disabled(viewStore.isCheckingWelcome)
+
+                        if let error = viewStore.formError {
+                            configurationErrorCard(error)
+                        }
                     }
+                    .padding(24)
                 }
+                .disabled(viewStore.isCheckingWelcome)
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Text("保存后会自动设为当前媒体库。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("取消") {
+                        viewStore.send(.setIsShowingForm(false))
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(viewStore.isCheckingWelcome)
+
+                    Button {
+                        viewStore.send(.saveNewConfiguration)
+                    } label: {
+                        HStack(spacing: 8) {
+                            if viewStore.isCheckingWelcome {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(viewStore.isCheckingWelcome ? "验证中…" : "保存")
+                        }
+                        .frame(minWidth: 88)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(viewStore.isCheckingWelcome)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
             }
+            .frame(minWidth: 640, minHeight: 500)
+            .background(configurationFormBackgroundColor)
         }
     }
+}
+
+@ViewBuilder
+private func configurationPanel<Content: View>(
+    @ViewBuilder content: () -> Content
+) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+        content()
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.16),
+                                Color.white.opacity(0.04)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+    )
+    .overlay(
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+    )
+}
+
+@ViewBuilder
+private func configurationPanelHeader(
+    title: String,
+    subtitle: String
+) -> some View {
+    HStack(alignment: .top, spacing: 14) {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0.24),
+                            Color.accentColor.opacity(0.1)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Image(systemName: "externaldrive.badge.plus")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .frame(width: 58, height: 58)
+
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 20)
+    .padding(.top, 20)
+    .padding(.bottom, 16)
+}
+
+@ViewBuilder
+private func configurationListRow<Content: View>(
+    label: String,
+    @ViewBuilder field: () -> Content
+) -> some View {
+    HStack(alignment: .center, spacing: 20) {
+        Text(label)
+            .font(.subheadline.weight(.semibold))
+            .frame(width: 112, alignment: .leading)
+            .foregroundStyle(.primary)
+        field()
+            .font(.title3.weight(.medium))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 18)
+    .frame(minHeight: 68)
+}
+
+@ViewBuilder
+private func configurationDivider() -> some View {
+    Divider()
+        .padding(.horizontal, 20)
+}
+
+@ViewBuilder
+private func configurationInlineNotice(_ message: String) -> some View {
+    HStack(spacing: 10) {
+        Image(systemName: "exclamationmark.shield.fill")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+        Text(message)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 14)
+}
+
+@ViewBuilder
+private func configurationErrorCard(_ message: String) -> some View {
+    HStack(spacing: 12) {
+        Image(systemName: "xmark.octagon.fill")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.red)
+        Text(message)
+            .font(.subheadline)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
+    }
+    .padding(16)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.red.opacity(0.08))
+    )
+    .overlay(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.red.opacity(0.16), lineWidth: 1)
+    )
+}
+
+private var configurationFormBackgroundColor: Color {
+#if os(macOS)
+    Color(NSColor.windowBackgroundColor)
+#elseif os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+    Color(UIColor.systemBackground)
+#else
+    Color(.white)
+#endif
 }
