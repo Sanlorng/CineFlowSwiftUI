@@ -810,7 +810,7 @@ private struct PlayerContentMainView: View {
     @ViewBuilder
     private func episodeSidebar(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("剧集")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -819,8 +819,8 @@ private struct PlayerContentMainView: View {
                     .font(.title3.weight(.semibold))
                     .lineLimit(2...2)
                 Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary.opacity(0.92))
                     .lineLimit(2)
                 Text("\(viewStore.playlist.count) 集内容")
                     .font(.caption2)
@@ -843,7 +843,7 @@ private struct PlayerContentMainView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(14)
+                    .padding(10)
                 }
                 .onAppear {
                     scrollEpisodeSelectionIntoView(viewStore: viewStore, proxy: proxy)
@@ -856,7 +856,7 @@ private struct PlayerContentMainView: View {
                 }
             }
         }
-        .padding(18)
+        .padding(14)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -1846,10 +1846,11 @@ private struct EpisodeBrowserRowContent: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .scaleEffect(isHovering && !isSelected ? 1.01 : 1)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
@@ -1864,8 +1865,8 @@ private struct EpisodeBrowserRowContent: View {
                     )
                     : LinearGradient(
                         colors: [
-                            Color.white.opacity(isHovering ? 0.16 : 0.1),
-                            Color.white.opacity(isHovering ? 0.08 : 0.04)
+                            Color.white.opacity(isHovering ? 0.24 : 0.1),
+                            Color.white.opacity(isHovering ? 0.14 : 0.04)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -1877,7 +1878,7 @@ private struct EpisodeBrowserRowContent: View {
                 .stroke(
                     isSelected
                     ? Color.accentColor.opacity(0.55)
-                    : Color.white.opacity(isHovering ? 0.18 : 0.08),
+                    : Color.white.opacity(isHovering ? 0.28 : 0.08),
                     lineWidth: 1
                 )
         )
