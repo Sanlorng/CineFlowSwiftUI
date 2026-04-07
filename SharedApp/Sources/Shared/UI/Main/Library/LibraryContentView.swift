@@ -7,6 +7,9 @@
 
 import SwiftUI
 import ComposableArchitecture
+#if os(macOS)
+import AppKit
+#endif
 
 struct LibraryContentView: View {
     let store: StoreOf<LibraryPresenter>
@@ -192,6 +195,9 @@ private struct AdaptiveLibraryToolbarSearchField: View {
     @State private var isPopoverPresented = false
     @FocusState private var isInlineFieldFocused: Bool
     @FocusState private var isPopoverFieldFocused: Bool
+#if os(macOS)
+    @Environment(\.controlActiveState) private var controlActiveState
+#endif
 
     private let collapsedButtonSize: CGFloat = 32
     private let minimumExpandedWidth: CGFloat = 144
@@ -235,7 +241,6 @@ private struct AdaptiveLibraryToolbarSearchField: View {
         .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
             searchField(focused: $isPopoverFieldFocused)
                 .frame(width: popoverExpandedWidth)
-                .padding(10)
                 .onAppear {
                     isPopoverFieldFocused = true
                 }
@@ -246,15 +251,17 @@ private struct AdaptiveLibraryToolbarSearchField: View {
     private func searchField(
         focused focusBinding: FocusState<Bool>.Binding
     ) -> some View {
+        let isFocused = focusBinding.wrappedValue
+
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(searchPromptAndIconColor)
 
             TextField(
                 "搜索番剧",
                 text: $query,
-                prompt: Text("搜索番剧").foregroundStyle(.secondary)
+                prompt: Text("搜索番剧").foregroundStyle(searchPromptAndIconColor)
             )
             .textFieldStyle(.plain)
             .focused(focusBinding)
@@ -271,17 +278,12 @@ private struct AdaptiveLibraryToolbarSearchField: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, query.isEmpty ? 12 : 10)
-        .padding(.vertical, 7)
-        .background {
-            Capsule(style: .continuous)
-                .fill(.clear)
-                .glassEffect()
-        }
+        .frame(height: collapsedButtonSize)
         .overlay {
-            Capsule(style: .continuous)
-                .stroke(searchBorderColor, lineWidth: 0.6)
+            if isFocused {
+                Capsule(style: .continuous)
+                    .stroke(.accentColor.opacity(0.28), lineWidth: 0.8)
+            }
         }
         .contentShape(Capsule(style: .continuous))
         .onTapGesture {
@@ -297,7 +299,34 @@ private struct AdaptiveLibraryToolbarSearchField: View {
     }
 
     private var searchAccentColor: Color {
-        query.isEmpty ? .primary : .accentColor
+        isWindowActive ? (query.isEmpty ? .primary : .accentColor) : searchPromptAndIconColor
+    }
+
+    private var searchPromptAndIconColor: Color {
+        isWindowActive ? .secondary : disabledSearchColor
+    }
+
+    private var isWindowActive: Bool {
+#if os(macOS)
+        switch controlActiveState {
+        case .key, .active:
+            return true
+        case .inactive:
+            return false
+        @unknown default:
+            return true
+        }
+#else
+        return true
+#endif
+    }
+
+    private var disabledSearchColor: Color {
+#if os(macOS)
+        Color(nsColor: .disabledControlTextColor)
+#else
+        .secondary
+#endif
     }
 }
 
