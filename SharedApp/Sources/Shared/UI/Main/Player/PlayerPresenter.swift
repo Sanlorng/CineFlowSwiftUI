@@ -342,12 +342,23 @@ struct PlayerPresenter {
                       !fileID.isEmpty else {
                     return .none
                 }
+                let selectedTrack = state.availableEmbeddedSubtitles.first { $0.id == trackID }
                 state.areSubtitlesSuppressed = false
                 state.selectedSubtitle = nil
                 state.selectedEmbeddedSubtitleTrackID = trackID
                 state.subtitleError = nil
                 state.activeSubtitle = nil
-                state.isLoadingSelectedSubtitle = true
+                let usesNativeEmbeddedSubtitleSelection =
+                    PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks)
+                    && selectedTrack?.backendTrackID != nil
+                state.isLoadingSelectedSubtitle = !usesNativeEmbeddedSubtitleSelection
+
+                if usesNativeEmbeddedSubtitleSelection {
+                    debugLogEmbeddedSubtitlePlayback(
+                        "embedded subtitle selected for native backend fileID=\(fileID) trackID=\(trackID) backendTrackID=\(selectedTrack?.backendTrackID ?? "<none>")"
+                    )
+                    return .none
+                }
 
                 let extractor = EmbeddedSubtitleExtractor()
                 let stream = currentItem.stream
@@ -662,7 +673,8 @@ private func makeEmbeddedSubtitleTrack(from track: PlayerTrack) -> SubtitleTrack
         displayName: track.displayName,
         language: track.language,
         formatHint: subtitleFormatHint(for: track.codec),
-        kind: .embedded
+        kind: .embedded,
+        backendTrackID: track.id
     )
 }
 

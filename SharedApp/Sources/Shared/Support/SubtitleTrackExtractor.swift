@@ -12,19 +12,22 @@ struct SubtitleTrack: Equatable, Identifiable, Sendable {
     var language: String?
     var formatHint: SubtitleFormat?
     var kind: Kind
+    var backendTrackID: String?
 
     init(
         id: String,
         displayName: String,
         language: String? = nil,
         formatHint: SubtitleFormat? = nil,
-        kind: Kind
+        kind: Kind,
+        backendTrackID: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.language = language
         self.formatHint = formatHint
         self.kind = kind
+        self.backendTrackID = backendTrackID
     }
 }
 

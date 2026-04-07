@@ -288,6 +288,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "auto-safe" : "no")
         applyHTTPHeaders(source.headers)
         applyAudioTrackSelection(options.selectedAudioTrackID)
+        applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         stateChanged(.preparing)
 
         if !options.allowAutoPlay {
@@ -310,6 +311,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     func apply(options: PlayerLoadOptions) {
         currentOptions = options
         applyAudioTrackSelection(options.selectedAudioTrackID)
+        applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         applyPlaybackRate(currentPlaybackRate)
         if options.allowAutoPlay {
             setPause(false)
@@ -389,6 +391,17 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             _ = mpv_set_property_string(mpv, MPVProperty.aid, trackID)
         } else {
             _ = mpv_set_property_string(mpv, MPVProperty.aid, "auto")
+        }
+    }
+
+    private func applyEmbeddedSubtitleTrackSelection(_ trackID: String?) {
+        guard let mpv else { return }
+        if let trackID, !trackID.isEmpty {
+            _ = mpv_set_property_string(mpv, MPVProperty.sid, trackID)
+            _ = mpv_set_property_string(mpv, "sub-visibility", "yes")
+        } else {
+            _ = mpv_set_property_string(mpv, MPVProperty.sid, "no")
+            _ = mpv_set_property_string(mpv, "sub-visibility", "no")
         }
     }
 

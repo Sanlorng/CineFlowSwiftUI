@@ -63,6 +63,7 @@ private struct PlayerContentMainView: View {
                     let options = makeOptions(
                         for: stream,
                         selectedAudioTrackID: viewStore.selectedAudioTrackID,
+                        selectedEmbeddedSubtitleTrackID: effectiveEmbeddedSubtitleTrackID(viewStore: viewStore),
                         allowAutoPlay: shouldAllowAutoPlay(
                             viewStore: viewStore,
                             isSubtitleRendererReady: isSubtitleRendererReady
@@ -1252,14 +1253,28 @@ private func episodePages(itemCount: Int) -> [EpisodePage] {
 private func makeOptions(
     for stream: RemoteMediaLibraryClient.StreamContext,
     selectedAudioTrackID: String?,
+    selectedEmbeddedSubtitleTrackID: String?,
     allowAutoPlay: Bool
 ) -> PlayerLoadOptions {
     PlayerLoadOptions(
         headers: stream.headers,
         enableHardwareDecoding: true,
         allowAutoPlay: allowAutoPlay,
-        selectedAudioTrackID: selectedAudioTrackID
+        selectedAudioTrackID: selectedAudioTrackID,
+        selectedEmbeddedSubtitleTrackID: selectedEmbeddedSubtitleTrackID
     )
+}
+
+@MainActor
+private func effectiveEmbeddedSubtitleTrackID(
+    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+) -> String? {
+    guard PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks),
+          !viewStore.areSubtitlesSuppressed,
+          viewStore.selectedSubtitle == nil else {
+        return nil
+    }
+    return viewStore.selectedEmbeddedSubtitle?.backendTrackID
 }
 
 @MainActor
@@ -1276,6 +1291,10 @@ private func shouldAllowAutoPlay(
     }
     if viewStore.activeSubtitle != nil {
         return isSubtitleRendererReady
+    }
+    if PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks),
+       viewStore.selectedEmbeddedSubtitle?.backendTrackID != nil {
+        return true
     }
     if viewStore.selectedEmbeddedSubtitleTrackID != nil || viewStore.selectedSubtitle != nil {
         return false
