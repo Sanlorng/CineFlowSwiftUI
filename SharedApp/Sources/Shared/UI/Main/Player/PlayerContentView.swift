@@ -2569,11 +2569,7 @@ private struct PlayerWindowObserver: NSViewRepresentable {
         private let onFullscreenWillChange: (Bool) -> Void
         private let onFullscreenChanged: (Bool) -> Void
         private weak var observedWindow: NSWindow?
-        private weak var proxiedWindow: NSWindow?
         private var notificationTokens: [NSObjectProtocol] = []
-        private let delegateProxy = WindowDelegateProxy()
-        private var enterAnimationWindows: [NSWindow] = []
-        private var exitAnimationWindows: [NSWindow] = []
 
         init(
             onWindowChanged: @escaping (NSWindow?) -> Void,
@@ -2583,90 +2579,18 @@ private struct PlayerWindowObserver: NSViewRepresentable {
             self.onWindowChanged = onWindowChanged
             self.onFullscreenWillChange = onFullscreenWillChange
             self.onFullscreenChanged = onFullscreenChanged
-            super.init()
-            delegateProxy.coordinator = self
         }
 
         @MainActor
         func refresh(for window: NSWindow?) {
-            if observedWindow !== window {
-                detachWindow()
-                observedWindow = window
-                reportWindowChange(window)
-                reportFullscreenChange(window?.styleMask.contains(.fullScreen) ?? false)
-            }
+            guard observedWindow !== window else { return }
+            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+            notificationTokens.removeAll()
+            observedWindow = window
+            reportWindowChange(window)
+            reportFullscreenChange(window?.styleMask.contains(.fullScreen) ?? false)
 
             guard let window else { return }
-            attach(to: window)
-        }
-
-        func teardown() {
-            detachWindow()
-            observedWindow = nil
-            reportWindowChange(nil)
-        }
-
-        fileprivate func customWindowsToEnterFullScreen(for window: NSWindow) -> [NSWindow]? {
-            let ownWindows = prepareAnimationWindows(for: window, phase: .enter)
-            let downstreamWindows = delegateProxy.downstreamDelegate?.customWindowsToEnterFullScreen?(for: window)
-            return mergedAnimationWindows(ownWindows, downstreamWindows)
-        }
-
-        fileprivate func startCustomAnimationToEnterFullScreen(duration: TimeInterval) {
-            startAnimation(for: .enter, duration: duration)
-        }
-
-        fileprivate func didFailToEnterFullScreen() {
-            cleanupAnimationWindows(for: .enter)
-            reportFullscreenChange(observedWindow?.styleMask.contains(.fullScreen) ?? false)
-        }
-
-        fileprivate func customWindowsToExitFullScreen(for window: NSWindow) -> [NSWindow]? {
-            let ownWindows = prepareAnimationWindows(for: window, phase: .exit)
-            let downstreamWindows = delegateProxy.downstreamDelegate?.customWindowsToExitFullScreen?(for: window)
-            return mergedAnimationWindows(ownWindows, downstreamWindows)
-        }
-
-        fileprivate func startCustomAnimationToExitFullScreen(duration: TimeInterval) {
-            startAnimation(for: .exit, duration: duration)
-        }
-
-        fileprivate func didFailToExitFullScreen() {
-            cleanupAnimationWindows(for: .exit)
-            reportFullscreenChange(observedWindow?.styleMask.contains(.fullScreen) ?? false)
-        }
-
-        private func reportWindowChange(_ window: NSWindow?) {
-            Task { @MainActor in
-                onWindowChanged(window)
-            }
-        }
-
-        private func reportFullscreenWillChange(_ fullscreen: Bool) {
-            Task { @MainActor in
-                onFullscreenWillChange(fullscreen)
-            }
-        }
-
-        private func reportFullscreenChange(_ fullscreen: Bool) {
-            Task { @MainActor in
-                onFullscreenChanged(fullscreen)
-            }
-        }
-
-        private func attach(to window: NSWindow) {
-            if proxiedWindow !== window || window.delegate !== delegateProxy {
-                if let delegate = window.delegate,
-                   delegate !== delegateProxy {
-                    delegateProxy.downstreamDelegateObject = delegate as AnyObject
-                } else if proxiedWindow !== window {
-                    delegateProxy.downstreamDelegateObject = nil
-                }
-                window.delegate = delegateProxy
-                proxiedWindow = window
-            }
-
-            guard notificationTokens.isEmpty else { return }
             notificationTokens.append(
                 NotificationCenter.default.addObserver(
                     forName: NSWindow.willEnterFullScreenNotification,
@@ -2696,7 +2620,6 @@ private struct PlayerWindowObserver: NSViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     Task { @MainActor in
-                        self?.cleanupAnimationWindows(for: .enter)
                         self?.reportFullscreenChange(true)
                     }
                 }
@@ -2708,178 +2631,36 @@ private struct PlayerWindowObserver: NSViewRepresentable {
                     queue: .main
                 ) { [weak self] _ in
                     Task { @MainActor in
-                        self?.cleanupAnimationWindows(for: .exit)
                         self?.reportFullscreenChange(false)
                     }
                 }
             )
         }
 
-        private func detachWindow() {
+        func teardown() {
             notificationTokens.forEach(NotificationCenter.default.removeObserver)
             notificationTokens.removeAll()
-            cleanupAnimationWindows(for: .enter)
-            cleanupAnimationWindows(for: .exit)
-
-            if let proxiedWindow,
-               proxiedWindow.delegate === delegateProxy {
-                proxiedWindow.delegate = delegateProxy.downstreamDelegate
-            }
-            proxiedWindow = nil
-            delegateProxy.downstreamDelegateObject = nil
+            observedWindow = nil
+            reportWindowChange(nil)
         }
 
-        private func mergedAnimationWindows(
-            _ ownWindows: [NSWindow],
-            _ downstreamWindows: [NSWindow]?
-        ) -> [NSWindow]? {
-            let merged = ownWindows + (downstreamWindows ?? [])
-            return merged.isEmpty ? nil : merged
-        }
-
-        private func prepareAnimationWindows(
-            for window: NSWindow,
-            phase: FullscreenAnimationPhase
-        ) -> [NSWindow] {
-            let windows = makeSnapshotAnimationWindow(for: window).map { [$0] } ?? []
-            switch phase {
-            case .enter:
-                cleanupAnimationWindows(for: .enter)
-                enterAnimationWindows = windows
-            case .exit:
-                cleanupAnimationWindows(for: .exit)
-                exitAnimationWindows = windows
-            }
-            return windows
-        }
-
-        private func startAnimation(
-            for phase: FullscreenAnimationPhase,
-            duration: TimeInterval
-        ) {
-            let windows = phase == .enter ? enterAnimationWindows : exitAnimationWindows
-            guard !windows.isEmpty else { return }
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = duration
-                for window in windows {
-                    window.animator().alphaValue = 0
-                }
-            } completionHandler: { [weak self] in
-                Task { @MainActor in
-                    self?.cleanupAnimationWindows(for: phase)
-                }
+        private func reportWindowChange(_ window: NSWindow?) {
+            Task { @MainActor in
+                onWindowChanged(window)
             }
         }
 
-        private func cleanupAnimationWindows(for phase: FullscreenAnimationPhase) {
-            let windows: [NSWindow]
-            switch phase {
-            case .enter:
-                windows = enterAnimationWindows
-                enterAnimationWindows.removeAll()
-            case .exit:
-                windows = exitAnimationWindows
-                exitAnimationWindows.removeAll()
-            }
-            windows.forEach { window in
-                window.orderOut(nil)
+        private func reportFullscreenWillChange(_ fullscreen: Bool) {
+            Task { @MainActor in
+                onFullscreenWillChange(fullscreen)
             }
         }
 
-        private func makeSnapshotAnimationWindow(for window: NSWindow) -> NSWindow? {
-            guard let contentView = window.contentView else { return nil }
-            let bounds = contentView.bounds.integral
-            guard bounds.width > 0,
-                  bounds.height > 0,
-                  let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
-                return nil
+        private func reportFullscreenChange(_ fullscreen: Bool) {
+            Task { @MainActor in
+                onFullscreenChanged(fullscreen)
             }
-
-            contentView.cacheDisplay(in: bounds, to: bitmap)
-            let image = NSImage(size: bounds.size)
-            image.addRepresentation(bitmap)
-
-            let imageView = NSImageView(frame: NSRect(origin: .zero, size: bounds.size))
-            imageView.image = image
-            imageView.imageScaling = .scaleAxesIndependently
-
-            let rectInWindow = contentView.convert(bounds, to: nil)
-            let rectOnScreen = window.convertToScreen(rectInWindow)
-            let snapshotWindow = NSWindow(
-                contentRect: rectOnScreen,
-                styleMask: .borderless,
-                backing: .buffered,
-                defer: false
-            )
-            snapshotWindow.isOpaque = false
-            snapshotWindow.backgroundColor = .clear
-            snapshotWindow.hasShadow = false
-            snapshotWindow.ignoresMouseEvents = true
-            snapshotWindow.alphaValue = 1
-            snapshotWindow.level = window.level
-            snapshotWindow.collectionBehavior = [.fullScreenAuxiliary]
-            snapshotWindow.contentView = imageView
-            return snapshotWindow
         }
-    }
-}
-
-private enum FullscreenAnimationPhase {
-    case enter
-    case exit
-}
-
-private final class WindowDelegateProxy: NSObject, NSWindowDelegate {
-    weak var coordinator: PlayerWindowObserver.Coordinator?
-    weak var downstreamDelegateObject: AnyObject?
-
-    var downstreamDelegate: NSWindowDelegate? {
-        downstreamDelegateObject as? NSWindowDelegate
-    }
-
-    override func responds(to aSelector: Selector!) -> Bool {
-        if super.responds(to: aSelector) {
-            return true
-        }
-        return (downstreamDelegateObject as? NSObjectProtocol)?.responds(to: aSelector) == true
-    }
-
-    override func forwardingTarget(for aSelector: Selector!) -> Any? {
-        if super.responds(to: aSelector) {
-            return nil
-        }
-        if (downstreamDelegateObject as? NSObjectProtocol)?.responds(to: aSelector) == true {
-            return downstreamDelegateObject
-        }
-        return super.forwardingTarget(for: aSelector)
-    }
-
-    func customWindowsToEnterFullScreen(for window: NSWindow) -> [NSWindow]? {
-        coordinator?.customWindowsToEnterFullScreen(for: window)
-    }
-
-    func window(_ window: NSWindow, startCustomAnimationToEnterFullScreenWithDuration duration: TimeInterval) {
-        coordinator?.startCustomAnimationToEnterFullScreen(duration: duration)
-        downstreamDelegate?.window?(window, startCustomAnimationToEnterFullScreenWithDuration: duration)
-    }
-
-    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
-        coordinator?.didFailToEnterFullScreen()
-        downstreamDelegate?.windowDidFailToEnterFullScreen?(window)
-    }
-
-    func customWindowsToExitFullScreen(for window: NSWindow) -> [NSWindow]? {
-        coordinator?.customWindowsToExitFullScreen(for: window)
-    }
-
-    func window(_ window: NSWindow, startCustomAnimationToExitFullScreenWithDuration duration: TimeInterval) {
-        coordinator?.startCustomAnimationToExitFullScreen(duration: duration)
-        downstreamDelegate?.window?(window, startCustomAnimationToExitFullScreenWithDuration: duration)
-    }
-
-    func windowDidFailToExitFullScreen(_ window: NSWindow) {
-        coordinator?.didFailToExitFullScreen()
-        downstreamDelegate?.windowDidFailToExitFullScreen?(window)
     }
 }
 
