@@ -540,11 +540,11 @@ private struct PlayerContentMainView: View {
                                 playerController.setPlaybackRate(rate)
                                 isSpeedPopoverPresented = false
                             } label: {
-                                if abs(playerController.playbackRate - rate) < 0.001 {
-                                    Label(playbackRateTitle(rate), systemImage: "checkmark")
-                                } else {
-                                    Text(playbackRateTitle(rate))
-                                }
+                                selectionRowLabel(
+                                    title: playbackRateTitle(rate),
+                                    subtitle: rate == 1 ? "默认速度" : nil,
+                                    isSelected: abs(playerController.playbackRate - rate) < 0.001
+                                )
                             }
                             .id(rate)
                             .buttonStyle(.plain)
@@ -552,7 +552,7 @@ private struct PlayerContentMainView: View {
                     }
                 }
                 .padding(12)
-                .frame(minWidth: 120, maxHeight: 220, alignment: .leading)
+                .frame(minWidth: 180, maxHeight: 220, alignment: .leading)
                 .onAppear {
                     let selectedRate = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
                         .min(by: { abs(playerController.playbackRate - $0) < abs(playerController.playbackRate - $1) })
