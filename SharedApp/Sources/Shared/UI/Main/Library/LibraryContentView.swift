@@ -352,10 +352,6 @@ private struct LibraryToolbarWindowActivationObserver: NSViewRepresentable {
             self.onActiveStateChanged = onActiveStateChanged
         }
 
-        deinit {
-            notificationTokens.forEach(NotificationCenter.default.removeObserver)
-        }
-
         func refresh(for window: NSWindow?) {
             guard observedWindow !== window else {
                 reportActiveState()
