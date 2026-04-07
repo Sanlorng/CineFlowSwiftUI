@@ -650,6 +650,7 @@ private struct PlayerContentMainView: View {
                                                 showSubtitleOffsetPopup()
                                             } else {
                                                 isAdjustingSubtitleOffset = false
+                                                
                                                 keepSubtitleOffsetPopupVisibleBriefly()
                                             }
                                         }
@@ -1237,6 +1238,33 @@ private struct PlayerContentMainView: View {
         withAnimation(.easeOut(duration: 0.18)) {
             isControlBarVisible = true
         }
+    }
+
+    private func showSubtitleOffsetPopup() {
+        subtitleOffsetPopupTask?.cancel()
+        subtitleOffsetPopupTask = nil
+        withAnimation(.easeOut(duration: 0.16)) {
+            isShowingSubtitleOffsetPopup = true
+        }
+    }
+
+    private func keepSubtitleOffsetPopupVisibleBriefly() {
+        showSubtitleOffsetPopup()
+        subtitleOffsetPopupTask?.cancel()
+        subtitleOffsetPopupTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled, !isAdjustingSubtitleOffset else { return }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isShowingSubtitleOffsetPopup = false
+            }
+            subtitleOffsetPopupTask = nil
+        }
+    }
+
+    private func cancelSubtitleOffsetPopup() {
+        subtitleOffsetPopupTask?.cancel()
+        subtitleOffsetPopupTask = nil
+        isShowingSubtitleOffsetPopup = false
     }
 
     private func revealControlsIfNeeded() {
