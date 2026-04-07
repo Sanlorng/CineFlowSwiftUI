@@ -193,11 +193,9 @@ struct LibraryContentView: View {
 private struct AdaptiveLibraryToolbarSearchField: View {
     @Binding var query: String
     @State private var isPopoverPresented = false
+    @State private var isWindowActive = true
     @FocusState private var isInlineFieldFocused: Bool
     @FocusState private var isPopoverFieldFocused: Bool
-#if os(macOS)
-    @Environment(\.controlActiveState) private var controlActiveState
-#endif
 
     private let collapsedButtonSize: CGFloat = 32
     private let minimumExpandedWidth: CGFloat = 144
@@ -216,6 +214,14 @@ private struct AdaptiveLibraryToolbarSearchField: View {
 
             collapsedSearchButton
         }
+#if os(macOS)
+        .background {
+            LibraryToolbarWindowActivationObserver { isActive in
+                isWindowActive = isActive
+            }
+            .frame(width: 0, height: 0)
+        }
+#endif
     }
 
     private var collapsedSearchButton: some View {
@@ -251,7 +257,7 @@ private struct AdaptiveLibraryToolbarSearchField: View {
     private func searchField(
         focused focusBinding: FocusState<Bool>.Binding
     ) -> some View {
-        let isFocused = focusBinding.wrappedValue
+        let isFocused = focusBinding.wrappedValue && isWindowActive
 
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -273,11 +279,13 @@ private struct AdaptiveLibraryToolbarSearchField: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(searchPromptAndIconColor)
                 }
                 .buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .frame(height: collapsedButtonSize)
         .overlay {
             if isFocused {
@@ -306,21 +314,6 @@ private struct AdaptiveLibraryToolbarSearchField: View {
         isWindowActive ? .secondary : disabledSearchColor
     }
 
-    private var isWindowActive: Bool {
-#if os(macOS)
-        switch controlActiveState {
-        case .key, .active:
-            return true
-        case .inactive:
-            return false
-        @unknown default:
-            return true
-        }
-#else
-        return true
-#endif
-    }
-
     private var disabledSearchColor: Color {
 #if os(macOS)
         Color(nsColor: .disabledControlTextColor)
@@ -329,6 +322,112 @@ private struct AdaptiveLibraryToolbarSearchField: View {
 #endif
     }
 }
+
+#if os(macOS)
+private struct LibraryToolbarWindowActivationObserver: NSViewRepresentable {
+    let onActiveStateChanged: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onActiveStateChanged: onActiveStateChanged)
+    }
+
+    func makeNSView(context: Context) -> LibraryToolbarWindowObserverView {
+        let view = LibraryToolbarWindowObserverView(frame: .zero)
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: LibraryToolbarWindowObserverView, context: Context) {
+        view.coordinator = context.coordinator
+        context.coordinator.refresh(for: view.window)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        private let onActiveStateChanged: (Bool) -> Void
+        private weak var observedWindow: NSWindow?
+        private var notificationTokens: [NSObjectProtocol] = []
+
+        init(onActiveStateChanged: @escaping (Bool) -> Void) {
+            self.onActiveStateChanged = onActiveStateChanged
+        }
+
+        deinit {
+            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+        }
+
+        func refresh(for window: NSWindow?) {
+            guard observedWindow !== window else {
+                reportActiveState()
+                return
+            }
+
+            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+            notificationTokens.removeAll()
+            observedWindow = window
+            reportActiveState()
+
+            guard let window else { return }
+
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.reportActiveState()
+                }
+            )
+
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.didResignKeyNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.reportActiveState()
+                }
+            )
+
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSApplication.didBecomeActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.reportActiveState()
+                }
+            )
+
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSApplication.didResignActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.reportActiveState()
+                }
+            )
+        }
+
+        private func reportActiveState() {
+            let isActive = (observedWindow?.isKeyWindow ?? false) && NSApp.isActive
+            Task { @MainActor in
+                onActiveStateChanged(isActive)
+            }
+        }
+    }
+}
+
+private final class LibraryToolbarWindowObserverView: NSView {
+    weak var coordinator: LibraryToolbarWindowActivationObserver.Coordinator?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        coordinator?.refresh(for: window)
+    }
+}
+#endif
 
 private struct LibraryGrid: View {
     @ObservedObject var viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>
