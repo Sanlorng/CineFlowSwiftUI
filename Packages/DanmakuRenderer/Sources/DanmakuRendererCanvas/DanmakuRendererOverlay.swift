@@ -1217,7 +1217,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
 
         let font = makeFont(size: fontSize, family: fontFamily)
         let strokeWidth = usesStroke ? strokeWidth(for: fontSize) : 0
-        let line = makeLine(text: text, font: font, color: NSColor.white.cgColor)
+        let line = makeMeasurementLine(text: text, font: font)
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
         var leading: CGFloat = 0
@@ -1266,39 +1266,32 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         }
 
         context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: 0, y: metrics.size.height)
-        context.scaleBy(x: 1, y: -1)
         context.setAllowsAntialiasing(true)
         context.setShouldAntialias(true)
-        context.setAllowsFontSmoothing(false)
-        context.setShouldSmoothFonts(false)
-        context.setAllowsFontSubpixelPositioning(false)
-        context.setShouldSubpixelPositionFonts(false)
-        context.setAllowsFontSubpixelQuantization(false)
-        context.setShouldSubpixelQuantizeFonts(false)
         context.interpolationQuality = .high
 
-        let font = makeFont(size: comment.fontSize, family: comment.fontFamily)
-        let fillLine = makeLine(
+        let font = makeFont(size: comment.fontSize, family: comment.fontFamily) as NSFont
+        let attributed = makeAttributedString(
             text: comment.text,
             font: font,
-            color: color(for: comment.colorRGB)
+            color: nsColor(for: comment.colorRGB),
+            strokeWidth: comment.usesStroke ? strokeWidth(for: comment.fontSize) : nil
         )
-        context.textPosition = CGPoint(x: metrics.padding, y: metrics.padding + metrics.descent)
-        if comment.usesStroke {
-            let outlineWidth = strokeWidth(for: comment.fontSize)
-            let strokeLine = makeStrokedLine(
-                text: comment.text,
-                font: font,
-                strokeWidth: outlineWidth
-            )
-            context.saveGState()
-            context.setLineJoin(.round)
-            context.setLineCap(.round)
-            CTLineDraw(strokeLine, context)
-            context.restoreGState()
-        }
-        CTLineDraw(fillLine, context)
+        let drawRect = CGRect(
+            x: metrics.padding,
+            y: metrics.padding,
+            width: max(metrics.size.width - metrics.padding * 2, 1),
+            height: max(metrics.size.height - metrics.padding * 2, 1)
+        )
+
+        let graphicsContext = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphicsContext
+        attributed.draw(
+            with: drawRect,
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        NSGraphicsContext.restoreGraphicsState()
 
         guard let image = context.makeImage() else { return nil }
         imageCache.setObject(
@@ -1307,6 +1300,37 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
             cost: pixelWidth * pixelHeight * 4
         )
         return image
+    }
+
+    private func makeAttributedString(
+        text: String,
+        font: NSFont,
+        color: NSColor,
+        strokeWidth: CGFloat?
+    ) -> NSAttributedString {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byClipping
+
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        if let strokeWidth, strokeWidth > 0 {
+            attributes[.strokeColor] = NSColor.black.withAlphaComponent(0.96)
+            attributes[.strokeWidth] = -strokeWidth
+        }
+
+        return NSAttributedString(string: text, attributes: attributes)
+    }
+
+    private func makeMeasurementLine(text: String, font: CTFont) -> CTLine {
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        return CTLineCreateWithAttributedString(attributed)
     }
 
     private func makeFont(size: CGFloat, family: String?) -> CTFont {
@@ -1333,30 +1357,15 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         return NSFont.systemFont(ofSize: size, weight: .semibold) as CTFont
     }
 
-    private func makeLine(text: String, font: CTFont, color: CGColor) -> CTLine {
-        let attributes: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
-        ]
-        let attributed = NSAttributedString(string: text, attributes: attributes)
-        return CTLineCreateWithAttributedString(attributed)
-    }
-
-    private func makeStrokedLine(text: String, font: CTFont, strokeWidth: CGFloat) -> CTLine {
-        let attributes: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTStrokeColorAttributeName as String): NSColor.black.withAlphaComponent(0.96).cgColor,
-            NSAttributedString.Key(kCTStrokeWidthAttributeName as String): strokeWidth,
-        ]
-        let attributed = NSAttributedString(string: text, attributes: attributes)
-        return CTLineCreateWithAttributedString(attributed)
-    }
-
     private func color(for rgb: UInt32) -> CGColor {
+        nsColor(for: rgb).cgColor
+    }
+
+    private func nsColor(for rgb: UInt32) -> NSColor {
         let red = CGFloat((rgb >> 16) & 0xFF) / 255
         let green = CGFloat((rgb >> 8) & 0xFF) / 255
         let blue = CGFloat(rgb & 0xFF) / 255
-        return NSColor(red: red, green: green, blue: blue, alpha: 1).cgColor
+        return NSColor(red: red, green: green, blue: blue, alpha: 1)
     }
 
     private func strokeWidth(for fontSize: CGFloat) -> CGFloat {
