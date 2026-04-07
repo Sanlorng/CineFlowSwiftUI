@@ -1216,13 +1216,13 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         }
 
         let font = makeFont(size: fontSize, family: fontFamily)
-        let strokeWidth = usesStroke ? strokeWidth(for: fontSize) : 0
+        let outlineRadius = usesStroke ? outlineRadius(for: fontSize) : 0
         let line = makeMeasurementLine(text: text, font: font)
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
         var leading: CGFloat = 0
         let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-        let padding = ceil(max(strokeWidth + 2, fontSize * 0.12))
+        let padding = ceil(max(outlineRadius + 2, fontSize * 0.12))
         let metrics = DanmakuTextMetrics(
             size: CGSize(
                 width: ceil(width) + padding * 2,
@@ -1271,12 +1271,16 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         context.interpolationQuality = .high
 
         let font = makeFont(size: comment.fontSize, family: comment.fontFamily) as NSFont
-        let attributed = makeAttributedString(
+        let fillAttributed = makeAttributedString(
             text: comment.text,
             font: font,
-            color: nsColor(for: comment.colorRGB),
-            strokeWidth: comment.usesStroke ? strokeWidth(for: comment.fontSize) : nil
+            color: nsColor(for: comment.colorRGB)
         )
+        let outlineAttributed = comment.usesStroke ? makeAttributedString(
+            text: comment.text,
+            font: font,
+            color: NSColor.black.withAlphaComponent(0.96)
+        ) : nil
         let drawRect = CGRect(
             x: metrics.padding,
             y: metrics.padding,
@@ -1287,7 +1291,15 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         let graphicsContext = NSGraphicsContext(cgContext: context, flipped: true)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = graphicsContext
-        attributed.draw(
+        if let outlineAttributed {
+            for offset in outlineOffsets(radius: outlineRadius(for: comment.fontSize)) {
+                outlineAttributed.draw(
+                    with: drawRect.offsetBy(dx: offset.x, dy: offset.y),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading]
+                )
+            }
+        }
+        fillAttributed.draw(
             with: drawRect,
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
@@ -1305,22 +1317,16 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
     private func makeAttributedString(
         text: String,
         font: NSFont,
-        color: NSColor,
-        strokeWidth: CGFloat?
+        color: NSColor
     ) -> NSAttributedString {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byClipping
 
-        var attributes: [NSAttributedString.Key: Any] = [
+        let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: color,
             .paragraphStyle: paragraphStyle
         ]
-
-        if let strokeWidth, strokeWidth > 0 {
-            attributes[.strokeColor] = NSColor.black.withAlphaComponent(0.96)
-            attributes[.strokeWidth] = -strokeWidth
-        }
 
         return NSAttributedString(string: text, attributes: attributes)
     }
@@ -1368,12 +1374,27 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         return NSColor(red: red, green: green, blue: blue, alpha: 1)
     }
 
-    private func strokeWidth(for fontSize: CGFloat) -> CGFloat {
-        min(max(fontSize * 0.095, 1.5), 3.2)
+    private func outlineRadius(for fontSize: CGFloat) -> CGFloat {
+        min(max(fontSize * 0.06, 1.1), 2.2)
     }
 
     private func cacheValue(_ value: CGFloat) -> Int {
         Int((value * 100).rounded())
+    }
+
+    private func outlineOffsets(radius: CGFloat) -> [CGPoint] {
+        guard radius > 0 else { return [] }
+        let half = radius * 0.72
+        return [
+            CGPoint(x: -radius, y: 0),
+            CGPoint(x: radius, y: 0),
+            CGPoint(x: 0, y: -radius),
+            CGPoint(x: 0, y: radius),
+            CGPoint(x: -half, y: -half),
+            CGPoint(x: half, y: -half),
+            CGPoint(x: -half, y: half),
+            CGPoint(x: half, y: half)
+        ]
     }
 }
 #else
