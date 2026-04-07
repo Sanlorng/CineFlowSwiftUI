@@ -481,49 +481,11 @@ private struct PlayerContentMainView: View {
                     .foregroundStyle(.white.opacity(0.7))
                     .frame(width: 58, alignment: .leading)
 
-                HStack(spacing: 10) {
-                    HStack(spacing: 10) {
-                        glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
-                            viewStore.send(.playPrevious)
-                        }
-                        glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
-                            playerController.togglePlayPause()
-                        }
-                        glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
-                            viewStore.send(.playNext)
-                        }
-                    }
-                    .padding(6)
-                    .background(controlClusterBackground(opacity: 0.18))
-
-                    Spacer(minLength: 0)
-
-                    HStack(spacing: 8) {
-                        if isFullscreen {
-                            episodeMenu(viewStore: viewStore)
-                    }
-                        glassIconButton("gobackward.10") {
-                            playerController.seekBy(-10)
-                    }
-                    danmakuMenu()
-                    speedMenu()
-                    playbackSettingsMenu(viewStore: viewStore)
-                    glassIconButton("goforward.10") {
-                        playerController.seekBy(10)
-                    }
-                        audioMenu(viewStore: viewStore)
-                        subtitleMenu(viewStore: viewStore)
-#if os(macOS)
-                        glassIconButton(
-                            isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-                        ) {
-                            observedWindow?.toggleFullScreen(nil)
-                        }
-#endif
-                    }
-                    .padding(6)
-                    .background(controlClusterBackground(opacity: 0.14))
+                ViewThatFits(in: .horizontal) {
+                    controlBarActionRow(viewStore: viewStore, displayMode: .expanded)
+                    controlBarActionRow(viewStore: viewStore, displayMode: .compact)
                 }
+                .frame(maxWidth: .infinity)
 
                 Text(formatPlaybackTime(duration))
                     .font(.caption.monospacedDigit())
@@ -533,7 +495,7 @@ private struct PlayerContentMainView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 18)
-        .frame(maxWidth: 860)
+        .frame(maxWidth: 1040)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -578,14 +540,63 @@ private struct PlayerContentMainView: View {
     }
 
     @ViewBuilder
-    private func speedMenu() -> some View {
+    private func controlBarActionRow(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+        displayMode: PlaybackControlDisplayMode
+    ) -> some View {
+        HStack(spacing: 10) {
+            controlButtonCluster(opacity: 0.18) {
+                glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
+                    viewStore.send(.playPrevious)
+                }
+                glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
+                    playerController.togglePlayPause()
+                }
+                glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
+                    viewStore.send(.playNext)
+                }
+            }
+
+            controlButtonCluster(opacity: 0.14) {
+                danmakuMenu(displayMode: displayMode)
+                playbackSettingsMenu(viewStore: viewStore, displayMode: displayMode)
+                speedMenu(displayMode: displayMode)
+            }
+
+            controlButtonCluster(opacity: 0.14) {
+                audioMenu(viewStore: viewStore, displayMode: displayMode)
+                subtitleMenu(viewStore: viewStore, displayMode: displayMode)
+                episodeMenu(viewStore: viewStore)
+            }
+
+            Spacer(minLength: 0)
+
+#if os(macOS)
+            Button {
+                observedWindow?.toggleFullScreen(nil)
+            } label: {
+                glassCapsuleLabel(
+                    title: "全屏",
+                    systemImage: isFullscreen
+                        ? "arrow.down.right.and.arrow.up.left"
+                        : "arrow.up.left.and.arrow.down.right"
+                )
+            }
+            .buttonStyle(.plain)
+#endif
+        }
+    }
+
+    @ViewBuilder
+    private func speedMenu(displayMode: PlaybackControlDisplayMode = .expanded) -> some View {
         Button {
             isSpeedPopoverPresented.toggle()
             revealControls()
         } label: {
-            glassCapsuleLabel(
-                title: playbackRateTitle(playerController.playbackRate),
-                systemImage: "gauge.with.dots.needle.50percent"
+            glassAdaptiveControlLabel(
+                title: "调整倍速",
+                systemImage: "gauge.with.dots.needle.50percent",
+                displayMode: displayMode
             )
         }
         .buttonStyle(.plain)
@@ -611,14 +622,15 @@ private struct PlayerContentMainView: View {
     }
 
     @ViewBuilder
-    private func danmakuMenu() -> some View {
+    private func danmakuMenu(displayMode: PlaybackControlDisplayMode = .expanded) -> some View {
         Button {
             isDanmakuPopoverPresented.toggle()
             revealControls()
         } label: {
-            glassCapsuleLabel(
-                title: isDanmakuVisible ? "弹幕" : "弹幕关闭",
-                systemImage: "text.bubble"
+            glassAdaptiveControlLabel(
+                title: "弹幕设置",
+                systemImage: "text.bubble",
+                displayMode: displayMode
             )
         }
         .buttonStyle(.plain)
@@ -655,15 +667,17 @@ private struct PlayerContentMainView: View {
 
     @ViewBuilder
     private func playbackSettingsMenu(
-        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+        displayMode: PlaybackControlDisplayMode = .expanded
     ) -> some View {
         Button {
             isPlaybackSettingsPopoverPresented.toggle()
             revealControls()
         } label: {
-            glassCapsuleLabel(
+            glassAdaptiveControlLabel(
                 title: "播放设置",
-                systemImage: "slider.horizontal.3"
+                systemImage: "slider.horizontal.3",
+                displayMode: displayMode
             )
         }
         .buttonStyle(.plain)
@@ -1139,17 +1153,18 @@ private struct PlayerContentMainView: View {
     }
 
     @ViewBuilder
-    private func audioMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+    private func audioMenu(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+        displayMode: PlaybackControlDisplayMode = .expanded
+    ) -> some View {
         Button {
             isAudioPopoverPresented.toggle()
             revealControls()
         } label: {
-            glassCapsuleLabel(
-                title: selectedAudioTrackTitle(
-                    tracks: viewStore.availableAudioTracks,
-                    selectedAudioTrackID: viewStore.selectedAudioTrackID
-                ),
-                systemImage: "waveform"
+            glassAdaptiveControlLabel(
+                title: "音频轨",
+                systemImage: "waveform",
+                displayMode: displayMode
             )
         }
         .buttonStyle(.plain)
@@ -1189,18 +1204,18 @@ private struct PlayerContentMainView: View {
     }
 
     @ViewBuilder
-    private func subtitleMenu(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
+    private func subtitleMenu(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+        displayMode: PlaybackControlDisplayMode = .expanded
+    ) -> some View {
         Button {
             isSubtitlePopoverPresented.toggle()
             revealControls()
         } label: {
-            glassCapsuleLabel(
-                title: subtitleMenuTitle(
-                    externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore),
-                    embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
-                    isSuppressed: viewStore.areSubtitlesSuppressed
-                ),
-                systemImage: "captions.bubble"
+            glassAdaptiveControlLabel(
+                title: "字幕轨",
+                systemImage: "captions.bubble",
+                displayMode: displayMode
             )
         }
         .buttonStyle(.plain)
@@ -2145,6 +2160,38 @@ private func glassCapsuleLabel(title: String, systemImage: String) -> some View 
     )
 }
 
+@MainActor
+@ViewBuilder
+private func glassAdaptiveControlLabel(
+    title: String,
+    systemImage: String,
+    displayMode: PlaybackControlDisplayMode
+) -> some View {
+    switch displayMode {
+    case .expanded:
+        glassCapsuleLabel(title: title, systemImage: systemImage)
+    case .compact:
+        Image(systemName: systemImage)
+            .font(.system(size: 15, weight: .semibold))
+            .frame(width: 38, height: 38)
+            .contentShape(Circle())
+            .foregroundStyle(.white)
+            .background(
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.2),
+                                .white.opacity(0.1)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            )
+    }
+}
+
 private func playbackRateTitle(_ rate: Double) -> String {
     if abs(rate.rounded() - rate) < 0.001 {
         return "\(Int(rate.rounded()))x"
@@ -2255,6 +2302,19 @@ private func controlClusterBackground(opacity: Double) -> some View {
             Capsule(style: .continuous)
                 .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
+}
+
+@MainActor
+@ViewBuilder
+private func controlButtonCluster<Content: View>(
+    opacity: Double,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    HStack(spacing: 8) {
+        content()
+    }
+    .padding(6)
+    .background(controlClusterBackground(opacity: opacity))
 }
 
 @MainActor
@@ -2629,6 +2689,11 @@ private struct PlayerShortcutHUDState: Equatable {
     let title: String
     let value: String
     let systemImage: String
+}
+
+private enum PlaybackControlDisplayMode {
+    case expanded
+    case compact
 }
 
 private enum SubtitleFontOption: String, CaseIterable, Identifiable {
