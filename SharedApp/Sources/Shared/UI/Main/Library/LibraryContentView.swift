@@ -282,7 +282,7 @@ private struct AdaptiveLibraryToolbarSearchField: View {
         .overlay {
             if isFocused {
                 Capsule(style: .continuous)
-                    .stroke(.accentColor.opacity(0.28), lineWidth: 0.8)
+                    .stroke(Color.accentColor.opacity(0.28), lineWidth: 0.8)
             }
         }
         .contentShape(Capsule(style: .continuous))
