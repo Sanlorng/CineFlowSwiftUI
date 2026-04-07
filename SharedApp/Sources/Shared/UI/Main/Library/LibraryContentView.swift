@@ -307,7 +307,7 @@ private struct AdaptiveLibraryToolbarSearchField: View {
     }
 
     private var searchPromptAndIconColor: Color {
-        appearsActive ? .secondary : .tertiary
+        appearsActive ? .secondary : Color.secondary.opacity(0.7)
     }
 
     private var searchTextColor: Color {
