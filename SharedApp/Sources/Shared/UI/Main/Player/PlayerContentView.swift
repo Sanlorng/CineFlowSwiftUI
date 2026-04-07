@@ -67,88 +67,7 @@ private struct PlayerContentMainView: View {
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
-            VStack(spacing: isFullscreen ? 0 : 16) {
-                if let stream = viewStore.currentItem?.stream {
-                    let options = makeOptions(
-                        for: stream,
-                        selectedAudioTrackID: viewStore.selectedAudioTrackID,
-                        selectedEmbeddedSubtitleTrackID: effectiveEmbeddedSubtitleTrackID(viewStore: viewStore),
-                        subtitleTimeOffset: subtitleTimeOffset,
-                        subtitleFontSize: subtitleFontSize,
-                        subtitleFontFamily: effectiveSubtitleFontFamily,
-                        allowAutoPlay: shouldAllowAutoPlay(
-                            viewStore: viewStore,
-                            isSubtitleRendererReady: isSubtitleRendererReady
-                        )
-                    )
-                    let customSubtitleDocument = makeCustomSubtitleDocument(
-                        from: viewStore.activeSubtitle,
-                        isSuppressed: viewStore.areSubtitlesSuppressed
-                    )
-                    HStack(alignment: .top, spacing: isFullscreen ? 0 : 18) {
-                        playerStage(
-                            viewStore: viewStore,
-                            stream: stream,
-                            options: options,
-                            customSubtitleDocument: customSubtitleDocument
-                        )
-                        .frame(maxWidth: .infinity)
-
-                        if !isFullscreen {
-                            episodeSidebar(viewStore: viewStore)
-                                .frame(width: 300)
-                        }
-                    }
-                } else {
-                    Text("暂无可播放内容。")
-                        .foregroundStyle(.secondary)
-                }
-                
-                if !isFullscreen, let error = viewStore.subtitleError {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                
-                if !isFullscreen, let playbackError = viewStore.playbackError, !playbackError.isEmpty {
-                    Text(playbackError)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(isFullscreen ? 0 : 16)
-            .background {
-                playerBackgroundLayer(for: viewStore.coverURL)
-                    .ignoresSafeArea()
-            }
-            .sheet(
-                item: viewStore.binding(
-                    get: \.fileSelection,
-                    send: { _ in .fileSelectionDismissed }
-                )
-            ) { selection in
-                PlayerFileSelectionView(
-                    selection: selection,
-                    onSelect: { file in
-                        viewStore.send(.fileSelected(file))
-                    },
-                    onCancel: {
-                        viewStore.send(.fileSelectionDismissed)
-                    }
-                )
-            }
-            .onAppear {
-                syncEpisodePageSelection(with: viewStore)
-            }
-            .onChange(of: viewStore.currentIndex) { _, _ in
-                syncEpisodePageSelection(with: viewStore)
-            }
-            .onChange(of: viewStore.playlist.count) { _, _ in
-                syncEpisodePageSelection(with: viewStore)
-            }
+            playerScreen(viewStore: viewStore)
         }
         .background(Color.platformBackground.ignoresSafeArea())
         .onChange(of: isAudioPopoverPresented) { _, _ in
@@ -174,6 +93,94 @@ private struct PlayerContentMainView: View {
                 cancelSubtitleOffsetPopup()
                 isAdjustingSubtitleOffset = false
             }
+        }
+    }
+
+    @ViewBuilder
+    private func playerScreen(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) -> some View {
+        VStack(spacing: isFullscreen ? 0 : 16) {
+            if let stream = viewStore.currentItem?.stream {
+                let options = makeOptions(
+                    for: stream,
+                    selectedAudioTrackID: viewStore.selectedAudioTrackID,
+                    selectedEmbeddedSubtitleTrackID: effectiveEmbeddedSubtitleTrackID(viewStore: viewStore),
+                    subtitleTimeOffset: subtitleTimeOffset,
+                    subtitleFontSize: subtitleFontSize,
+                    subtitleFontFamily: effectiveSubtitleFontFamily,
+                    allowAutoPlay: shouldAllowAutoPlay(
+                        viewStore: viewStore,
+                        isSubtitleRendererReady: isSubtitleRendererReady
+                    )
+                )
+                let customSubtitleDocument = makeCustomSubtitleDocument(
+                    from: viewStore.activeSubtitle,
+                    isSuppressed: viewStore.areSubtitlesSuppressed
+                )
+                HStack(alignment: .top, spacing: isFullscreen ? 0 : 18) {
+                    playerStage(
+                        viewStore: viewStore,
+                        stream: stream,
+                        options: options,
+                        customSubtitleDocument: customSubtitleDocument
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    if !isFullscreen {
+                        episodeSidebar(viewStore: viewStore)
+                            .frame(width: 300)
+                    }
+                }
+            } else {
+                Text("暂无可播放内容。")
+                    .foregroundStyle(.secondary)
+            }
+
+            if !isFullscreen, let error = viewStore.subtitleError {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !isFullscreen, let playbackError = viewStore.playbackError, !playbackError.isEmpty {
+                Text(playbackError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(isFullscreen ? 0 : 16)
+        .background {
+            playerBackgroundLayer(for: viewStore.coverURL)
+                .ignoresSafeArea()
+        }
+        .sheet(
+            item: viewStore.binding(
+                get: \.fileSelection,
+                send: { _ in .fileSelectionDismissed }
+            )
+        ) { selection in
+            PlayerFileSelectionView(
+                selection: selection,
+                onSelect: { file in
+                    viewStore.send(.fileSelected(file))
+                },
+                onCancel: {
+                    viewStore.send(.fileSelectionDismissed)
+                }
+            )
+        }
+        .onAppear {
+            syncEpisodePageSelection(with: viewStore)
+        }
+        .onChange(of: viewStore.currentIndex) { _, _ in
+            syncEpisodePageSelection(with: viewStore)
+        }
+        .onChange(of: viewStore.playlist.count) { _, _ in
+            syncEpisodePageSelection(with: viewStore)
         }
     }
 
