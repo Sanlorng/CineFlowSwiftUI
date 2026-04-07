@@ -430,7 +430,12 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
                 }
 
                 context.saveGState()
-                context.setAlpha(CGFloat(clampedOpacity(renderState.opacity) * currentSettings.opacity))
+                context.setAlpha(
+                    CGFloat(
+                        clampedOpacity(renderState.opacity)
+                            * effectiveOpacity(currentSettings.opacity)
+                    )
+                )
                 if abs(renderState.rotation) > 0.0001 {
                     context.translateBy(x: renderState.frame.midX, y: renderState.frame.midY)
                     context.rotate(by: renderState.rotation)
@@ -462,6 +467,11 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 
     private func clampedOpacity(_ value: Double) -> Double {
         min(max(value, 0), 1)
+    }
+
+    private func effectiveOpacity(_ value: Double) -> Double {
+        let clamped = clampedOpacity(value)
+        return pow(clamped, 1.2)
     }
 }
 
@@ -1214,7 +1224,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
             return cached.value
         }
 
-        let font = makeFont(size: fontSize, family: fontFamily) as NSFont
+        let font = makeFont(size: fontSize, family: fontFamily, weight: .regular) as NSFont
         let outlineRadius = usesStroke ? outlineRadius(for: fontSize) : 0
         let attributed = makeAttributedString(
             text: text,
@@ -1278,16 +1288,16 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         context.setShouldAntialias(true)
         context.interpolationQuality = .high
 
-        let font = makeFont(size: comment.fontSize, family: comment.fontFamily) as NSFont
+        let font = makeFont(size: comment.fontSize, family: comment.fontFamily, weight: .regular) as NSFont
         let fillAttributed = makeAttributedString(
             text: comment.text,
             font: font,
-            color: nsColor(for: comment.colorRGB)
+            color: fillColor(for: comment.colorRGB)
         )
         let outlineAttributed = comment.usesStroke ? makeAttributedString(
             text: comment.text,
             font: font,
-            color: NSColor.black.withAlphaComponent(0.9)
+            color: NSColor.black.withAlphaComponent(0.34)
         ) : nil
         let drawRect = CGRect(
             origin: metrics.drawOrigin,
@@ -1340,12 +1350,16 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    private func makeFont(size: CGFloat, family: String?) -> CTFont {
+    private func makeFont(
+        size: CGFloat,
+        family: String?,
+        weight: NSFont.Weight = .regular
+    ) -> CTFont {
         if let family, family.isEmpty == false {
             let descriptor = NSFontDescriptor(
                 fontAttributes: [
                     .family: family,
-                    .traits: [NSFontDescriptor.TraitKey.weight: NSFont.Weight.regular]
+                    .traits: [NSFontDescriptor.TraitKey.weight: weight]
                 ]
             )
             if let custom = NSFont(descriptor: descriptor, size: size) {
@@ -1361,11 +1375,15 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
                 }
             }
         }
-        return NSFont.systemFont(ofSize: size, weight: .regular) as CTFont
+        return NSFont.systemFont(ofSize: size, weight: weight) as CTFont
     }
 
     private func color(for rgb: UInt32) -> CGColor {
         nsColor(for: rgb).cgColor
+    }
+
+    private func fillColor(for rgb: UInt32) -> NSColor {
+        nsColor(for: rgb).withAlphaComponent(0.92)
     }
 
     private func nsColor(for rgb: UInt32) -> NSColor {
@@ -1376,7 +1394,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
     }
 
     private func outlineRadius(for fontSize: CGFloat) -> CGFloat {
-        min(max(fontSize * 0.06, 1.1), 2.2)
+        min(max(fontSize * 0.045, 0.9), 1.7)
     }
 
     private func cacheValue(_ value: CGFloat) -> Int {
@@ -1385,16 +1403,11 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
 
     private func outlineOffsets(radius: CGFloat) -> [CGPoint] {
         guard radius > 0 else { return [] }
-        let half = radius * 0.72
         return [
             CGPoint(x: -radius, y: 0),
             CGPoint(x: radius, y: 0),
             CGPoint(x: 0, y: -radius),
             CGPoint(x: 0, y: radius),
-            CGPoint(x: -half, y: -half),
-            CGPoint(x: half, y: -half),
-            CGPoint(x: -half, y: half),
-            CGPoint(x: half, y: half)
         ]
     }
 }
