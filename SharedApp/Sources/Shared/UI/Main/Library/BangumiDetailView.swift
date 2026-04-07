@@ -250,7 +250,7 @@ private struct EpisodeCard: View {
                             systemImage: matched ? "checkmark.circle" : "exclamationmark.circle"
                         )
                         .font(.caption)
-                        .foregroundStyle(matched ? .green : .orange)
+                        .foregroundStyle(.secondary)
                     }
                 }
 
