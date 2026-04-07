@@ -51,13 +51,16 @@ private struct PlayerContentMainView: View {
     @State private var lastPointerMovementAt: ContinuousClock.Instant?
     @State private var isSubtitleRendererReady = false
     @State private var lastReportedSubtitleWindowPlaybackSecond: Int?
+    @State private var isAdjustingSubtitleOffset = false
+    @State private var isShowingSubtitleOffsetPopup = false
     @State private var selectedEpisodePageIndex = 0
     @State private var hideControlsTask: Task<Void, Never>?
+    @State private var subtitleOffsetPopupTask: Task<Void, Never>?
     @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
     @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
     @AppStorage("player.danmaku.speed") private var danmakuSpeed = 1.0
-    @AppStorage("player.subtitle.timeOffset") private var subtitleTimeOffset = 0.0
+    @State private var subtitleTimeOffset = 0.0
     @AppStorage("player.subtitle.fontSize") private var subtitleFontSize = 54.0
     @AppStorage("player.subtitle.fontFamily") private var subtitleFontFamily = ""
     @AppStorage("player.playback.mode") private var playbackModeRawValue = PlaybackMode.sequential.rawValue
@@ -165,6 +168,12 @@ private struct PlayerContentMainView: View {
         }
         .onChange(of: isPlaybackSettingsPopoverPresented) { _, _ in
             scheduleControlBarVisibilityUpdate()
+        }
+        .onChange(of: isPlaybackSettingsPopoverPresented) { _, isPresented in
+            if !isPresented {
+                cancelSubtitleOffsetPopup()
+                isAdjustingSubtitleOffset = false
+            }
         }
     }
 
@@ -305,6 +314,7 @@ private struct PlayerContentMainView: View {
             isScrubbing = false
             isSubtitleRendererReady = false
             lastReportedSubtitleWindowPlaybackSecond = nil
+            subtitleTimeOffset = 0
             isAudioPopoverPresented = false
             isSubtitlePopoverPresented = false
             isSpeedPopoverPresented = false
@@ -613,107 +623,128 @@ private struct PlayerContentMainView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isPlaybackSettingsPopoverPresented, arrowEdge: .bottom) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        settingsSectionTitle("字幕")
-                        if hasVisibleSubtitleOffset(subtitleTimeOffset) {
-                            subtitleOffsetNotice(subtitleTimeOffset)
-                        }
-                        controlSettingRow(
-                            title: "时间偏移",
-                            value: formattedSubtitleTimeOffset(subtitleTimeOffset)
-                        ) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Slider(value: $subtitleTimeOffset, in: -10...10, step: 0.1)
-                                HStack(spacing: 8) {
-                                    smallSettingButton("提前 0.5s") {
-                                        subtitleTimeOffset = max(subtitleTimeOffset - 0.5, -10)
-                                    }
-                                    smallSettingButton("重置") {
-                                        subtitleTimeOffset = 0
-                                    }
-                                    smallSettingButton("推后 0.5s") {
-                                        subtitleTimeOffset = min(subtitleTimeOffset + 0.5, 10)
-                                    }
-                                }
-                            }
-                        }
-                        controlSettingRow(
-                            title: "字号",
-                            value: formattedSubtitleFontSize(subtitleFontSize)
-                        ) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Slider(value: $subtitleFontSize, in: 24...84, step: 2)
-                                HStack(spacing: 8) {
-                                    smallSettingButton("缩小") {
-                                        subtitleFontSize = max(subtitleFontSize - 2, 24)
-                                    }
-                                    smallSettingButton("重置") {
-                                        subtitleFontSize = 54
-                                    }
-                                    smallSettingButton("放大") {
-                                        subtitleFontSize = min(subtitleFontSize + 2, 84)
+            ZStack(alignment: .top) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            settingsSectionTitle("字幕")
+                            controlSettingRow(
+                                title: "时间偏移",
+                                value: formattedSubtitleTimeOffset(subtitleTimeOffset)
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Slider(
+                                        value: $subtitleTimeOffset,
+                                        in: -10...10,
+                                        step: 0.1,
+                                        onEditingChanged: { editing in
+                                            if editing {
+                                                isAdjustingSubtitleOffset = true
+                                                showSubtitleOffsetPopup()
+                                            } else {
+                                                isAdjustingSubtitleOffset = false
+                                                keepSubtitleOffsetPopupVisibleBriefly()
+                                            }
+                                        }
+                                    )
+                                    HStack(spacing: 8) {
+                                        smallSettingButton("提前 0.5s") {
+                                            subtitleTimeOffset = max(subtitleTimeOffset - 0.5, -10)
+                                            keepSubtitleOffsetPopupVisibleBriefly()
+                                        }
+                                        smallSettingButton("重置") {
+                                            subtitleTimeOffset = 0
+                                            keepSubtitleOffsetPopupVisibleBriefly()
+                                        }
+                                        smallSettingButton("推后 0.5s") {
+                                            subtitleTimeOffset = min(subtitleTimeOffset + 0.5, 10)
+                                            keepSubtitleOffsetPopupVisibleBriefly()
+                                        }
                                     }
                                 }
                             }
-                        }
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("默认字体")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                Spacer(minLength: 0)
-                                Text(currentSubtitleFontOption.title)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            controlSettingRow(
+                                title: "字号",
+                                value: formattedSubtitleFontSize(subtitleFontSize)
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Slider(value: $subtitleFontSize, in: 24...84, step: 2)
+                                    HStack(spacing: 8) {
+                                        smallSettingButton("缩小") {
+                                            subtitleFontSize = max(subtitleFontSize - 2, 24)
+                                        }
+                                        smallSettingButton("重置") {
+                                            subtitleFontSize = 54
+                                        }
+                                        smallSettingButton("放大") {
+                                            subtitleFontSize = min(subtitleFontSize + 2, 84)
+                                        }
+                                    }
+                                }
                             }
-                            ForEach(subtitleFontOptions) { option in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("默认字体")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Spacer(minLength: 0)
+                                    Text(currentSubtitleFontOption.title)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(subtitleFontOptions) { option in
+                                    Button {
+                                        subtitleFontFamily = option.rawValue
+                                    } label: {
+                                        selectionRowLabel(
+                                            title: option.title,
+                                            subtitle: option.preview,
+                                            isSelected: subtitleFontFamily == option.rawValue
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            settingsSectionTitle("播放模式")
+                            ForEach(PlaybackMode.allCases) { mode in
                                 Button {
-                                    subtitleFontFamily = option.rawValue
+                                    playbackModeRawValue = mode.rawValue
                                 } label: {
                                     selectionRowLabel(
-                                        title: option.title,
-                                        subtitle: option.preview,
-                                        isSelected: subtitleFontFamily == option.rawValue
+                                        title: mode.title,
+                                        subtitle: mode.description,
+                                        isSelected: playbackMode == mode
                                     )
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
-                    }
 
-                    Divider()
+                        Divider()
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        settingsSectionTitle("播放模式")
-                        ForEach(PlaybackMode.allCases) { mode in
-                            Button {
-                                playbackModeRawValue = mode.rawValue
-                            } label: {
-                                selectionRowLabel(
-                                    title: mode.title,
-                                    subtitle: mode.description,
-                                    isSelected: playbackMode == mode
-                                )
-                            }
-                            .buttonStyle(.plain)
+                        VStack(alignment: .leading, spacing: 8) {
+                            settingsSectionTitle("当前状态")
+                            Text("后端：\(PlayerBackendKind.defaultDistributable.displayName)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("当前字幕：\(subtitleMenuTitle(externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore), embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName, isSuppressed: viewStore.areSubtitlesSuppressed))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        settingsSectionTitle("当前状态")
-                        Text("后端：\(PlayerBackendKind.defaultDistributable.displayName)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("当前字幕：\(subtitleMenuTitle(externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore), embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName, isSuppressed: viewStore.areSubtitlesSuppressed))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    .padding(14)
                 }
-                .padding(14)
+                if isShowingSubtitleOffsetPopup || isAdjustingSubtitleOffset {
+                    subtitleOffsetNotice(subtitleTimeOffset)
+                        .padding(.top, 10)
+                        .padding(.horizontal, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             .frame(width: 320, height: 460, alignment: .topLeading)
         }
