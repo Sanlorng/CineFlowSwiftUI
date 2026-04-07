@@ -1490,7 +1490,7 @@ private struct PlayerContentMainView: View {
             return false
         }
 
-        if event.isARepeat {
+        if event.type == .keyDown && event.isARepeat {
             return action == .seekForwardOrBoost
         }
 
