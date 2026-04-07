@@ -466,12 +466,12 @@ private final class DanmakuMetalCompositor {
 
         let alpha = sprite.alpha
         return [
-            DanmakuMetalVertex(position: transformed[0], texCoord: SIMD2<Float>(0, 0), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[1], texCoord: SIMD2<Float>(1, 0), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[2], texCoord: SIMD2<Float>(0, 1), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[2], texCoord: SIMD2<Float>(0, 1), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[1], texCoord: SIMD2<Float>(1, 0), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[3], texCoord: SIMD2<Float>(1, 1), alpha: alpha),
+            DanmakuMetalVertex(position: transformed[0], texCoord: SIMD2<Float>(1, 0), alpha: alpha),
+            DanmakuMetalVertex(position: transformed[1], texCoord: SIMD2<Float>(0, 0), alpha: alpha),
+            DanmakuMetalVertex(position: transformed[2], texCoord: SIMD2<Float>(1, 1), alpha: alpha),
+            DanmakuMetalVertex(position: transformed[2], texCoord: SIMD2<Float>(1, 1), alpha: alpha),
+            DanmakuMetalVertex(position: transformed[1], texCoord: SIMD2<Float>(0, 0), alpha: alpha),
+            DanmakuMetalVertex(position: transformed[3], texCoord: SIMD2<Float>(0, 1), alpha: alpha),
         ]
     }
 
