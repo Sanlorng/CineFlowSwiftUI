@@ -1188,8 +1188,7 @@ private final class DanmakuImageBox: NSObject {
 private struct DanmakuTextMetrics: Sendable {
     var size: CGSize
     var padding: CGFloat
-    var ascent: CGFloat
-    var descent: CGFloat
+    var drawOrigin: CGPoint
 }
 
 private final class DanmakuTextRasterCache: @unchecked Sendable {
@@ -1215,22 +1214,31 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
             return cached.value
         }
 
-        let font = makeFont(size: fontSize, family: fontFamily)
+        let font = makeFont(size: fontSize, family: fontFamily) as NSFont
         let outlineRadius = usesStroke ? outlineRadius(for: fontSize) : 0
-        let line = makeMeasurementLine(text: text, font: font)
-        var ascent: CGFloat = 0
-        var descent: CGFloat = 0
-        var leading: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-        let padding = ceil(max(outlineRadius + 2, fontSize * 0.12))
+        let attributed = makeAttributedString(
+            text: text,
+            font: font,
+            color: .white
+        )
+        let measuredBounds = attributed.boundingRect(
+            with: CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).integral
+        let padding = ceil(max(outlineRadius + 3, fontSize * 0.16))
         let metrics = DanmakuTextMetrics(
             size: CGSize(
-                width: ceil(width) + padding * 2,
-                height: ceil(ascent + descent + leading) + padding * 2
+                width: ceil(measuredBounds.width) + padding * 2,
+                height: ceil(measuredBounds.height) + padding * 2
             ),
             padding: padding,
-            ascent: ascent,
-            descent: descent
+            drawOrigin: CGPoint(
+                x: padding - measuredBounds.minX,
+                y: padding - measuredBounds.minY
+            )
         )
         metricsCache.setObject(DanmakuTextMetricsBox(metrics), forKey: key)
         return metrics
@@ -1279,13 +1287,14 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         let outlineAttributed = comment.usesStroke ? makeAttributedString(
             text: comment.text,
             font: font,
-            color: NSColor.black.withAlphaComponent(0.96)
+            color: NSColor.black.withAlphaComponent(0.9)
         ) : nil
         let drawRect = CGRect(
-            x: metrics.padding,
-            y: metrics.padding,
-            width: max(metrics.size.width - metrics.padding * 2, 1),
-            height: max(metrics.size.height - metrics.padding * 2, 1)
+            origin: metrics.drawOrigin,
+            size: CGSize(
+                width: max(metrics.size.width - metrics.padding * 2, 1),
+                height: max(metrics.size.height - metrics.padding * 2, 1)
+            )
         )
 
         let graphicsContext = NSGraphicsContext(cgContext: context, flipped: true)
@@ -1331,20 +1340,12 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    private func makeMeasurementLine(text: String, font: CTFont) -> CTLine {
-        let attributes: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font
-        ]
-        let attributed = NSAttributedString(string: text, attributes: attributes)
-        return CTLineCreateWithAttributedString(attributed)
-    }
-
     private func makeFont(size: CGFloat, family: String?) -> CTFont {
         if let family, family.isEmpty == false {
             let descriptor = NSFontDescriptor(
                 fontAttributes: [
                     .family: family,
-                    .traits: [NSFontDescriptor.TraitKey.weight: NSFont.Weight.semibold]
+                    .traits: [NSFontDescriptor.TraitKey.weight: NSFont.Weight.regular]
                 ]
             )
             if let custom = NSFont(descriptor: descriptor, size: size) {
@@ -1360,7 +1361,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
                 }
             }
         }
-        return NSFont.systemFont(ofSize: size, weight: .semibold) as CTFont
+        return NSFont.systemFont(ofSize: size, weight: .regular) as CTFont
     }
 
     private func color(for rgb: UInt32) -> CGColor {
