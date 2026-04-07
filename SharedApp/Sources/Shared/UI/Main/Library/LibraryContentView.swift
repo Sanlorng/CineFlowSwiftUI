@@ -294,8 +294,8 @@ private struct LibraryCard: View {
                     .lineLimit(2, reservesSpace: true)
                     .multilineTextAlignment(.leading)
                 
-                if let details = item.details, !details.isEmpty {
-                    Text(details)
+                if let onAirDate = item.onAirDate {
+                    Text(localizedLibraryCardDate(onAirDate))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -435,6 +435,20 @@ private struct GroupPositionPreferenceKey: PreferenceKey {
     static func reduce(value: inout [String : CGFloat], nextValue: () -> [String : CGFloat]) {
         value.merge(nextValue()) { $1 }
     }
+}
+
+private func localizedLibraryCardDate(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    if let preferredLanguage = Locale.preferredLanguages.first, !preferredLanguage.isEmpty {
+        formatter.locale = Locale(identifier: preferredLanguage)
+    } else {
+        formatter.locale = .autoupdatingCurrent
+    }
+    formatter.calendar = .autoupdatingCurrent
+    formatter.timeZone = .autoupdatingCurrent
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .none
+    return formatter.string(from: date)
 }
 
 private extension View {

@@ -23,7 +23,7 @@ struct LibraryPresenter {
             let id: String
             let animeId: Int?
             let title: String
-            let details: String?
+            let onAirDate: Date?
             let groupName: String?
             let rating: Float?
             let userRating: Float?
@@ -36,7 +36,7 @@ struct LibraryPresenter {
             init(id: String,
                  animeId: Int?,
                  title: String,
-                 details: String?,
+                 onAirDate: Date?,
                  groupName: String?,
                  rating: Float?,
                  userRating: Float?,
@@ -48,7 +48,7 @@ struct LibraryPresenter {
                 self.id = id
                 self.animeId = animeId
                 self.title = title
-                self.details = details
+                self.onAirDate = onAirDate
                 self.groupName = groupName
                 self.rating = rating
                 self.userRating = userRating
@@ -509,7 +509,7 @@ extension LibraryPresenter.State.BangumiItem {
             id: identifier,
             animeId: summary.animeId,
             title: summary.title ?? "未知动画",
-            details: summary.details,
+            onAirDate: summary.onAirDate,
             groupName: summary.groupName,
             rating: summary.rating,
             userRating: summary.userRating,
