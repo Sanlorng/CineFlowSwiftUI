@@ -299,11 +299,11 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
         context.interpolationQuality = .high
 
         for entry in visibleEntries {
-            guard let frame = entry.frame(at: currentTime, viewport: preparedScene.descriptor.viewportSize) else {
+            guard let renderState = entry.renderState(at: currentTime) else {
                 continue
             }
 
-            if frame.intersects(bounds) == false {
+            if renderState.frame.intersects(bounds) == false {
                 continue
             }
 
@@ -312,8 +312,20 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
             }
 
             context.saveGState()
-            context.setAlpha(CGFloat(clampedOpacity(entry.opacity(at: currentTime)) * currentSettings.opacity))
-            context.draw(image, in: frame.integral)
+            context.setAlpha(CGFloat(clampedOpacity(renderState.opacity) * currentSettings.opacity))
+            if abs(renderState.rotation) > 0.0001 {
+                context.translateBy(x: renderState.frame.midX, y: renderState.frame.midY)
+                context.rotate(by: renderState.rotation)
+                let drawRect = CGRect(
+                    x: -entry.size.width / 2,
+                    y: -entry.size.height / 2,
+                    width: entry.size.width,
+                    height: entry.size.height
+                )
+                context.draw(image, in: drawRect)
+            } else {
+                context.draw(image, in: renderState.frame)
+            }
             context.restoreGState()
         }
     }
@@ -418,18 +430,43 @@ private struct DanmakuPreparedScene: Sendable {
     var scale: CGFloat
     var entries: [DanmakuPreparedComment]
     var maximumLifetime: TimeInterval
+    private let timelineIndex: DanmakuTimelineIndex
+
+    init(
+        descriptor: DanmakuSceneDescriptor,
+        scale: CGFloat,
+        entries: [DanmakuPreparedComment],
+        maximumLifetime: TimeInterval
+    ) {
+        self.descriptor = descriptor
+        self.scale = scale
+        self.entries = entries
+        self.maximumLifetime = maximumLifetime
+        self.timelineIndex = DanmakuTimelineIndex(
+            times: entries.map(\.appearTime),
+            bucketDuration: 0.5
+        )
+    }
 
     func lowerBound(for time: TimeInterval) -> Int {
-        binarySearch(time: time, isUpperBound: false)
+        binarySearch(
+            time: time,
+            range: timelineIndex.searchRange(for: time, totalCount: entries.count),
+            isUpperBound: false
+        )
     }
 
     func upperBound(for time: TimeInterval) -> Int {
-        binarySearch(time: time, isUpperBound: true)
+        binarySearch(
+            time: time,
+            range: timelineIndex.searchRange(for: time, totalCount: entries.count),
+            isUpperBound: true
+        )
     }
 
-    private func binarySearch(time: TimeInterval, isUpperBound: Bool) -> Int {
-        var lower = 0
-        var upper = entries.count
+    private func binarySearch(time: TimeInterval, range: Range<Int>, isUpperBound: Bool) -> Int {
+        var lower = range.lowerBound
+        var upper = range.upperBound
         while lower < upper {
             let middle = (lower + upper) / 2
             if entries[middle].appearTime < time || (isUpperBound && entries[middle].appearTime == time) {
@@ -442,37 +479,92 @@ private struct DanmakuPreparedScene: Sendable {
     }
 }
 
+private struct DanmakuRenderState: Sendable {
+    var frame: CGRect
+    var opacity: Double
+    var rotation: CGFloat
+}
+
+private struct DanmakuMotionTrajectory: Sendable {
+    var points: [CGPoint]
+    var delay: TimeInterval
+    var duration: TimeInterval
+    var curve: DanmakuMotionCurve
+
+    func point(at elapsed: TimeInterval) -> CGPoint {
+        guard points.isEmpty == false else { return .zero }
+        guard points.count > 1 else { return points[0] }
+
+        let effectiveDuration = max(duration, 0.0001)
+        let motionProgress: CGFloat
+        if elapsed <= delay {
+            motionProgress = 0
+        } else {
+            motionProgress = min(max(CGFloat((elapsed - delay) / effectiveDuration), 0), 1)
+        }
+
+        let curvedProgress = curve.value(at: motionProgress)
+        let segmentLengths = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
+        let totalLength = max(segmentLengths.reduce(0, +), 0.0001)
+        let targetLength = totalLength * curvedProgress
+
+        var consumed: CGFloat = 0
+        for (index, segmentLength) in segmentLengths.enumerated() {
+            let nextConsumed = consumed + segmentLength
+            if targetLength <= nextConsumed || index == segmentLengths.count - 1 {
+                let localProgress = segmentLength > 0 ? (targetLength - consumed) / segmentLength : 0
+                let start = points[index]
+                let end = points[index + 1]
+                return CGPoint(
+                    x: start.x + (end.x - start.x) * localProgress,
+                    y: start.y + (end.y - start.y) * localProgress
+                )
+            }
+            consumed = nextConsumed
+        }
+
+        return points.last ?? .zero
+    }
+}
+
 private struct DanmakuPreparedComment: Sendable {
     var appearTime: TimeInterval
     var endTime: TimeInterval
     var text: String
     var colorRGB: UInt32
     var fontSize: CGFloat
+    var fontFamily: String?
+    var usesStroke: Bool
     var size: CGSize
     var placement: DanmakuPlacement
     var alpha: ClosedRange<Double>
+    var rotation: ClosedRange<Double>
     var zIndex: Int
 
-    func frame(at time: TimeInterval, viewport: CGSize) -> CGRect? {
+    func renderState(at time: TimeInterval) -> DanmakuRenderState? {
         guard time >= appearTime, time <= endTime else { return nil }
-        let progress = CGFloat((time - appearTime) / max(endTime - appearTime, 0.0001))
+        let elapsed = time - appearTime
 
+        let origin: CGPoint
         switch placement {
-        case let .scrollLeft(y):
-            let x = viewport.width - progress * (viewport.width + size.width)
-            return CGRect(origin: CGPoint(x: x, y: y), size: size)
-        case let .scrollRight(y):
-            let x = -size.width + progress * (viewport.width + size.width)
-            return CGRect(origin: CGPoint(x: x, y: y), size: size)
-        case let .fixed(x, y):
-            return CGRect(origin: CGPoint(x: x, y: y), size: size)
-        case let .positioned(from, to, normalized):
-            let start = resolvedPoint(from, viewport: viewport, normalized: normalized)
-            let end = resolvedPoint(to ?? from, viewport: viewport, normalized: normalized)
-            let x = start.x + (end.x - start.x) * progress
-            let y = start.y + (end.y - start.y) * progress
-            return CGRect(origin: CGPoint(x: x, y: y), size: size)
+        case let .scrollLeft(y, startX, travelDistance):
+            let progress = CGFloat(elapsed / max(endTime - appearTime, 0.0001))
+            origin = CGPoint(x: startX - progress * travelDistance, y: y)
+        case let .scrollRight(y, startX, travelDistance):
+            let progress = CGFloat(elapsed / max(endTime - appearTime, 0.0001))
+            origin = CGPoint(x: startX + progress * travelDistance, y: y)
+        case let .fixed(originPoint):
+            origin = originPoint
+        case let .motion(trajectory):
+            origin = trajectory.point(at: elapsed)
         }
+
+        let frame = CGRect(origin: origin, size: size)
+        return DanmakuRenderState(
+            frame: frame,
+            opacity: opacity(at: time),
+            rotation: CGFloat(rotation(at: time) * .pi / 180)
+        )
     }
 
     func opacity(at time: TimeInterval) -> Double {
@@ -481,20 +573,18 @@ private struct DanmakuPreparedComment: Sendable {
         return alpha.lowerBound + (alpha.upperBound - alpha.lowerBound) * progress
     }
 
-    private func resolvedPoint(_ point: CGPoint, viewport: CGSize, normalized: Bool) -> CGPoint {
-        guard normalized else { return point }
-        return CGPoint(
-            x: point.x * max(viewport.width - size.width, 0),
-            y: point.y * max(viewport.height - size.height, 0)
-        )
+    func rotation(at time: TimeInterval) -> Double {
+        guard rotation.lowerBound != rotation.upperBound else { return rotation.lowerBound }
+        let progress = (time - appearTime) / max(endTime - appearTime, 0.0001)
+        return rotation.lowerBound + (rotation.upperBound - rotation.lowerBound) * progress
     }
 }
 
 private enum DanmakuPlacement: Sendable {
-    case scrollLeft(y: CGFloat)
-    case scrollRight(y: CGFloat)
-    case fixed(x: CGFloat, y: CGFloat)
-    case positioned(from: CGPoint, to: CGPoint?, normalized: Bool)
+    case scrollLeft(y: CGFloat, startX: CGFloat, travelDistance: CGFloat)
+    case scrollRight(y: CGFloat, startX: CGFloat, travelDistance: CGFloat)
+    case fixed(origin: CGPoint)
+    case motion(DanmakuMotionTrajectory)
 }
 
 private struct DanmakuSceneBuilder {
@@ -517,30 +607,34 @@ private struct DanmakuSceneBuilder {
         var bottomLaneStates = Array(repeating: FixedLaneState(), count: fixedLaneCount)
 
         var entries: [DanmakuPreparedComment] = []
-        entries.reserveCapacity(document.comments.count)
+        entries.reserveCapacity(document.renderableComments.count)
 
-        for comment in document.comments where comment.mode.isRenderable {
+        for comment in document.renderableComments {
             let displayText = sanitize(comment.text)
             guard displayText.isEmpty == false else { continue }
 
             let fontSize = CGFloat(clamp(comment.fontSize * 0.72 * fontScale, minimum: 14, maximum: 42))
-            let metrics = textCache.metrics(for: displayText, fontSize: fontSize)
+            let fontFamily = comment.advancedPayload?.fontFamily?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            let usesStroke = comment.advancedPayload?.usesStroke ?? true
+            let metrics = textCache.metrics(
+                for: displayText,
+                fontSize: fontSize,
+                fontFamily: fontFamily,
+                usesStroke: usesStroke
+            )
             let duration = max(comment.visibilityWindow / speed, 0.2)
             let laneSpan = max(1, Int(ceil((metrics.size.height + trackSpacing) / max(laneStride, 1))))
             let alpha = alphaRange(for: comment)
+            let rotation = rotationRange(for: comment)
 
             if comment.mode == .advanced {
-                if let payload = comment.advancedPayload,
-                   let startX = payload.startX,
-                   let startY = payload.startY {
-                    let normalized = (0...1).contains(startX) && (0...1).contains(startY)
-                    let from = CGPoint(x: startX, y: startY)
-                    let to: CGPoint?
-                    if let endX = payload.endX, let endY = payload.endY {
-                        to = CGPoint(x: endX, y: endY)
-                    } else {
-                        to = nil
-                    }
+                if let placement = advancedPlacement(
+                    for: comment,
+                    payload: comment.advancedPayload,
+                    duration: duration,
+                    viewportSize: descriptor.viewportSize,
+                    commentSize: metrics.size
+                ) {
                     entries.append(
                         DanmakuPreparedComment(
                             appearTime: comment.appearTime,
@@ -548,9 +642,12 @@ private struct DanmakuSceneBuilder {
                             text: displayText,
                             colorRGB: comment.colorRGB,
                             fontSize: fontSize,
+                            fontFamily: fontFamily,
+                            usesStroke: usesStroke,
                             size: metrics.size,
-                            placement: .positioned(from: from, to: to, normalized: normalized),
+                            placement: placement,
                             alpha: alpha,
+                            rotation: rotation,
                             zIndex: 2
                         )
                     )
@@ -580,9 +677,16 @@ private struct DanmakuSceneBuilder {
                         text: displayText,
                         colorRGB: comment.colorRGB,
                         fontSize: fontSize,
+                        fontFamily: fontFamily,
+                        usesStroke: usesStroke,
                         size: metrics.size,
-                        placement: .scrollLeft(y: y),
+                        placement: .scrollLeft(
+                            y: y,
+                            startX: descriptor.viewportSize.width,
+                            travelDistance: descriptor.viewportSize.width + metrics.size.width
+                        ),
                         alpha: alpha,
+                        rotation: rotation,
                         zIndex: 0
                     )
                 )
@@ -607,9 +711,16 @@ private struct DanmakuSceneBuilder {
                         text: displayText,
                         colorRGB: comment.colorRGB,
                         fontSize: fontSize,
+                        fontFamily: fontFamily,
+                        usesStroke: usesStroke,
                         size: metrics.size,
-                        placement: .scrollRight(y: y),
+                        placement: .scrollRight(
+                            y: y,
+                            startX: -metrics.size.width,
+                            travelDistance: descriptor.viewportSize.width + metrics.size.width
+                        ),
                         alpha: alpha,
+                        rotation: rotation,
                         zIndex: 0
                     )
                 )
@@ -629,9 +740,12 @@ private struct DanmakuSceneBuilder {
                         text: displayText,
                         colorRGB: comment.colorRGB,
                         fontSize: fontSize,
+                        fontFamily: fontFamily,
+                        usesStroke: usesStroke,
                         size: metrics.size,
-                        placement: .fixed(x: x, y: y),
+                        placement: .fixed(origin: CGPoint(x: x, y: y)),
                         alpha: alpha,
+                        rotation: rotation,
                         zIndex: 1
                     )
                 )
@@ -652,9 +766,12 @@ private struct DanmakuSceneBuilder {
                         text: displayText,
                         colorRGB: comment.colorRGB,
                         fontSize: fontSize,
+                        fontFamily: fontFamily,
+                        usesStroke: usesStroke,
                         size: metrics.size,
-                        placement: .fixed(x: x, y: y),
+                        placement: .fixed(origin: CGPoint(x: x, y: y)),
                         alpha: alpha,
+                        rotation: rotation,
                         zIndex: 1
                     )
                 )
@@ -674,9 +791,12 @@ private struct DanmakuSceneBuilder {
                         text: displayText,
                         colorRGB: comment.colorRGB,
                         fontSize: fontSize,
+                        fontFamily: fontFamily,
+                        usesStroke: usesStroke,
                         size: metrics.size,
-                        placement: .fixed(x: x, y: y),
+                        placement: .fixed(origin: CGPoint(x: x, y: y)),
                         alpha: alpha,
+                        rotation: rotation,
                         zIndex: 2
                     )
                 )
@@ -814,6 +934,77 @@ private struct DanmakuSceneBuilder {
         return lower...upper
     }
 
+    private static func rotationRange(for comment: DanmakuComment) -> ClosedRange<Double> {
+        guard let payload = comment.advancedPayload else { return 0...0 }
+        let start = payload.rotationZ ?? 0
+        let end = payload.endRotationZ ?? start
+        return start...end
+    }
+
+    private static func advancedPlacement(
+        for comment: DanmakuComment,
+        payload: DanmakuAdvancedPayload?,
+        duration: TimeInterval,
+        viewportSize: CGSize,
+        commentSize: CGSize
+    ) -> DanmakuPlacement? {
+        guard let payload else { return nil }
+
+        var points = payload.path ?? []
+        if points.isEmpty, let startX = payload.startX, let startY = payload.startY {
+            points.append(CGPoint(x: startX, y: startY))
+        }
+        if let endX = payload.endX, let endY = payload.endY {
+            let endPoint = CGPoint(x: endX, y: endY)
+            if points.last.map({ approximatelyEqual($0, endPoint) }) != true {
+                points.append(endPoint)
+            }
+        }
+
+        guard points.isEmpty == false else { return nil }
+
+        let normalized = points.allSatisfy { (0...1).contains($0.x) && (0...1).contains($0.y) }
+        let resolvedPoints = points.map {
+            resolve(point: $0, normalized: normalized, viewportSize: viewportSize, commentSize: commentSize)
+        }
+
+        if resolvedPoints.count == 1 {
+            return .fixed(origin: resolvedPoints[0])
+        }
+
+        let delay = max(payload.translationDelay, 0)
+        let motionDuration = max(payload.translationDuration ?? max(duration - delay, 0), 0)
+        if motionDuration <= 0.0001 {
+            return .fixed(origin: resolvedPoints[0])
+        }
+
+        return .motion(
+            DanmakuMotionTrajectory(
+                points: resolvedPoints,
+                delay: delay,
+                duration: motionDuration,
+                curve: payload.motionCurve
+            )
+        )
+    }
+
+    private static func resolve(
+        point: CGPoint,
+        normalized: Bool,
+        viewportSize: CGSize,
+        commentSize: CGSize
+    ) -> CGPoint {
+        guard normalized else { return point }
+        return CGPoint(
+            x: point.x * max(viewportSize.width - commentSize.width, 0),
+            y: point.y * max(viewportSize.height - commentSize.height, 0)
+        )
+    }
+
+    private static func approximatelyEqual(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {
+        abs(lhs.x - rhs.x) < 0.0001 && abs(lhs.y - rhs.y) < 0.0001
+    }
+
     private static func normalizeAlpha(_ rawValue: Double?) -> Double? {
         guard let rawValue else { return nil }
         if rawValue > 1 {
@@ -878,19 +1069,27 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         imageCache.totalCostLimit = 128 * 1024 * 1024
     }
 
-    func metrics(for text: String, fontSize: CGFloat) -> DanmakuTextMetrics {
-        let key = NSString(string: "m|\(cacheValue(fontSize))|\(text)")
+    func metrics(
+        for text: String,
+        fontSize: CGFloat,
+        fontFamily: String?,
+        usesStroke: Bool
+    ) -> DanmakuTextMetrics {
+        let key = NSString(
+            string: "m|\(cacheValue(fontSize))|\(fontFamily ?? "<system>")|\(usesStroke ? 1 : 0)|\(text)"
+        )
         if let cached = metricsCache.object(forKey: key) {
             return cached.value
         }
 
-        let font = makeFont(size: fontSize)
-        let line = makeLine(text: text, font: font, color: NSColor.white.cgColor, strokeWidth: strokeWidth(for: fontSize))
+        let font = makeFont(size: fontSize, family: fontFamily)
+        let strokeWidth = usesStroke ? strokeWidth(for: fontSize) : 0
+        let line = makeLine(text: text, font: font, color: NSColor.white.cgColor, strokeWidth: strokeWidth)
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
         var leading: CGFloat = 0
         let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-        let padding = ceil(max(strokeWidth(for: fontSize) + 2, fontSize * 0.12))
+        let padding = ceil(max(strokeWidth + 2, fontSize * 0.12))
         let metrics = DanmakuTextMetrics(
             size: CGSize(
                 width: ceil(width) + padding * 2,
@@ -905,12 +1104,19 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
     }
 
     func image(for comment: DanmakuPreparedComment, scale: CGFloat) -> CGImage? {
-        let key = NSString(string: "i|\(cacheValue(comment.fontSize))|\(cacheValue(scale))|\(comment.colorRGB)|\(comment.text)")
+        let key = NSString(
+            string: "i|\(cacheValue(comment.fontSize))|\(cacheValue(scale))|\(comment.fontFamily ?? "<system>")|\(comment.usesStroke ? 1 : 0)|\(comment.colorRGB)|\(comment.text)"
+        )
         if let cached = imageCache.object(forKey: key) {
             return cached.value
         }
 
-        let metrics = metrics(for: comment.text, fontSize: comment.fontSize)
+        let metrics = metrics(
+            for: comment.text,
+            fontSize: comment.fontSize,
+            fontFamily: comment.fontFamily,
+            usesStroke: comment.usesStroke
+        )
         let pixelWidth = max(Int(ceil(metrics.size.width * scale)), 1)
         let pixelHeight = max(Int(ceil(metrics.size.height * scale)), 1)
 
@@ -933,12 +1139,12 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         context.setShouldAntialias(true)
         context.interpolationQuality = .high
 
-        let font = makeFont(size: comment.fontSize)
+        let font = makeFont(size: comment.fontSize, family: comment.fontFamily)
         let line = makeLine(
             text: comment.text,
             font: font,
             color: color(for: comment.colorRGB),
-            strokeWidth: strokeWidth(for: comment.fontSize)
+            strokeWidth: comment.usesStroke ? strokeWidth(for: comment.fontSize) : 0
         )
         context.textPosition = CGPoint(x: metrics.padding, y: metrics.padding + metrics.descent)
         CTLineDraw(line, context)
@@ -952,18 +1158,28 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         return image
     }
 
-    private func makeFont(size: CGFloat) -> CTFont {
-        CTFontCreateUIFontForLanguage(.system, size, nil)
+    private func makeFont(size: CGFloat, family: String?) -> CTFont {
+        if let family, family.isEmpty == false {
+            let custom = CTFontCreateWithName(family as CFString, size, nil)
+            let postScriptName = CTFontCopyPostScriptName(custom) as String
+            if postScriptName.caseInsensitiveCompare(family) == .orderedSame
+                || postScriptName.localizedCaseInsensitiveContains(family) {
+                return custom
+            }
+        }
+        return CTFontCreateUIFontForLanguage(.system, size, nil)
             ?? CTFontCreateWithName("HelveticaNeue-Medium" as CFString, size, nil)
     }
 
     private func makeLine(text: String, font: CTFont, color: CGColor, strokeWidth: CGFloat) -> CTLine {
-        let attributes: [NSAttributedString.Key: Any] = [
+        var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
-            NSAttributedString.Key(kCTStrokeColorAttributeName as String): NSColor.black.withAlphaComponent(0.92).cgColor,
-            NSAttributedString.Key(kCTStrokeWidthAttributeName as String): -strokeWidth,
         ]
+        if strokeWidth > 0 {
+            attributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = NSColor.black.withAlphaComponent(0.92).cgColor
+            attributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = -strokeWidth
+        }
         let attributed = NSAttributedString(string: text, attributes: attributes)
         return CTLineCreateWithAttributedString(attributed)
     }
@@ -1013,3 +1229,9 @@ public struct DanmakuRendererOverlay: View {
     }
 }
 #endif
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
