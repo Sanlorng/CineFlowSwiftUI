@@ -143,6 +143,7 @@ struct BangumiDetailPresenter {
                 baseURL: baseURL,
                 token: token,
                 configuration: configuration,
+                coverURL: state.summary.coverURL,
                 selectedEpisode: selectedEpisode,
                 selectedFile: selectedFile
             )
@@ -167,6 +168,7 @@ struct BangumiDetailPresenter {
         baseURL: URL,
         token: String?,
         configuration: LibraryPresenter.State.Configuration,
+        coverURL: URL?,
         selectedEpisode: Components.Schemas.LibraryBangumiEpisode,
         selectedFile: Components.Schemas.LibraryBangumiMatchedFile
     ) throws -> PlayerPresenter.State {
@@ -225,6 +227,7 @@ struct BangumiDetailPresenter {
 
         return PlayerPresenter.State(
             configuration: configuration,
+            coverURL: coverURL,
             playlist: playlistItems,
             currentIndex: currentIndex,
             allEpisodeFiles: episodeFiles

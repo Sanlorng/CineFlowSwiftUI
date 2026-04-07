@@ -117,6 +117,10 @@ private struct PlayerContentMainView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(isFullscreen ? 0 : 16)
+            .background {
+                playerBackgroundLayer(for: viewStore.coverURL)
+                    .ignoresSafeArea()
+            }
             .sheet(
                 item: viewStore.binding(
                     get: \.fileSelection,
@@ -2097,6 +2101,41 @@ private func debugLogSubtitleRenderer(_ message: @autoclosure () -> String) {
 #if DEBUG
     print("[PlayerContentView][SubtitleRenderer] \(message())")
 #endif
+}
+
+@ViewBuilder
+private func playerBackgroundLayer(for url: URL?) -> some View {
+    if let url {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .blur(radius: 120, opaque: true)
+                    .overlay(
+                        ZStack {
+                            Color.platformBackground.opacity(0.52)
+                            LinearGradient(
+                                colors: [
+                                    Color.platformBackground.opacity(0.18),
+                                    Color.platformBackground.opacity(0.72)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        }
+                    )
+                    .ignoresSafeArea()
+            case .failure, .empty:
+                Color.clear
+            @unknown default:
+                Color.clear
+            }
+        }
+    } else {
+        Color.clear
+    }
 }
 
 private extension String {
