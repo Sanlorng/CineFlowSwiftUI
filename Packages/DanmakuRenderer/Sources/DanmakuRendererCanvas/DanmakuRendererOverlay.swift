@@ -409,6 +409,7 @@ private final class DanmakuMetalView: NSView {
             return
         }
 
+        let prewarmAssets = renderer.prewarmImageAssets()
         let sprites = renderer.makeSprites(
             in: CGRect(origin: .zero, size: currentViewport.size)
         )
@@ -425,6 +426,7 @@ private final class DanmakuMetalView: NSView {
 
         compositor.draw(
             sprites: sprites,
+            prewarmAssets: prewarmAssets,
             drawable: drawable,
             renderPassDescriptor: descriptor,
             viewportSize: currentViewport.size
@@ -532,6 +534,100 @@ private struct DanmakuDrawSegment {
     let textures: [MTLTexture]
 }
 
+private final class DanmakuInstanceBufferAllocator {
+    private let alignment = 256
+    private let device: MTLDevice
+    private(set) var buffer: MTLBuffer
+    private var cursor = 0
+
+    init?(device: MTLDevice, initialLength: Int) {
+        self.device = device
+        guard let buffer = device.makeBuffer(
+            length: max(initialLength, alignment),
+            options: .storageModeShared
+        ) else {
+            return nil
+        }
+        self.buffer = buffer
+    }
+
+    func reset() {
+        cursor = 0
+    }
+
+    func allocate<T>(from values: [T]) -> (buffer: MTLBuffer, offset: Int)? {
+        let byteCount = values.count * MemoryLayout<T>.stride
+        guard byteCount > 0 else { return nil }
+
+        let alignedOffset = aligned(cursor)
+        let requiredLength = alignedOffset + byteCount
+        guard ensureCapacity(requiredLength) else { return nil }
+
+        values.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            memcpy(buffer.contents().advanced(by: alignedOffset), baseAddress, rawBuffer.count)
+        }
+        cursor = requiredLength
+        return (buffer, alignedOffset)
+    }
+
+    private func ensureCapacity(_ requiredLength: Int) -> Bool {
+        guard requiredLength > buffer.length else { return true }
+
+        var newLength = max(buffer.length, alignment)
+        while newLength < requiredLength {
+            newLength *= 2
+        }
+
+        guard let newBuffer = device.makeBuffer(length: newLength, options: .storageModeShared) else {
+            return false
+        }
+        buffer = newBuffer
+        return true
+    }
+
+    private func aligned(_ value: Int) -> Int {
+        ((value + alignment - 1) / alignment) * alignment
+    }
+}
+
+private final class DanmakuInstanceBufferPool {
+    private let availabilitySemaphore: DispatchSemaphore
+    private let lock = NSLock()
+    private var availableAllocators: [DanmakuInstanceBufferAllocator]
+
+    init?(device: MTLDevice, allocatorCount: Int = 3, initialLength: Int = 256 * 1024) {
+        var allocators: [DanmakuInstanceBufferAllocator] = []
+        allocators.reserveCapacity(max(allocatorCount, 1))
+        for _ in 0..<max(allocatorCount, 1) {
+            guard let allocator = DanmakuInstanceBufferAllocator(
+                device: device,
+                initialLength: initialLength
+            ) else {
+                return nil
+            }
+            allocators.append(allocator)
+        }
+        self.availableAllocators = allocators
+        self.availabilitySemaphore = DispatchSemaphore(value: allocators.count)
+    }
+
+    func checkout() -> DanmakuInstanceBufferAllocator? {
+        availabilitySemaphore.wait()
+        lock.lock()
+        defer { lock.unlock() }
+        return availableAllocators.popLast()
+    }
+
+    func `return`(_ allocator: DanmakuInstanceBufferAllocator) {
+        allocator.reset()
+        lock.lock()
+        availableAllocators.append(allocator)
+        lock.unlock()
+        availabilitySemaphore.signal()
+    }
+}
+
 private final class DanmakuAtlasPage {
     let index: Int
     let texture: MTLTexture
@@ -581,6 +677,7 @@ private final class DanmakuMetalCompositor {
     private let pipelineState: MTLRenderPipelineState
     private let samplerState: MTLSamplerState
     private let textureLoader: MTKTextureLoader
+    private let instanceBufferPool: DanmakuInstanceBufferPool
     private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
     private var atlasPages: [DanmakuAtlasPage] = []
 
@@ -589,6 +686,10 @@ private final class DanmakuMetalCompositor {
         guard let commandQueue = device.makeCommandQueue() else { return nil }
         self.commandQueue = commandQueue
         self.textureLoader = MTKTextureLoader(device: device)
+        guard let instanceBufferPool = DanmakuInstanceBufferPool(device: device) else {
+            return nil
+        }
+        self.instanceBufferPool = instanceBufferPool
         self.atlasCache.countLimit = 4096
         self.atlasCache.totalCostLimit = 192 * 1024 * 1024
 
@@ -699,6 +800,7 @@ private final class DanmakuMetalCompositor {
 
     func draw(
         sprites: [DanmakuSprite],
+        prewarmAssets: [DanmakuRasterImage],
         drawable: CAMetalDrawable,
         renderPassDescriptor descriptor: MTLRenderPassDescriptor,
         viewportSize: CGSize
@@ -706,11 +808,20 @@ private final class DanmakuMetalCompositor {
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             return
         }
+        guard let instanceAllocator = instanceBufferPool.checkout() else {
+            return
+        }
+        instanceAllocator.reset()
 
-        let resolvedSprites = resolveSprites(sprites, commandBuffer: commandBuffer)
+        let resolvedSprites = resolveSprites(
+            sprites,
+            prewarmAssets: prewarmAssets,
+            commandBuffer: commandBuffer
+        )
         let drawSegments = makeDrawSegments(from: resolvedSprites)
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+            instanceBufferPool.return(instanceAllocator)
             return
         }
 
@@ -728,8 +839,8 @@ private final class DanmakuMetalCompositor {
         )
 
         for segment in drawSegments where segment.instances.isEmpty == false {
-            guard let instanceBuffer = makeInstanceBuffer(instances: segment.instances) else { continue }
-            encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
+            guard let instanceAllocation = instanceAllocator.allocate(from: segment.instances) else { continue }
+            encoder.setVertexBuffer(instanceAllocation.buffer, offset: instanceAllocation.offset, index: 0)
             encoder.setFragmentTextures(segment.textures, range: 0..<segment.textures.count)
             encoder.drawPrimitives(
                 type: .triangle,
@@ -741,20 +852,33 @@ private final class DanmakuMetalCompositor {
 
         encoder.endEncoding()
         commandBuffer.present(drawable)
+        commandBuffer.addCompletedHandler { [weak self] _ in
+            self?.instanceBufferPool.return(instanceAllocator)
+        }
         commandBuffer.commit()
     }
 
     private func resolveSprites(
         _ sprites: [DanmakuSprite],
+        prewarmAssets: [DanmakuRasterImage],
         commandBuffer: MTLCommandBuffer
     ) -> [DanmakuResolvedSprite] {
         var resolved: [DanmakuResolvedSprite] = []
         resolved.reserveCapacity(sprites.count)
 
         var blitEncoder: MTLBlitCommandEncoder?
+        for asset in prewarmAssets {
+            _ = atlasEntry(
+                textureKey: asset.key,
+                image: asset.image,
+                commandBuffer: commandBuffer,
+                blitEncoder: &blitEncoder
+            )
+        }
         for sprite in sprites {
             guard let atlasEntry = atlasEntry(
-                for: sprite,
+                textureKey: sprite.textureKey,
+                image: sprite.image,
                 commandBuffer: commandBuffer,
                 blitEncoder: &blitEncoder
             ) else {
@@ -821,15 +945,16 @@ private final class DanmakuMetalCompositor {
     }
 
     private func atlasEntry(
-        for sprite: DanmakuSprite,
+        textureKey: NSString,
+        image: CGImage,
         commandBuffer: MTLCommandBuffer,
         blitEncoder: inout MTLBlitCommandEncoder?
     ) -> DanmakuAtlasEntry? {
-        if let cached = atlasCache.object(forKey: sprite.textureKey) {
+        if let cached = atlasCache.object(forKey: textureKey) {
             return cached.value
         }
 
-        guard let sourceTexture = makeSourceTexture(for: sprite),
+        guard let sourceTexture = makeSourceTexture(image: image),
               let placement = allocateAtlasPlacement(
                 contentWidth: sourceTexture.width,
                 contentHeight: sourceTexture.height
@@ -871,20 +996,20 @@ private final class DanmakuMetalCompositor {
         )
         atlasCache.setObject(
             DanmakuAtlasEntryBox(entry),
-            forKey: sprite.textureKey,
+            forKey: textureKey,
             cost: sourceTexture.width * sourceTexture.height * 4
         )
         return entry
     }
 
-    private func makeSourceTexture(for sprite: DanmakuSprite) -> MTLTexture? {
+    private func makeSourceTexture(image: CGImage) -> MTLTexture? {
         let options: [MTKTextureLoader.Option: Any] = [
             .SRGB: false,
             .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
             .textureStorageMode: NSNumber(value: MTLStorageMode.private.rawValue),
             .origin: MTKTextureLoader.Origin.bottomLeft
         ]
-        return try? textureLoader.newTexture(cgImage: sprite.image, options: options)
+        return try? textureLoader.newTexture(cgImage: image, options: options)
     }
 
     private func allocateAtlasPlacement(
@@ -950,18 +1075,6 @@ private final class DanmakuMetalCompositor {
         )
     }
 
-    private func makeInstanceBuffer(
-        instances: [DanmakuMetalInstance]
-    ) -> MTLBuffer? {
-        instances.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return nil }
-            return device.makeBuffer(
-                bytes: baseAddress,
-                length: rawBuffer.count,
-                options: .storageModeShared
-            )
-        }
-    }
 }
 
 private struct DanmakuCanvasViewport: Equatable, Sendable {
@@ -1002,6 +1115,36 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 
     var presentationTime: TimeInterval {
         clock.currentTime
+    }
+
+    func prewarmImageAssets(
+        lookahead: TimeInterval = 2,
+        maximumCount: Int = 24
+    ) -> [DanmakuRasterImage] {
+        guard currentSettings.isVisible,
+              let preparedScene,
+              maximumCount > 0 else {
+            return []
+        }
+
+        let currentTime = clock.currentTime
+        let lowerBound = preparedScene.lowerBound(for: currentTime)
+        let upperBound = preparedScene.upperBound(for: currentTime + max(lookahead, 0))
+        guard lowerBound < upperBound else { return [] }
+
+        let scale = boundsScale(preparedScene: preparedScene)
+        var assets: [DanmakuRasterImage] = []
+        assets.reserveCapacity(min(maximumCount, upperBound - lowerBound))
+
+        for entry in preparedScene.entries[lowerBound..<upperBound] {
+            guard let asset = textCache.imageAsset(for: entry, scale: scale) else { continue }
+            assets.append(asset)
+            if assets.count >= maximumCount {
+                break
+            }
+        }
+
+        return assets
     }
 
     func update(
