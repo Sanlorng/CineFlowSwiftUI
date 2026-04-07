@@ -30,7 +30,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
     public init(
         viewport: SubtitleViewport,
         defaultFontFamily: String? = nil,
-        fontSize: Double = Self.baseFontSize,
+        fontSize: Double = 54,
         fontsDirectory: URL? = nil
     ) throws {
         do {
