@@ -810,14 +810,20 @@ private struct PlayerContentMainView: View {
     @ViewBuilder
     private func episodeSidebar(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(viewStore.seriesTitle ?? "未命名番剧")
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(2...2)
-                Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.primary.opacity(0.92))
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("剧集")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.8)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(viewStore.seriesTitle ?? "未命名番剧")
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2...2)
+                    Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary.opacity(0.92))
+                        .lineLimit(2)
+                }
                 Text("\(viewStore.playlist.count) 集内容")
                     .font(.caption2)
                     .foregroundStyle(.secondary.opacity(0.85))
