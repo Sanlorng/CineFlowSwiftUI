@@ -174,7 +174,12 @@ private struct PlayerContentMainView: View {
                         switch state {
                         case .error(let message):
                             viewStore.send(.setPlaybackError(message ?? "播放失败。"))
-                        case .playing, .completed:
+                        case .playing:
+                            if let fileID = viewStore.currentFileID {
+                                viewStore.send(.playbackStarted(fileID))
+                            }
+                            viewStore.send(.setPlaybackError(nil))
+                        case .completed:
                             viewStore.send(.setPlaybackError(nil))
                         case .buffering, .preparing, .paused, .stopped, .idle:
                             break

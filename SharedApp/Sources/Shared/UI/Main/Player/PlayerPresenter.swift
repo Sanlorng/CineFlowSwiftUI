@@ -80,6 +80,7 @@ struct PlayerPresenter {
         var isLoadingDanmaku = false
         var danmakuError: String?
         var activeDanmaku: LoadedDanmaku?
+        var hasTriggeredPlaybackStartSync = false
         
         init(
             configuration: LibraryPresenter.State.Configuration,
@@ -114,6 +115,7 @@ struct PlayerPresenter {
         case playNext
         case playPrevious
         case updateCurrentIndex(Int)
+        case playbackStarted(String)
         case playerTracksChanged(String, [PlayerTrack])
         case audioTrackSelected(PlayerTrack.ID?)
         case subtitleListResponse(String, TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
@@ -131,8 +133,6 @@ struct PlayerPresenter {
         case fileSelectionDismissed
         case fileSelected(Components.Schemas.LibraryBangumiMatchedFile)
         case streamContextResolved(Components.Schemas.LibraryBangumiMatchedFile, RemoteMediaLibraryClient.StreamContext)
-        case streamContextFailed(String)
-        case preferredStreamResolved(PlayerPresenter.State.PlaylistItem.ID, RemoteMediaLibraryClient.StreamContext)
         case setPlaybackError(String?)
         case delegate(DelegateAction)
     }
@@ -173,6 +173,24 @@ struct PlayerPresenter {
                 state.currentIndex = index
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
+
+            case let .playbackStarted(fileID):
+                guard state.currentFileID == fileID,
+                      !state.hasTriggeredPlaybackStartSync,
+                      let baseURL = state.configuration.baseURL else {
+                    return .none
+                }
+                state.hasTriggeredPlaybackStartSync = true
+                let token = state.configuration.apiToken
+                return .run { [remoteClient] _ in
+                    do {
+                        _ = try await remoteClient.makeStreamContext(baseURL, token, fileID)
+                    } catch {
+#if DEBUG
+                        print("[PlayerPresenter] Playback start sync failed for \(fileID): \(error)")
+#endif
+                    }
+                }
 
             case let .playerTracksChanged(fileID, tracks):
                 guard state.currentFileID == fileID else { return .none }
@@ -418,16 +436,9 @@ struct PlayerPresenter {
                     state.subtitleError = "选定的文件缺少标识符。"
                     return .none
                 }
-
                 let token = state.configuration.apiToken
-                return .run { [remoteClient] send in
-                    do {
-                        let stream = try await remoteClient.makeStreamContext(baseURL, token, fileID)
-                        await send(.streamContextResolved(file, stream))
-                    } catch {
-                        await send(.streamContextFailed(error.localizedDescription))
-                    }
-                }
+                let stream = remoteClient.makeDirectStreamContext(baseURL, token, fileID)
+                return .send(.streamContextResolved(file, stream))
 
             case let .streamContextResolved(file, stream):
                 guard state.playlist.indices.contains(state.currentIndex) else {
@@ -443,17 +454,6 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = false
                 return loadSubtitles(for: &state)
 
-            case let .preferredStreamResolved(itemID, stream):
-                guard let index = state.playlist.firstIndex(where: { $0.id == itemID }) else {
-                    return .none
-                }
-                state.playlist[index].stream = stream
-                return .none
-
-            case let .streamContextFailed(message):
-                state.subtitleError = message
-                return .none
-                
             case let .setPlaybackError(message):
                 state.playbackError = message
                 return .none
@@ -482,6 +482,7 @@ struct PlayerPresenter {
             state.isLoadingDanmaku = false
             state.danmakuError = nil
             state.activeDanmaku = nil
+            state.hasTriggeredPlaybackStartSync = false
             return .none
         }
         let stream = currentItem.stream
@@ -501,6 +502,7 @@ struct PlayerPresenter {
         state.isLoadingDanmaku = state.configuration.baseURL != nil
         state.danmakuError = nil
         state.activeDanmaku = nil
+        state.hasTriggeredPlaybackStartSync = false
 
         let subtitleListEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
@@ -555,28 +557,7 @@ struct PlayerPresenter {
             }
         }
 
-        let preferredStreamEffect: Effect<Action>
-        if let baseURL = state.configuration.baseURL,
-           let currentItem = state.currentItem,
-           let fileID = currentItem.file.id,
-           !fileID.isEmpty {
-            let token = state.configuration.apiToken
-            let itemID = currentItem.id
-            preferredStreamEffect = .run { [remoteClient] send in
-                do {
-                    let stream = try await remoteClient.makeStreamContext(baseURL, token, fileID)
-                    await send(.preferredStreamResolved(itemID, stream))
-                } catch {
-#if DEBUG
-                    print("[PlayerPresenter] Preferred stream resolution failed for \(fileID): \(error)")
-#endif
-                }
-            }
-        } else {
-            preferredStreamEffect = .none
-        }
-
-        return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect, preferredStreamEffect)
+        return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect)
     }
 
     private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {

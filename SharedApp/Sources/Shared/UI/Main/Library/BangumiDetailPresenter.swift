@@ -136,28 +136,28 @@ struct BangumiDetailPresenter {
         state.errorMessage = nil
         let token = state.configuration.apiToken
         let configuration = state.configuration
-        return .run { [remoteClient] send in
-            do {
-                let prepared = try await preparePlaylist(
-                    remoteClient: remoteClient,
-                    detail: detail,
-                    baseURL: baseURL,
-                    token: token,
-                    configuration: configuration,
-                    selectedEpisode: selectedEpisode,
-                    selectedFile: selectedFile
-                )
-                await send(.delegate(.startPlayback(prepared)))
-            } catch let error as PlaybackPreparationError {
-                switch error {
-                case .missingEpisodes:
-                    await send(.detailFailed("无法构建播放列表。"))
-                case .missingStream(let reason):
-                    await send(.detailFailed(reason))
-                }
-            } catch {
-                await send(.detailFailed(error.localizedDescription))
+        do {
+            let prepared = try preparePlaylist(
+                remoteClient: remoteClient,
+                detail: detail,
+                baseURL: baseURL,
+                token: token,
+                configuration: configuration,
+                selectedEpisode: selectedEpisode,
+                selectedFile: selectedFile
+            )
+            return .send(.delegate(.startPlayback(prepared)))
+        } catch let error as PlaybackPreparationError {
+            switch error {
+            case .missingEpisodes:
+                state.errorMessage = "无法构建播放列表。"
+            case .missingStream(let reason):
+                state.errorMessage = reason
             }
+            return .none
+        } catch {
+            state.errorMessage = error.localizedDescription
+            return .none
         }
     }
 
@@ -169,7 +169,7 @@ struct BangumiDetailPresenter {
         configuration: LibraryPresenter.State.Configuration,
         selectedEpisode: Components.Schemas.LibraryBangumiEpisode,
         selectedFile: Components.Schemas.LibraryBangumiMatchedFile
-    ) async throws -> PlayerPresenter.State {
+    ) throws -> PlayerPresenter.State {
         guard let episodes = detail.episodes, !episodes.isEmpty else {
             throw PlaybackPreparationError.missingEpisodes
         }
@@ -223,17 +223,12 @@ struct BangumiDetailPresenter {
             throw PlaybackPreparationError.missingEpisodes
         }
 
-        var prepared = PlayerPresenter.State(
+        return PlayerPresenter.State(
             configuration: configuration,
             playlist: playlistItems,
             currentIndex: currentIndex,
             allEpisodeFiles: episodeFiles
         )
-        if let currentFileID = prepared.currentItem?.file.id, !currentFileID.isEmpty {
-            let preferredStream = try await remoteClient.makeStreamContext(baseURL, token, currentFileID)
-            prepared.playlist[prepared.currentIndex].stream = preferredStream
-        }
-        return prepared
     }
 
     private func bestMatchingFile(
