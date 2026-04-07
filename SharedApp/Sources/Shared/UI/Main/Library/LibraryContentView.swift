@@ -177,46 +177,46 @@ private struct LibraryGrid: View {
     var body: some View {
         ScrollViewReader { proxy in
             let hasSidebar = viewStore.groupedBangumiItems.count > 1
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
-                    ForEach(viewStore.groupedBangumiItems, id: \.group) { group in
-                        Section {
-                            LazyVGrid(columns: columns, spacing: 16) {
-                                ForEach(group.items) { item in
-                                    LibraryCard(item: item) {
-                                        viewStore.send(.bangumiTapped(item))
+            HStack(alignment: .top, spacing: 12) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 24) {
+                        ForEach(viewStore.groupedBangumiItems, id: \.group) { group in
+                            Section {
+                                LazyVGrid(columns: columns, spacing: 16) {
+                                    ForEach(group.items) { item in
+                                        LibraryCard(item: item) {
+                                            viewStore.send(.bangumiTapped(item))
+                                        }
                                     }
                                 }
-                            }
-                            .padding(.horizontal, 16)
-                        } header: {
-                            HStack {
-                                Text(group.group)
-                                    .font(.title2)
-                                    .bold()
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .id(group.group)
-                            .background(
-                                GeometryReader { geo in
-                                    Color.clear
-                                        .preference(
-                                            key: GroupPositionPreferenceKey.self,
-                                            value: [group.group: geo.frame(in: .named("LibraryGridScroll")).minY]
-                                        )
+                                .padding(.horizontal, 16)
+                            } header: {
+                                HStack {
+                                    Text(group.group)
+                                        .font(.title2)
+                                        .bold()
+                                    Spacer()
                                 }
-                            )
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .id(group.group)
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear
+                                            .preference(
+                                                key: GroupPositionPreferenceKey.self,
+                                                value: [group.group: geo.frame(in: .named("LibraryGridScroll")).minY]
+                                            )
+                                    }
+                                )
+                            }
                         }
                     }
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
-            }
-            .coordinateSpace(name: "LibraryGridScroll")
-            .padding(.leading, 0)
-            .padding(.trailing, hasSidebar ? 96 : 0)
-            .overlay(alignment: .topTrailing) {
+                .coordinateSpace(name: "LibraryGridScroll")
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 if hasSidebar {
                     GroupSidebar(
                         groups: viewStore.groupTitles,
@@ -232,8 +232,7 @@ private struct LibraryGrid: View {
                             }
                         }
                     )
-                    .padding(.trailing, 12)
-                    .padding(.top, 32)
+                    .padding(.top, 24)
                 }
             }
             .onAppear {
@@ -271,10 +270,15 @@ private struct LibraryCard: View {
     
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            coverView
-                .frame(maxWidth: .infinity)
-                .frame(height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+            ZStack {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.secondary.opacity(0.08))
+                coverView
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(0.72, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .clipped()
             
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.title)
@@ -318,6 +322,7 @@ private struct LibraryCard: View {
                     image
                         .resizable()
                         .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .failure:
                     placeholder
                 case .empty:
@@ -396,10 +401,7 @@ private struct GroupSidebar: View {
             }
         }
         .frame(maxHeight: 360)
-        .padding(12)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 8)
+        .padding(.horizontal, 4)
         .fixedSize(horizontal: true, vertical: false)
     }
 }
