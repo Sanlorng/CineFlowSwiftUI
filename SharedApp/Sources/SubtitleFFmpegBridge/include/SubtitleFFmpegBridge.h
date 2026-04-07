@@ -1,6 +1,8 @@
 #ifndef SubtitleFFmpegBridge_h
 #define SubtitleFFmpegBridge_h
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -24,6 +26,16 @@ int subtitle_bridge_copy_ass_document(
     const char *media_url,
     const char *headers,
     int stream_index,
+    char **ass_document,
+    char **error_message
+);
+
+int subtitle_bridge_copy_ass_document_window(
+    const char *media_url,
+    const char *headers,
+    int stream_index,
+    int64_t window_start_ms,
+    int64_t window_end_ms,
     char **ass_document,
     char **error_message
 );

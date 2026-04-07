@@ -57,6 +57,12 @@ struct PlayerPresenter {
                 lhs.id == rhs.id
             }
         }
+
+        struct EmbeddedSubtitleWindowRequest: Equatable {
+            let requestID: UUID
+            let trackID: SubtitleTrack.ID
+            let window: ClosedRange<TimeInterval>
+        }
         
         let configuration: LibraryPresenter.State.Configuration
         var playlist: IdentifiedArrayOf<PlaylistItem>
@@ -81,6 +87,9 @@ struct PlayerPresenter {
         var danmakuError: String?
         var activeDanmaku: LoadedDanmaku?
         var hasTriggeredPlaybackStartSync = false
+        var currentPlaybackTime: TimeInterval = 0
+        var loadedEmbeddedSubtitleWindow: ClosedRange<TimeInterval>?
+        var inFlightEmbeddedSubtitleWindowRequest: EmbeddedSubtitleWindowRequest?
         
         init(
             configuration: LibraryPresenter.State.Configuration,
@@ -116,6 +125,7 @@ struct PlayerPresenter {
         case playPrevious
         case updateCurrentIndex(Int)
         case playbackStarted(String)
+        case playbackTimeUpdated(String, TimeInterval)
         case playerTracksChanged(String, [PlayerTrack])
         case audioTrackSelected(PlayerTrack.ID?)
         case subtitleListResponse(String, TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
@@ -125,7 +135,7 @@ struct PlayerPresenter {
         case localSubtitleLoaded(fileName: String, content: String)
         case localSubtitleLoadFailed(String)
         case embeddedSubtitleSelected(SubtitleTrack.ID)
-        case embeddedSubtitleContentResponse(String, SubtitleTrack.ID, TaskResult<State.LoadedSubtitle>)
+        case embeddedSubtitleContentResponse(String, SubtitleTrack.ID, UUID, ClosedRange<TimeInterval>, TaskResult<State.LoadedSubtitle>)
         case danmakuResponse(String, TaskResult<State.LoadedDanmaku>)
         case subtitleCleared
         case setSubtitlesSuppressed(Bool)
@@ -191,6 +201,11 @@ struct PlayerPresenter {
 #endif
                     }
                 }
+
+            case let .playbackTimeUpdated(fileID, playbackTime):
+                guard state.currentFileID == fileID else { return .none }
+                state.currentPlaybackTime = max(playbackTime, 0)
+                return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, fileID: fileID, force: false)
 
             case let .playerTracksChanged(fileID, tracks):
                 guard state.currentFileID == fileID else { return .none }
@@ -284,6 +299,8 @@ struct PlayerPresenter {
                 state.subtitleError = nil
                 state.activeSubtitle = nil
                 state.isLoadingSelectedSubtitle = true
+                state.loadedEmbeddedSubtitleWindow = nil
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
                 let token = state.configuration.apiToken
                 return .run { [remoteClient] send in
                     await send(
@@ -323,6 +340,8 @@ struct PlayerPresenter {
                 state.selectedEmbeddedSubtitleTrackID = nil
                 state.subtitleError = nil
                 state.isLoadingSelectedSubtitle = false
+                state.loadedEmbeddedSubtitleWindow = nil
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
                 do {
                     state.activeSubtitle = try makeLoadedSubtitle(rawText: content, fileName: fileName)
                 } catch {
@@ -348,6 +367,8 @@ struct PlayerPresenter {
                 state.selectedEmbeddedSubtitleTrackID = trackID
                 state.subtitleError = nil
                 state.activeSubtitle = nil
+                state.loadedEmbeddedSubtitleWindow = nil
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
                 let usesNativeEmbeddedSubtitleSelection =
                     PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks)
                     && selectedTrack?.backendTrackID != nil
@@ -360,62 +381,37 @@ struct PlayerPresenter {
                     return .none
                 }
 
-                let extractor = EmbeddedSubtitleExtractor()
-                let stream = currentItem.stream
                 debugLogEmbeddedSubtitlePlayback(
-                    "embedded subtitle selected fileID=\(fileID) trackID=\(trackID) streamURL=\(stream.url.absoluteString)"
+                    "embedded subtitle selected fileID=\(fileID) trackID=\(trackID) streamURL=\(currentItem.stream.url.absoluteString)"
                 )
-                return .run { send in
-                    await send(
-                        .embeddedSubtitleContentResponse(
-                            fileID,
-                            trackID,
-                            TaskResult {
-                                debugLogEmbeddedSubtitlePlayback(
-                                    "load embedded subtitle document start fileID=\(fileID) trackID=\(trackID)"
-                                )
-                                let document = try await extractor.loadDocument(
-                                    for: trackID,
-                                    from: stream.url,
-                                    headers: stream.headers
-                                )
-                                debugLogEmbeddedSubtitlePlayback(
-                                    "embedded subtitle document ready fileID=\(fileID) trackID=\(trackID) fileName=\(document.fileName ?? "embedded-\(trackID).ass")"
-                                )
-                                let loadedSubtitle = makeLoadedSubtitle(
-                                    document: document,
-                                    fallbackFileName: "embedded-\(trackID).ass"
-                                )
-                                debugLogEmbeddedSubtitlePlayback(
-                                    "embedded subtitle render payload ready fileID=\(fileID) trackID=\(trackID) fileName=\(loadedSubtitle.fileName)"
-                                )
-                                return loadedSubtitle
-                            }
-                        )
-                    )
-                }
+                return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, fileID: fileID, force: true)
 
-            case let .embeddedSubtitleContentResponse(fileID, trackID, .success(loadedSubtitle)):
+            case let .embeddedSubtitleContentResponse(fileID, trackID, requestID, window, .success(loadedSubtitle)):
                 guard state.currentFileID == fileID else { return .none }
-                state.isLoadingSelectedSubtitle = false
-                guard state.selectedEmbeddedSubtitleTrackID == trackID else {
+                guard state.selectedEmbeddedSubtitleTrackID == trackID,
+                      state.inFlightEmbeddedSubtitleWindowRequest?.requestID == requestID else {
                     return .none
                 }
+                state.isLoadingSelectedSubtitle = false
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
+                state.loadedEmbeddedSubtitleWindow = window
                 debugLogEmbeddedSubtitlePlayback(
-                    "embedded subtitle render attached fileID=\(fileID) trackID=\(trackID) fileName=\(loadedSubtitle.fileName)"
+                    "embedded subtitle render attached fileID=\(fileID) trackID=\(trackID) window=\(describeEmbeddedSubtitleWindow(window)) fileName=\(loadedSubtitle.fileName)"
                 )
                 state.subtitleError = nil
                 state.activeSubtitle = loadedSubtitle
                 return .none
 
-            case let .embeddedSubtitleContentResponse(fileID, trackID, .failure(error)):
+            case let .embeddedSubtitleContentResponse(fileID, trackID, requestID, window, .failure(error)):
                 guard state.currentFileID == fileID else { return .none }
-                state.isLoadingSelectedSubtitle = false
-                guard state.selectedEmbeddedSubtitleTrackID == trackID else {
+                guard state.selectedEmbeddedSubtitleTrackID == trackID,
+                      state.inFlightEmbeddedSubtitleWindowRequest?.requestID == requestID else {
                     return .none
                 }
+                state.isLoadingSelectedSubtitle = false
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
                 debugLogEmbeddedSubtitlePlayback(
-                    "embedded subtitle render failed fileID=\(fileID) trackID=\(trackID) error=\(error.localizedDescription)"
+                    "embedded subtitle render failed fileID=\(fileID) trackID=\(trackID) window=\(describeEmbeddedSubtitleWindow(window)) error=\(error.localizedDescription)"
                 )
                 state.subtitleError = error.localizedDescription
                 state.activeSubtitle = nil
@@ -442,6 +438,8 @@ struct PlayerPresenter {
                 state.subtitleError = nil
                 state.areSubtitlesSuppressed = true
                 state.isLoadingSelectedSubtitle = false
+                state.loadedEmbeddedSubtitleWindow = nil
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
                 return .none
 
             case let .setSubtitlesSuppressed(suppressed):
@@ -451,6 +449,8 @@ struct PlayerPresenter {
                     state.selectedEmbeddedSubtitleTrackID = nil
                     state.activeSubtitle = nil
                     state.isLoadingSelectedSubtitle = false
+                    state.loadedEmbeddedSubtitleWindow = nil
+                    state.inFlightEmbeddedSubtitleWindowRequest = nil
                 }
                 state.subtitleError = nil
                 return .none
@@ -496,6 +496,8 @@ struct PlayerPresenter {
                 state.selectedEmbeddedSubtitleTrackID = nil
                 state.activeSubtitle = nil
                 state.isLoadingSelectedSubtitle = false
+                state.loadedEmbeddedSubtitleWindow = nil
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
                 return loadSubtitles(for: &state)
 
             case let .setPlaybackError(message):
@@ -527,6 +529,9 @@ struct PlayerPresenter {
             state.danmakuError = nil
             state.activeDanmaku = nil
             state.hasTriggeredPlaybackStartSync = false
+            state.currentPlaybackTime = 0
+            state.loadedEmbeddedSubtitleWindow = nil
+            state.inFlightEmbeddedSubtitleWindowRequest = nil
             return .none
         }
         let stream = currentItem.stream
@@ -547,6 +552,9 @@ struct PlayerPresenter {
         state.danmakuError = nil
         state.activeDanmaku = nil
         state.hasTriggeredPlaybackStartSync = false
+        state.currentPlaybackTime = 0
+        state.loadedEmbeddedSubtitleWindow = nil
+        state.inFlightEmbeddedSubtitleWindowRequest = nil
 
         let subtitleListEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
@@ -605,6 +613,88 @@ struct PlayerPresenter {
         }
 
         return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect)
+    }
+
+    private func refreshEmbeddedSubtitleWindowIfNeeded(
+        for state: inout State,
+        fileID: String,
+        force: Bool
+    ) -> Effect<Action> {
+        guard let currentItem = state.currentItem,
+              currentItem.file.id == fileID,
+              let selectedTrackID = state.selectedEmbeddedSubtitleTrackID,
+              let selectedTrack = state.availableEmbeddedSubtitles.first(where: { $0.id == selectedTrackID }),
+              !state.areSubtitlesSuppressed,
+              state.selectedSubtitle == nil else {
+            return .none
+        }
+
+        let usesNativeEmbeddedSubtitleSelection =
+            PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks)
+            && selectedTrack.backendTrackID != nil
+        guard !usesNativeEmbeddedSubtitleSelection else {
+            return .none
+        }
+
+        let targetWindow = embeddedSubtitleWindow(around: state.currentPlaybackTime)
+
+        if !force {
+            if let inFlightRequest = state.inFlightEmbeddedSubtitleWindowRequest,
+               inFlightRequest.trackID == selectedTrackID,
+               inFlightRequest.window.contains(state.currentPlaybackTime) {
+                return .none
+            }
+
+            if let loadedWindow = state.loadedEmbeddedSubtitleWindow,
+               state.activeSubtitle != nil,
+               embeddedSubtitleWindowStillValid(loadedWindow, for: state.currentPlaybackTime) {
+                return .none
+            }
+        }
+
+        let requestID = UUID()
+        state.isLoadingSelectedSubtitle = true
+        state.subtitleError = nil
+        state.inFlightEmbeddedSubtitleWindowRequest = .init(
+            requestID: requestID,
+            trackID: selectedTrackID,
+            window: targetWindow
+        )
+
+        let extractor = EmbeddedSubtitleExtractor()
+        let stream = currentItem.stream
+        debugLogEmbeddedSubtitlePlayback(
+            "load embedded subtitle window start fileID=\(fileID) trackID=\(selectedTrackID) window=\(describeEmbeddedSubtitleWindow(targetWindow)) streamURL=\(stream.url.absoluteString)"
+        )
+        return .run { send in
+            await send(
+                .embeddedSubtitleContentResponse(
+                    fileID,
+                    selectedTrackID,
+                    requestID,
+                    targetWindow,
+                    TaskResult {
+                        let document = try await extractor.loadDocument(
+                            for: selectedTrackID,
+                            from: stream.url,
+                            headers: stream.headers,
+                            window: targetWindow
+                        )
+                        debugLogEmbeddedSubtitlePlayback(
+                            "embedded subtitle window document ready fileID=\(fileID) trackID=\(selectedTrackID) window=\(describeEmbeddedSubtitleWindow(targetWindow)) fileName=\(document.fileName ?? "embedded-\(selectedTrackID).ass")"
+                        )
+                        let loadedSubtitle = makeLoadedSubtitle(
+                            document: document,
+                            fallbackFileName: "embedded-\(selectedTrackID).ass"
+                        )
+                        debugLogEmbeddedSubtitlePlayback(
+                            "embedded subtitle render payload ready fileID=\(fileID) trackID=\(selectedTrackID) window=\(describeEmbeddedSubtitleWindow(targetWindow)) fileName=\(loadedSubtitle.fileName)"
+                        )
+                        return loadedSubtitle
+                    }
+                )
+            )
+        }
     }
 
     private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {
@@ -725,4 +815,26 @@ private func debugLogEmbeddedSubtitlePlayback(_ message: @autoclosure () -> Stri
 private func describeEmbeddedSubtitleTracks(_ tracks: [SubtitleTrack]) -> String {
     guard !tracks.isEmpty else { return "<empty>" }
     return tracks.map { "\($0.id):\($0.displayName)" }.joined(separator: ", ")
+}
+
+private func embeddedSubtitleWindow(around playbackTime: TimeInterval) -> ClosedRange<TimeInterval> {
+    let lookBehind: TimeInterval = 20
+    let lookAhead: TimeInterval = 180
+    let lowerBound = max(playbackTime - lookBehind, 0)
+    let upperBound = max(playbackTime + lookAhead, lowerBound + 30)
+    return lowerBound...upperBound
+}
+
+private func embeddedSubtitleWindowStillValid(
+    _ window: ClosedRange<TimeInterval>,
+    for playbackTime: TimeInterval
+) -> Bool {
+    let safeLeadingPadding: TimeInterval = 10
+    let safeTrailingPadding: TimeInterval = 45
+    return playbackTime >= window.lowerBound + safeLeadingPadding
+        && playbackTime <= window.upperBound - safeTrailingPadding
+}
+
+private func describeEmbeddedSubtitleWindow(_ window: ClosedRange<TimeInterval>) -> String {
+    "\(Int((window.lowerBound * 1000).rounded(.down)))...\(Int((window.upperBound * 1000).rounded(.up)))"
 }

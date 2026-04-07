@@ -34,4 +34,10 @@ struct SubtitleTrack: Equatable, Identifiable, Sendable {
 protocol SubtitleTrackExtracting {
     func availableTracks(for mediaURL: URL, headers: [String: String]) async throws -> [SubtitleTrack]
     func loadDocument(for trackID: SubtitleTrack.ID, from mediaURL: URL, headers: [String: String]) async throws -> SubtitleDocument
+    func loadDocument(
+        for trackID: SubtitleTrack.ID,
+        from mediaURL: URL,
+        headers: [String: String],
+        window: ClosedRange<TimeInterval>
+    ) async throws -> SubtitleDocument
 }

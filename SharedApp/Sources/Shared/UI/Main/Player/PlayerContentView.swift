@@ -49,6 +49,7 @@ private struct PlayerContentMainView: View {
     @State private var lastPointerLocation: CGPoint?
     @State private var lastPointerMovementAt: ContinuousClock.Instant?
     @State private var isSubtitleRendererReady = false
+    @State private var lastReportedSubtitleWindowPlaybackSecond: Int?
     @State private var selectedEpisodePageIndex = 0
     @State private var hideControlsTask: Task<Void, Never>?
     @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
@@ -195,6 +196,13 @@ private struct PlayerContentMainView: View {
                         guard let fileID = viewStore.currentFileID else { return }
                         viewStore.send(.playerTracksChanged(fileID, tracks))
                     }
+                    .onPlaybackTimeChanged { playbackTime in
+                        guard let fileID = viewStore.currentFileID else { return }
+                        let second = max(Int(playbackTime.rounded(.down)), 0)
+                        guard lastReportedSubtitleWindowPlaybackSecond != second else { return }
+                        lastReportedSubtitleWindowPlaybackSecond = second
+                        viewStore.send(.playbackTimeUpdated(fileID, playbackTime))
+                    }
                 SubtitleRendererOverlay(
                     document: customSubtitleDocument,
                     playbackTime: playerController.timeline.currentTime,
@@ -274,6 +282,7 @@ private struct PlayerContentMainView: View {
             scrubPosition = 0
             isScrubbing = false
             isSubtitleRendererReady = false
+            lastReportedSubtitleWindowPlaybackSecond = nil
             isAudioPopoverPresented = false
             isSubtitlePopoverPresented = false
             isSpeedPopoverPresented = false
@@ -299,6 +308,7 @@ private struct PlayerContentMainView: View {
             scrubPosition = 0
             isScrubbing = false
             isSubtitleRendererReady = false
+            lastReportedSubtitleWindowPlaybackSecond = nil
             lastPointerLocation = nil
             cancelFullscreenPointerTasks()
             isFullscreen = false

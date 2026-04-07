@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #define AV_NOPTS_VALUE ((int64_t)UINT64_C(0x8000000000000000))
+#define AVSEEK_FLAG_BACKWARD 1
 
 typedef struct AVClass AVClass;
 typedef struct AVBufferRef AVBufferRef;
@@ -145,6 +146,7 @@ int avformat_open_input(AVFormatContext **ps, const char *url, const AVInputForm
 int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options);
 void avformat_close_input(AVFormatContext **s);
 int av_read_frame(AVFormatContext *s, AVPacket *pkt);
+int av_seek_frame(AVFormatContext *s, int stream_index, int64_t timestamp, int flags);
 
 const AVCodec *avcodec_find_decoder(AVCodecID id);
 const char *avcodec_get_name(AVCodecID id);

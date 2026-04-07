@@ -100,10 +100,11 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
             throw EmbeddedSubtitleExtractorError.invalidTrackIdentifier(trackID)
         }
 
-        let cacheKey = EmbeddedSubtitleDocumentCache.Key(
-            mediaURL: mediaURL.absoluteString,
-            headerValue: headerValue ?? "",
-            trackID: trackID
+        let cacheKey = makeCacheKey(
+            mediaURL: mediaURL,
+            headerValue: headerValue,
+            trackID: trackID,
+            window: nil
         )
         do {
             let document = try await Self.documentCache.document(for: cacheKey) {
@@ -163,11 +164,115 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
         }
     }
 
+    func loadDocument(
+        for trackID: SubtitleTrack.ID,
+        from mediaURL: URL,
+        headers: [String: String],
+        window: ClosedRange<TimeInterval>
+    ) async throws -> SubtitleDocument {
+        let startedAt = Date()
+        let headerValue = makeHeaderValue(headers)
+        let normalizedWindow = normalizeSubtitleWindow(window)
+        debugLogEmbeddedSubtitleExtractor(
+            "loadDocumentWindow start trackID=\(trackID) url=\(mediaURL.absoluteString) window=\(describeWindow(normalizedWindow)) headerBytes=\(headerValue?.utf8.count ?? 0) headerKeys=\(describeHeaderKeys(headers))"
+        )
+        guard let streamIndex = Int(trackID) else {
+            debugLogEmbeddedSubtitleExtractor("loadDocumentWindow invalid track identifier trackID=\(trackID)")
+            throw EmbeddedSubtitleExtractorError.invalidTrackIdentifier(trackID)
+        }
+
+        let cacheKey = makeCacheKey(
+            mediaURL: mediaURL,
+            headerValue: headerValue,
+            trackID: trackID,
+            window: normalizedWindow
+        )
+        do {
+            let document = try await Self.documentCache.document(for: cacheKey) {
+                let bridgeStartedAt = Date()
+                debugLogEmbeddedSubtitleExtractor(
+                    "loadDocumentWindow bridge_copy_ass_document_window start trackID=\(trackID) streamIndex=\(streamIndex) window=\(describeWindow(normalizedWindow))"
+                )
+                return try mediaURL.absoluteString.withCString { mediaURLCString in
+                    try withHeaderCString(headerValue) { headerCString in
+                        var documentPointer: UnsafeMutablePointer<CChar>?
+                        var errorPointer: UnsafeMutablePointer<CChar>?
+
+                        defer {
+                            if let documentPointer {
+                                subtitle_bridge_free_string(documentPointer)
+                            }
+                            if let errorPointer {
+                                subtitle_bridge_free_string(errorPointer)
+                            }
+                        }
+
+                        let result = subtitle_bridge_copy_ass_document_window(
+                            mediaURLCString,
+                            headerCString,
+                            Int32(streamIndex),
+                            Int64((normalizedWindow.lowerBound * 1000).rounded(.down)),
+                            Int64((normalizedWindow.upperBound * 1000).rounded(.up)),
+                            &documentPointer,
+                            &errorPointer
+                        )
+
+                        guard result == 0, let documentPointer else {
+                            debugLogEmbeddedSubtitleExtractor(
+                                "loadDocumentWindow bridge_copy_ass_document_window failed trackID=\(trackID) window=\(describeWindow(normalizedWindow)) result=\(result) elapsed=\(debugElapsedMilliseconds(since: bridgeStartedAt)) error=\(string(from: errorPointer) ?? "提取内嵌字幕失败。")"
+                            )
+                            throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕失败。")
+                        }
+
+                        let documentString = String(cString: documentPointer)
+                        debugLogEmbeddedSubtitleExtractor(
+                            "loadDocumentWindow bridge_copy_ass_document_window succeeded trackID=\(trackID) window=\(describeWindow(normalizedWindow)) bytes=\(documentString.utf8.count) elapsed=\(debugElapsedMilliseconds(since: bridgeStartedAt))"
+                        )
+                        return .ass(
+                            documentString,
+                            fileName: "embedded-\(streamIndex).ass"
+                        )
+                    }
+                }
+            }
+            debugLogEmbeddedSubtitleExtractor(
+                "loadDocumentWindow success trackID=\(trackID) window=\(describeWindow(normalizedWindow)) fileName=\(document.fileName ?? "embedded-\(trackID).ass") elapsed=\(debugElapsedMilliseconds(since: startedAt))"
+            )
+            return document
+        } catch {
+            debugLogEmbeddedSubtitleExtractor(
+                "loadDocumentWindow failed trackID=\(trackID) window=\(describeWindow(normalizedWindow)) elapsed=\(debugElapsedMilliseconds(since: startedAt)) error=\(error.localizedDescription)"
+            )
+            throw error
+        }
+    }
+
     private func makeHeaderValue(_ headers: [String: String]) -> String? {
         guard !headers.isEmpty else { return nil }
         return headers
             .map { "\($0): \($1)" }
             .joined(separator: "\r\n") + "\r\n"
+    }
+
+    private func makeCacheKey(
+        mediaURL: URL,
+        headerValue: String?,
+        trackID: SubtitleTrack.ID,
+        window: ClosedRange<TimeInterval>?
+    ) -> EmbeddedSubtitleDocumentCache.Key {
+        EmbeddedSubtitleDocumentCache.Key(
+            mediaURL: mediaURL.absoluteString,
+            headerValue: headerValue ?? "",
+            trackID: trackID,
+            windowStartMilliseconds: window.map { Int(($0.lowerBound * 1000).rounded(.down)) },
+            windowEndMilliseconds: window.map { Int(($0.upperBound * 1000).rounded(.up)) }
+        )
+    }
+
+    private func normalizeSubtitleWindow(_ window: ClosedRange<TimeInterval>) -> ClosedRange<TimeInterval> {
+        let lowerBound = max(window.lowerBound, 0)
+        let upperBound = max(window.upperBound, lowerBound)
+        return lowerBound...upperBound
     }
 
     private func makeDisplayName(
@@ -215,6 +320,8 @@ private actor EmbeddedSubtitleDocumentCache {
         let mediaURL: String
         let headerValue: String
         let trackID: SubtitleTrack.ID
+        let windowStartMilliseconds: Int?
+        let windowEndMilliseconds: Int?
     }
 
     private var cachedDocuments: [Key: SubtitleDocument] = [:]
@@ -226,20 +333,20 @@ private actor EmbeddedSubtitleDocumentCache {
     ) async throws -> SubtitleDocument {
         if let cachedDocument = cachedDocuments[key] {
             debugLogEmbeddedSubtitleExtractor(
-                "documentCache hit trackID=\(key.trackID) url=\(key.mediaURL)"
+                "documentCache hit trackID=\(key.trackID) url=\(key.mediaURL) window=\(describeWindow(key))"
             )
             return cachedDocument
         }
         if let inFlightLoad = inFlightLoads[key] {
             debugLogEmbeddedSubtitleExtractor(
-                "documentCache join in-flight load trackID=\(key.trackID) url=\(key.mediaURL)"
+                "documentCache join in-flight load trackID=\(key.trackID) url=\(key.mediaURL) window=\(describeWindow(key))"
             )
             return try await inFlightLoad.value
         }
 
         let startedAt = Date()
         debugLogEmbeddedSubtitleExtractor(
-            "documentCache miss trackID=\(key.trackID) url=\(key.mediaURL)"
+            "documentCache miss trackID=\(key.trackID) url=\(key.mediaURL) window=\(describeWindow(key))"
         )
         let task = Task {
             try await loader()
@@ -251,13 +358,13 @@ private actor EmbeddedSubtitleDocumentCache {
             cachedDocuments[key] = document
             inFlightLoads[key] = nil
             debugLogEmbeddedSubtitleExtractor(
-                "documentCache stored trackID=\(key.trackID) url=\(key.mediaURL) elapsed=\(debugElapsedMilliseconds(since: startedAt))"
+                "documentCache stored trackID=\(key.trackID) url=\(key.mediaURL) window=\(describeWindow(key)) elapsed=\(debugElapsedMilliseconds(since: startedAt))"
             )
             return document
         } catch {
             inFlightLoads[key] = nil
             debugLogEmbeddedSubtitleExtractor(
-                "documentCache failed trackID=\(key.trackID) url=\(key.mediaURL) elapsed=\(debugElapsedMilliseconds(since: startedAt)) error=\(error.localizedDescription)"
+                "documentCache failed trackID=\(key.trackID) url=\(key.mediaURL) window=\(describeWindow(key)) elapsed=\(debugElapsedMilliseconds(since: startedAt)) error=\(error.localizedDescription)"
             )
             throw error
         }
@@ -283,6 +390,18 @@ private func describeTracks(_ tracks: [SubtitleTrack]) -> String {
     guard !tracks.isEmpty else { return "<empty>" }
     return tracks.map { "\($0.id):\($0.displayName)" }.joined(separator: ", ")
 }
+
+private func describeWindow(_ window: ClosedRange<TimeInterval>) -> String {
+    "\(Int((window.lowerBound * 1000).rounded(.down)))...\(Int((window.upperBound * 1000).rounded(.up)))"
+}
+
+private func describeWindow(_ key: EmbeddedSubtitleDocumentCache.Key) -> String {
+    guard let start = key.windowStartMilliseconds,
+          let end = key.windowEndMilliseconds else {
+        return "<full>"
+    }
+    return "\(start)...\(end)"
+}
 #else
 enum EmbeddedSubtitleExtractorError: LocalizedError {
     case unavailable
@@ -301,6 +420,15 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
     }
 
     func loadDocument(for trackID: SubtitleTrack.ID, from mediaURL: URL, headers: [String: String]) async throws -> SubtitleDocument {
+        throw EmbeddedSubtitleExtractorError.unavailable
+    }
+
+    func loadDocument(
+        for trackID: SubtitleTrack.ID,
+        from mediaURL: URL,
+        headers: [String: String],
+        window: ClosedRange<TimeInterval>
+    ) async throws -> SubtitleDocument {
         throw EmbeddedSubtitleExtractorError.unavailable
     }
 }
