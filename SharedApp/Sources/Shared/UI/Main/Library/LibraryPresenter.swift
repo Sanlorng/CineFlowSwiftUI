@@ -105,6 +105,7 @@ struct LibraryPresenter {
         var bangumiItems: IdentifiedArrayOf<BangumiItem> = []
         var selectedSort: SortOption = .lastPlay
         var searchQuery: String = ""
+        var requestedPlayerState: PlayerPresenter.State?
         
         var isLoadingLibrary = false
         var isCheckingWelcome = false
@@ -187,6 +188,7 @@ struct LibraryPresenter {
         case setSort(SortOption)
         case setSearchQuery(String)
         case bangumiTapped(State.BangumiItem)
+        case playbackRequestHandled
         case path(StackAction<Path.State, Path.Action>)
     }
     
@@ -197,20 +199,15 @@ struct LibraryPresenter {
     struct Path {
         enum State: Equatable {
             case bangumiDetail(BangumiDetailPresenter.State)
-            case player(PlayerPresenter.State)
         }
 
         enum Action: Equatable {
             case bangumiDetail(BangumiDetailPresenter.Action)
-            case player(PlayerPresenter.Action)
         }
 
         var body: some ReducerOf<Self> {
             Scope(state: /State.bangumiDetail, action: /Action.bangumiDetail) {
                 BangumiDetailPresenter()
-            }
-            Scope(state: /State.player, action: /Action.player) {
-                PlayerPresenter()
             }
         }
     }
@@ -227,10 +224,14 @@ struct LibraryPresenter {
                 return .none
 
             case let .path(.element(id: _, action: .bangumiDetail(.delegate(.startPlayback(playerState))))):
-                state.path.append(.player(playerState))
+                state.requestedPlayerState = playerState
                 return .none
 
             case .path:
+                return .none
+
+            case .playbackRequestHandled:
+                state.requestedPlayerState = nil
                 return .none
 
             case let .setFormName(name):

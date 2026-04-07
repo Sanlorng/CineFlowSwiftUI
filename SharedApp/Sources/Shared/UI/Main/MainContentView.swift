@@ -12,18 +12,30 @@ struct MainContentView: View {
     let homeStore: StoreOf<HomePresenter>
     let libraryStore: StoreOf<LibraryPresenter>
     @State private var selectedTab: MainTabs = .Home
+    @State private var playerStore: StoreOf<PlayerPresenter>?
     
     var body: some View {
-        TabView(selection: $selectedTab) {
-            Tab("Home", systemImage: "house", value: .Home) {
-                HomeContentView(store: homeStore)
+        WithViewStore(libraryStore, observe: \.requestedPlayerState) { viewStore in
+            TabView(selection: $selectedTab) {
+                Tab("Home", systemImage: "house", value: .Home) {
+                    HomeContentView(store: homeStore)
+                }
+                Tab("Library", systemImage: "rectangle.stack", value: .Library) {
+                    LibraryContentView(store: libraryStore)
+                }
+                Tab("Player", systemImage: "play.rectangle.on.rectangle", value: .Player) {
+                    PlayerContentView(store: playerStore)
+                }
             }
-            Tab("Library", systemImage: "rectangle.stack", value: .Library) {
-                LibraryContentView(store: libraryStore)
+            .tabViewStyle(.automatic)
+            .onChange(of: viewStore.state) { _, requestedPlayerState in
+                guard let requestedPlayerState else { return }
+                playerStore = Store(initialState: requestedPlayerState) {
+                    PlayerPresenter()
+                }
+                selectedTab = .Player
+                viewStore.send(.playbackRequestHandled)
             }
-            Tab("Player", systemImage: "play.rectangle.on.rectangle", value: .Player) {
-                PlayerContentView()
-            }
-        }.tabViewStyle(.automatic)
+        }
     }
 }
