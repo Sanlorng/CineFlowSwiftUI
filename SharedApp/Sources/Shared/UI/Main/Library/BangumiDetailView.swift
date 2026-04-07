@@ -222,7 +222,7 @@ private struct EpisodeCard: View {
     
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(title)
                         .lineLimit(2...2)
@@ -234,14 +234,6 @@ private struct EpisodeCard: View {
                 }
                 
                 HStack(spacing: 12) {
-                    if let watchedDate = preferredLastWatchedDate(for: episode) {
-                        Label(
-                            "上次观看 \(localizedBangumiDetailDateTime(watchedDate))",
-                            systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
                     if let airDate = episode.airDate {
                         Label {
                             Text(localizedBangumiDetailDate(airDate))
@@ -261,6 +253,8 @@ private struct EpisodeCard: View {
                         .foregroundStyle(matched ? .green : .orange)
                     }
                 }
+
+                watchedRecordLine
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -297,6 +291,27 @@ private struct EpisodeCard: View {
     
     private var title: String {
         bangumiEpisodeDisplayTitle(episode)
+    }
+
+    @ViewBuilder
+    private var watchedRecordLine: some View {
+        if let watchedDate = preferredLastWatchedDate(for: episode) {
+            Label(
+                "上次观看 \(localizedBangumiDetailDateTime(watchedDate))",
+                systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        } else {
+            Label(
+                "无云端观看记录",
+                systemImage: "clock.badge.questionmark"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
     }
 }
 
