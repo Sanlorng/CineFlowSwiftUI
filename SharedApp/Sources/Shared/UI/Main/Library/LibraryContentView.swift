@@ -50,18 +50,8 @@ struct LibraryContentView: View {
             libraryList(viewStore)
         }
         .navigationTitle("远程媒体库")
-        .searchable(
-            text: Binding(
-                get: { viewStore.searchQuery },
-                set: { viewStore.send(.setSearchQuery($0)) }
-            ),
-            placement: .toolbar,
-            prompt: "搜索番剧"
-        )
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                
-
                 Button {
                     viewStore.send(.setIsShowingForm(true))
                 } label: {
@@ -109,18 +99,50 @@ struct LibraryContentView: View {
                 }
                 .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
 
-                Button {
-                    viewStore.send(.refresh)
-                } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
+                HStack(spacing: 8) {
+                    librarySearchField(viewStore)
+
+                    Button {
+                        viewStore.send(.refresh)
+                    } label: {
+                        Label("刷新", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
                 }
-                .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
-                
             }
         }
         .onAppear {
             viewStore.send(.onAppear)
         }
+    }
+
+    @ViewBuilder
+    private func librarySearchField(
+        _ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(
+                "搜索番剧",
+                text: Binding(
+                    get: { viewStore.searchQuery },
+                    set: { viewStore.send(.setSearchQuery($0)) }
+                )
+            )
+            .textFieldStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(width: 148, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
     }
     
     @ViewBuilder
