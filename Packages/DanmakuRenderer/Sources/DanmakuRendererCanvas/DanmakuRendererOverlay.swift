@@ -4,6 +4,7 @@ import DanmakuRendererCore
 #if os(macOS)
 import AppKit
 import CoreText
+import CoreVideo
 import MetalKit
 import QuartzCore
 
@@ -182,7 +183,7 @@ private final class DanmakuMetalView: NSView {
     private let device: MTLDevice?
     private let compositor: DanmakuMetalCompositor?
     private var metalLayer: CAMetalLayer?
-    nonisolated(unsafe) private var displayLink: CADisplayLink?
+    nonisolated(unsafe) private var displayLink: CVDisplayLink?
     private var snapshot = DanmakuOverlayView.Snapshot.empty
     private var currentViewport = DanmakuCanvasViewport(size: .zero, scale: 2)
     private var isAttachedToWindow = false
@@ -250,11 +251,13 @@ private final class DanmakuMetalView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateDisplayLinkDisplay()
         updateViewportAndRefresh()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        updateDisplayLinkDisplay()
         updateViewportAndRefresh()
     }
 
@@ -265,7 +268,7 @@ private final class DanmakuMetalView: NSView {
 
     deinit {
         if let displayLink {
-            displayLink.invalidate()
+            CVDisplayLinkStop(displayLink)
         }
     }
 
@@ -280,12 +283,17 @@ private final class DanmakuMetalView: NSView {
     }
 
     private func setupDisplayLink() {
-        let displayLink = displayLink(
-            target: self,
-            selector: #selector(handleDisplayLinkTick(_:))
+        var displayLink: CVDisplayLink?
+        guard CVDisplayLinkCreateWithActiveCGDisplays(&displayLink) == kCVReturnSuccess,
+              let displayLink else {
+            return
+        }
+
+        CVDisplayLinkSetOutputCallback(
+            displayLink,
+            danmakuDisplayLinkOutputCallback,
+            Unmanaged.passUnretained(self).toOpaque()
         )
-        displayLink.add(to: .main, forMode: .common)
-        displayLink.isPaused = true
         self.displayLink = displayLink
     }
 
@@ -315,6 +323,14 @@ private final class DanmakuMetalView: NSView {
             height: max(viewport.size.height * viewport.scale, 1)
         )
         CATransaction.commit()
+    }
+
+    private func updateDisplayLinkDisplay() {
+        guard let displayLink,
+              let screenNumber = window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return
+        }
+        CVDisplayLinkSetCurrentCGDisplay(displayLink, CGDirectDisplayID(screenNumber.uint32Value))
     }
 
     private func apply(surfaceState: DanmakuSurfaceState) {
@@ -364,7 +380,13 @@ private final class DanmakuMetalView: NSView {
         let shouldAnimate = renderer.shouldAnimate && compositor != nil && isAttachedToWindow && currentViewport.isRenderable
         guard shouldAnimate != isAnimating else { return }
         isAnimating = shouldAnimate
-        configureDisplayLink(shouldAnimate: shouldAnimate, targetFPS: targetFPS)
+
+        guard let displayLink else { return }
+        if shouldAnimate {
+            CVDisplayLinkStart(displayLink)
+        } else {
+            CVDisplayLinkStop(displayLink)
+        }
     }
 
     private func requestImmediateDrawIfNeededLocked() {
@@ -419,26 +441,6 @@ private final class DanmakuMetalView: NSView {
         }
     }
 
-    private func configureDisplayLink(shouldAnimate: Bool, targetFPS: Double) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let displayLink = self.displayLink else { return }
-            if #available(macOS 14.0, *) {
-                let preferredFPS = Float(max(targetFPS, 30))
-                displayLink.preferredFrameRateRange = CAFrameRateRange(
-                    minimum: 30,
-                    maximum: preferredFPS,
-                    preferred: preferredFPS
-                )
-            }
-            displayLink.isPaused = !shouldAnimate
-        }
-    }
-
-    @objc
-    private func handleDisplayLinkTick(_ displayLink: CADisplayLink) {
-        enqueueDisplayLinkDraw()
-    }
-
     private func recordDrawLocked() {
         let now = CACurrentMediaTime()
         drawCount += 1
@@ -464,6 +466,20 @@ private struct DanmakuSurfaceState {
     let viewport: DanmakuCanvasViewport
     let isAttachedToWindow: Bool
     let targetFPS: Double
+}
+
+private func danmakuDisplayLinkOutputCallback(
+    _ displayLink: CVDisplayLink,
+    _ inNow: UnsafePointer<CVTimeStamp>,
+    _ inOutputTime: UnsafePointer<CVTimeStamp>,
+    _ flagsIn: CVOptionFlags,
+    _ flagsOut: UnsafeMutablePointer<CVOptionFlags>,
+    _ displayLinkContext: UnsafeMutableRawPointer?
+) -> CVReturn {
+    guard let displayLinkContext else { return kCVReturnSuccess }
+    let view = Unmanaged<DanmakuMetalView>.fromOpaque(displayLinkContext).takeUnretainedValue()
+    view.enqueueDisplayLinkDraw()
+    return kCVReturnSuccess
 }
 
 private struct DanmakuSprite {
@@ -603,8 +619,6 @@ private final class DanmakuAtlasPage {
     let width: Int
     let height: Int
 
-    private(set) var entryKeys: [NSString] = []
-    private(set) var lastAccessTick = 0
     private var nextX = 0
     private var nextY = 0
     private var rowHeight = 0
@@ -614,10 +628,6 @@ private final class DanmakuAtlasPage {
         self.texture = texture
         self.width = texture.width
         self.height = texture.height
-    }
-
-    func touch(accessTick: Int) {
-        lastAccessTick = accessTick
     }
 
     func allocate(contentWidth: Int, contentHeight: Int, padding: Int) -> DanmakuAtlasPlacement? {
@@ -641,26 +651,11 @@ private final class DanmakuAtlasPage {
         rowHeight = max(rowHeight, requiredHeight)
         return placement
     }
-
-    func recordEntryKey(_ key: NSString) {
-        entryKeys.append(key)
-    }
-
-    func recycle(accessTick: Int) -> [NSString] {
-        let keys = entryKeys
-        entryKeys.removeAll(keepingCapacity: true)
-        nextX = 0
-        nextY = 0
-        rowHeight = 0
-        lastAccessTick = accessTick
-        return keys
-    }
 }
 
 private final class DanmakuMetalCompositor {
     private let atlasTextureDimension = 2048
     private let atlasPadding = 1
-    private let maxAtlasPageCount = 8
     private let maxTextureSlotsPerDraw = 16
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
@@ -670,7 +665,6 @@ private final class DanmakuMetalCompositor {
     private let instanceBufferPool: DanmakuInstanceBufferPool
     private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
     private var atlasPages: [DanmakuAtlasPage] = []
-    private var atlasAccessTick = 0
     private var currentInstancesScratch: [DanmakuMetalInstance] = []
     private var currentTexturesScratch: [MTLTexture] = []
     private var currentTextureSlotsScratch: [Int: Int] = [:]
@@ -850,14 +844,12 @@ private final class DanmakuMetalCompositor {
         prewarmAssets: [DanmakuRasterImage],
         commandBuffer: MTLCommandBuffer
     ) {
-        var pinnedPageIndices = Set<Int>()
         var blitEncoder: MTLBlitCommandEncoder?
         for asset in prewarmAssets {
             _ = atlasEntry(
                 textureKey: asset.key,
                 image: asset.image,
                 commandBuffer: commandBuffer,
-                pinnedPageIndices: &pinnedPageIndices,
                 blitEncoder: &blitEncoder
             )
         }
@@ -866,7 +858,6 @@ private final class DanmakuMetalCompositor {
                 textureKey: sprite.textureKey,
                 image: sprite.image,
                 commandBuffer: commandBuffer,
-                pinnedPageIndices: &pinnedPageIndices,
                 blitEncoder: &blitEncoder
             )
         }
@@ -938,20 +929,16 @@ private final class DanmakuMetalCompositor {
         textureKey: NSString,
         image: CGImage,
         commandBuffer: MTLCommandBuffer,
-        pinnedPageIndices: inout Set<Int>,
         blitEncoder: inout MTLBlitCommandEncoder?
     ) -> DanmakuAtlasEntry? {
         if let cached = atlasCache.object(forKey: textureKey) {
-            touchAtlasPage(index: cached.value.pageIndex)
-            pinnedPageIndices.insert(cached.value.pageIndex)
             return cached.value
         }
 
         guard let sourceTexture = makeSourceTexture(image: image),
               let placement = allocateAtlasPlacement(
                 contentWidth: sourceTexture.width,
-                contentHeight: sourceTexture.height,
-                pinnedPageIndices: &pinnedPageIndices
+                contentHeight: sourceTexture.height
               ) else {
             return nil
         }
@@ -972,7 +959,6 @@ private final class DanmakuMetalCompositor {
         )
 
         let atlasPage = atlasPages[placement.pageIndex]
-        atlasPage.recordEntryKey(textureKey)
         let halfTexelX = sourceTexture.width > 1 ? 0.5 / Float(atlasPage.width) : 0
         let halfTexelY = sourceTexture.height > 1 ? 0.5 / Float(atlasPage.height) : 0
         let uvMin = SIMD2<Float>(
@@ -989,8 +975,6 @@ private final class DanmakuMetalCompositor {
             uvMin: uvMin,
             uvMax: uvMax
         )
-        touchAtlasPage(index: placement.pageIndex)
-        pinnedPageIndices.insert(placement.pageIndex)
         atlasCache.setObject(
             DanmakuAtlasEntryBox(entry),
             forKey: textureKey,
@@ -1015,22 +999,10 @@ private final class DanmakuMetalCompositor {
 
     private func allocateAtlasPlacement(
         contentWidth: Int,
-        contentHeight: Int,
-        pinnedPageIndices: inout Set<Int>
+        contentHeight: Int
     ) -> DanmakuAtlasPlacement? {
         for page in atlasPages {
             if let placement = page.allocate(
-                contentWidth: contentWidth,
-                contentHeight: contentHeight,
-                padding: atlasPadding
-            ) {
-                return placement
-            }
-        }
-
-        if atlasPages.count >= maxAtlasPageCount,
-           let recycledPage = recycleLeastRecentlyUsedPage(excluding: pinnedPageIndices) {
-            if let placement = recycledPage.allocate(
                 contentWidth: contentWidth,
                 contentHeight: contentHeight,
                 padding: atlasPadding
@@ -1047,9 +1019,6 @@ private final class DanmakuMetalCompositor {
         )
         descriptor.storageMode = .private
         descriptor.usage = [.shaderRead]
-        guard atlasPages.count < maxAtlasPageCount else {
-            return nil
-        }
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             return nil
         }
@@ -1064,33 +1033,6 @@ private final class DanmakuMetalCompositor {
             contentHeight: contentHeight,
             padding: atlasPadding
         )
-    }
-
-    private func recycleLeastRecentlyUsedPage(
-        excluding pinnedPageIndices: Set<Int>
-    ) -> DanmakuAtlasPage? {
-        let candidate = atlasPages
-            .filter { pinnedPageIndices.contains($0.index) == false }
-            .min { lhs, rhs in
-                lhs.lastAccessTick < rhs.lastAccessTick
-            }
-        guard let candidate else { return nil }
-
-        let removedKeys = candidate.recycle(accessTick: nextAtlasAccessTick())
-        for key in removedKeys {
-            atlasCache.removeObject(forKey: key)
-        }
-        return candidate
-    }
-
-    private func touchAtlasPage(index: Int) {
-        guard atlasPages.indices.contains(index) else { return }
-        atlasPages[index].touch(accessTick: nextAtlasAccessTick())
-    }
-
-    private func nextAtlasAccessTick() -> Int {
-        atlasAccessTick &+= 1
-        return atlasAccessTick
     }
 
     private func makeInstance(
