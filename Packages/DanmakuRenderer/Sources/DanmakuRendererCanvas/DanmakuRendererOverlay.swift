@@ -1297,7 +1297,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         let outlineAttributed = comment.usesStroke ? makeAttributedString(
             text: comment.text,
             font: font,
-            color: NSColor.black.withAlphaComponent(0.34)
+            color: NSColor.black.withAlphaComponent(0.4)
         ) : nil
         let drawRect = CGRect(
             origin: metrics.drawOrigin,
