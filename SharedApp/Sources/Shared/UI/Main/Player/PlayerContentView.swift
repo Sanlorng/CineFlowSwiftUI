@@ -398,21 +398,14 @@ private struct PlayerContentMainView: View {
             )
         }
         .onDisappear {
-            playerController.reset()
             cancelForwardShortcutTracking()
             dismissFullscreenShortcutHUD()
             fullscreenTransitionTask?.cancel()
             fullscreenTransitionTask = nil
             pendingManagedFullscreenTarget = nil
-            scrubPosition = 0
             isScrubbing = false
-            isSubtitleRendererReady = false
-            lastReportedSubtitleWindowPlaybackSecond = nil
             lastPointerLocation = nil
             cancelFullscreenPointerTasks()
-            isFullscreen = false
-            usesFullscreenLayout = false
-            updateWindowToolbarVisibility()
             showCursorIfNeeded()
         }
     }
