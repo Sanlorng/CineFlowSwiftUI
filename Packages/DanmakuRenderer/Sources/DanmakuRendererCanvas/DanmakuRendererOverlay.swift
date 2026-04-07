@@ -84,8 +84,7 @@ public final class DanmakuOverlayView: NSView {
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         renderer.onInvalidation = { [weak self] in
-            self?.needsDisplay = true
-            self?.updateDisplayLinkState()
+            self?.handleRendererInvalidation()
         }
     }
 
@@ -134,7 +133,7 @@ public final class DanmakuOverlayView: NSView {
             viewport: currentViewport
         )
         updateDisplayLinkState()
-        needsDisplay = true
+        requestRedrawIfNeeded()
     }
 
     private var currentViewport: DanmakuCanvasViewport {
@@ -217,6 +216,23 @@ public final class DanmakuOverlayView: NSView {
         }
         debugFrameCount = 0
         debugFrameSampleStartedAt = now
+    }
+
+    private func handleRendererInvalidation() {
+        updateDisplayLinkState()
+        requestRedrawIfNeeded()
+    }
+
+    private func requestRedrawIfNeeded() {
+        guard window != nil else { return }
+
+        if renderer.shouldAnimate {
+            // Let display link own the cadence while animating.
+            return
+        }
+
+        needsDisplay = true
+        displayIfNeeded()
     }
 
     private func handleDisplayLinkTick() {
