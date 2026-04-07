@@ -818,7 +818,7 @@ private struct PlayerContentMainView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(viewStore.seriesTitle ?? "未命名番剧")
                         .font(.title3.weight(.semibold))
-                        .lineLimit(2...2)
+                        .lineLimit(2)
                     Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.primary.opacity(0.92))
