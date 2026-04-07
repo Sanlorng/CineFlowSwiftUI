@@ -17,6 +17,7 @@ import UIKit
 
 struct BangumiDetailView: View {
     let store: StoreOf<BangumiDetailPresenter>
+    @State private var selectedEpisodePageIndex = 0
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -148,26 +149,79 @@ struct BangumiDetailView: View {
         detail: Components.Schemas.LibraryBangumiDetailsResponse
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("剧集列表")
-                .font(.headline)
-            
             if let episodes = detail.episodes, !episodes.isEmpty {
-                LazyVGrid(
-                    columns: [
-                        GridItem(.adaptive(minimum: 220), spacing: 16, alignment: .top)
-                    ],
-                    spacing: 16
-                ) {
-                    ForEach(episodes, id: \.self) { episode in
-                        EpisodeCard(episode: episode) {
-                            viewStore.send(.episodeTapped(episode))
-                        }.disabled(episode.localMatchedFiles?.isEmpty ?? true)
+                let pages = bangumiDetailEpisodePages(itemCount: episodes.count)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .center, spacing: 12) {
+                        Text("剧集列表")
+                            .font(.headline)
+                        if pages.count > 1 {
+                            bangumiDetailEpisodePageTags(pages: pages)
+                                .frame(maxWidth: 420, alignment: .leading)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.adaptive(minimum: 220), spacing: 16, alignment: .top)
+                        ],
+                        spacing: 16
+                    ) {
+                        ForEach(displayedBangumiDetailEpisodes(episodes, selectedPageIndex: selectedEpisodePageIndex), id: \.self) { episode in
+                            EpisodeCard(episode: episode) {
+                                viewStore.send(.episodeTapped(episode))
+                            }.disabled(episode.localMatchedFiles?.isEmpty ?? true)
+                        }
                     }
                 }
+                .onAppear {
+                    syncBangumiDetailEpisodePageSelection(with: episodes)
+                }
+                .onChange(of: bangumiDetailEpisodePageSelectionSeed(for: episodes)) { _, _ in
+                    syncBangumiDetailEpisodePageSelection(with: episodes)
+                }
             } else {
-                Text("暂无剧集信息。")
-                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("剧集列表")
+                        .font(.headline)
+                    Text("暂无剧集信息。")
+                        .foregroundColor(.secondary)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func bangumiDetailEpisodePageTags(
+        pages: [BangumiDetailEpisodePage]
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(pages) { page in
+                    BangumiDetailEpisodePageTag(
+                        page: page,
+                        isSelected: selectedEpisodePageIndex == page.index,
+                        action: { selectedEpisodePageIndex = page.index }
+                    )
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func syncBangumiDetailEpisodePageSelection(
+        with episodes: [Components.Schemas.LibraryBangumiEpisode]
+    ) {
+        let pages = bangumiDetailEpisodePages(itemCount: episodes.count)
+        guard !pages.isEmpty else {
+            selectedEpisodePageIndex = 0
+            return
+        }
+        if let latestWatchedIndex = episodes.firstIndex(where: { $0.isLatestWatched == true }) {
+            selectedEpisodePageIndex = min(latestWatchedIndex / 50, pages.count - 1)
+        } else if pages.indices.contains(selectedEpisodePageIndex) == false {
+            selectedEpisodePageIndex = 0
         }
     }
     
@@ -329,6 +383,88 @@ private struct TagView: View {
             )
             .foregroundColor(.accentColor)
     }
+}
+
+private struct BangumiDetailEpisodePageTag: View {
+    let page: BangumiDetailEpisodePage
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(page.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(
+                            isSelected
+                            ? Color.white.opacity(0.18)
+                            : Color.white.opacity(isHovering ? 0.08 : 0.02)
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(
+                            isSelected
+                            ? Color.white.opacity(0.16)
+                            : Color.white.opacity(isHovering ? 0.1 : 0.04),
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+#if os(macOS)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+#endif
+    }
+}
+
+private struct BangumiDetailEpisodePage: Identifiable, Equatable {
+    let index: Int
+    let range: Range<Int>
+    let title: String
+
+    var id: Int { index }
+}
+
+private func bangumiDetailEpisodePages(itemCount: Int) -> [BangumiDetailEpisodePage] {
+    guard itemCount > 0 else { return [] }
+    let pageSize = 50
+    let starts = stride(from: 0, to: itemCount, by: pageSize)
+    return starts.enumerated().map { pageIndex, start in
+        let end = min(start + pageSize, itemCount)
+        return BangumiDetailEpisodePage(
+            index: pageIndex,
+            range: start..<end,
+            title: "\(start + 1)-\(end)"
+        )
+    }
+}
+
+private func displayedBangumiDetailEpisodes(
+    _ episodes: [Components.Schemas.LibraryBangumiEpisode],
+    selectedPageIndex: Int
+) -> [Components.Schemas.LibraryBangumiEpisode] {
+    let pages = bangumiDetailEpisodePages(itemCount: episodes.count)
+    guard let page = pages.first(where: { $0.index == selectedPageIndex }) ?? pages.first else {
+        return episodes
+    }
+    return Array(episodes[page.range])
+}
+
+private func bangumiDetailEpisodePageSelectionSeed(
+    for episodes: [Components.Schemas.LibraryBangumiEpisode]
+) -> String {
+    let latestEpisodeID = episodes.first(where: { $0.isLatestWatched == true })?.episodeId ?? -1
+    return "\(episodes.count)-\(latestEpisodeID)"
 }
 
 private func localizedBangumiDetailDate(_ date: Date) -> String {
