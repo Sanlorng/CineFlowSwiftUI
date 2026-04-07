@@ -1171,9 +1171,21 @@ private struct PlayerContentMainView: View {
     }
 
     private func didPointerMove(to location: CGPoint) -> Bool {
-        defer { lastPointerLocation = location }
-        guard let lastPointerLocation else { return true }
-        return location != lastPointerLocation
+        guard let lastPointerLocation else {
+            self.lastPointerLocation = location
+            return true
+        }
+
+        let minimumDistanceToRevealControls: CGFloat = 8
+        let deltaX = location.x - lastPointerLocation.x
+        let deltaY = location.y - lastPointerLocation.y
+        let distance = sqrt((deltaX * deltaX) + (deltaY * deltaY))
+        guard distance >= minimumDistanceToRevealControls else {
+            return false
+        }
+
+        self.lastPointerLocation = location
+        return true
     }
 
     private func revealControls() {
