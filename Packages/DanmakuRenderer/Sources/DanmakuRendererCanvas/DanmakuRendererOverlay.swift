@@ -179,7 +179,7 @@ private final class DanmakuMetalView: NSView {
     private let playbackTimeResyncThreshold: TimeInterval = 1.0 / 12.0
     private let renderQueue = DispatchQueue(label: "CineFlow.DanmakuMetalRenderLoop", qos: .userInteractive)
     private let displayLinkSemaphore = DispatchSemaphore(value: 1)
-    private let renderer = DanmakuCanvasRenderer()
+    private let renderer: DanmakuCanvasRenderer
     private let device: MTLDevice?
     private let compositor: DanmakuMetalCompositor?
     private var metalLayer: CAMetalLayer?
@@ -197,6 +197,7 @@ private final class DanmakuMetalView: NSView {
 
     override init(frame frameRect: NSRect) {
         let resolvedDevice = MTLCreateSystemDefaultDevice()
+        self.renderer = DanmakuCanvasRenderer(callbackQueue: renderQueue)
         self.device = resolvedDevice
         self.compositor = resolvedDevice.flatMap(DanmakuMetalCompositor.init(device:))
         super.init(frame: frameRect)
@@ -221,9 +222,7 @@ private final class DanmakuMetalView: NSView {
         setupDisplayLink()
 
         renderer.onInvalidation = { [weak self] in
-            self?.renderQueue.async {
-                self?.handleRendererInvalidationLocked()
-            }
+            self?.handleRendererInvalidationLocked()
         }
     }
 
@@ -409,10 +408,6 @@ private final class DanmakuMetalView: NSView {
             return
         }
 
-        let prewarmAssets = renderer.prewarmImageAssets()
-        let sprites = renderer.makeSprites(
-            in: CGRect(origin: .zero, size: currentViewport.size)
-        )
         let descriptor = MTLRenderPassDescriptor()
         descriptor.colorAttachments[0].texture = drawable.texture
         descriptor.colorAttachments[0].loadAction = .clear
@@ -424,13 +419,17 @@ private final class DanmakuMetalView: NSView {
             alpha: 0
         )
 
-        compositor.draw(
-            sprites: sprites,
-            prewarmAssets: prewarmAssets,
-            drawable: drawable,
-            renderPassDescriptor: descriptor,
-            viewportSize: currentViewport.size
-        )
+        renderer.withFrameAssets(
+            in: CGRect(origin: .zero, size: currentViewport.size)
+        ) { prewarmAssets, sprites in
+            compositor.draw(
+                sprites: sprites,
+                prewarmAssets: prewarmAssets,
+                drawable: drawable,
+                renderPassDescriptor: descriptor,
+                viewportSize: currentViewport.size
+            )
+        }
         recordDrawLocked()
     }
 
@@ -1099,6 +1098,7 @@ private struct DanmakuSceneDescriptor: Equatable, Sendable {
 private final class DanmakuCanvasRenderer: @unchecked Sendable {
     var onInvalidation: (() -> Void)?
 
+    private let callbackQueue: DispatchQueue
     private let textCache = DanmakuTextRasterCache()
     private let scheduler = DanmakuPlaybackScheduler()
     private let clock = DanmakuPlaybackClock()
@@ -1108,6 +1108,14 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
     private var sceneDescriptor: DanmakuSceneDescriptor?
     private var preparationGeneration = 0
     private var currentSettings = DanmakuRenderSettings()
+    private var visibleEntriesScratch: [DanmakuPreparedComment] = []
+    private var spriteBuckets: [[DanmakuSprite]] = [[], [], []]
+    private var spriteScratch: [DanmakuSprite] = []
+    private var prewarmScratch: [DanmakuRasterImage] = []
+
+    init(callbackQueue: DispatchQueue) {
+        self.callbackQueue = callbackQueue
+    }
 
     var shouldAnimate: Bool {
         currentSettings.isVisible && preparedScene != nil && clock.isActive
@@ -1115,36 +1123,6 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 
     var presentationTime: TimeInterval {
         clock.currentTime
-    }
-
-    func prewarmImageAssets(
-        lookahead: TimeInterval = 2,
-        maximumCount: Int = 24
-    ) -> [DanmakuRasterImage] {
-        guard currentSettings.isVisible,
-              let preparedScene,
-              maximumCount > 0 else {
-            return []
-        }
-
-        let currentTime = clock.currentTime
-        let lowerBound = preparedScene.lowerBound(for: currentTime)
-        let upperBound = preparedScene.upperBound(for: currentTime + max(lookahead, 0))
-        guard lowerBound < upperBound else { return [] }
-
-        let scale = boundsScale(preparedScene: preparedScene)
-        var assets: [DanmakuRasterImage] = []
-        assets.reserveCapacity(min(maximumCount, upperBound - lowerBound))
-
-        for entry in preparedScene.entries[lowerBound..<upperBound] {
-            guard let asset = textCache.imageAsset(for: entry, scale: scale) else { continue }
-            assets.append(asset)
-            if assets.count >= maximumCount {
-                break
-            }
-        }
-
-        return assets
     }
 
     func update(
@@ -1193,7 +1171,7 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
                 descriptor: descriptor,
                 textCache: textCache
             )
-            DispatchQueue.main.async { [weak self] in
+            self.callbackQueue.async { [weak self] in
                 guard let self else { return }
                 guard self.preparationGeneration == generation, self.sceneDescriptor == descriptor else { return }
                 self.preparedScene = scene
@@ -1203,34 +1181,52 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
         }
     }
 
-    func makeSprites(in bounds: CGRect) -> [DanmakuSprite] {
+    func withFrameAssets(
+        in bounds: CGRect,
+        prewarmLookahead: TimeInterval = 2,
+        maximumPrewarmCount: Int = 24,
+        _ body: ([DanmakuRasterImage], [DanmakuSprite]) -> Void
+    ) {
         guard currentSettings.isVisible,
               let preparedScene,
               bounds.isEmpty == false else {
-            return []
+            body([], [])
+            return
         }
 
         let currentTime = clock.currentTime
-        let visibleEntries = scheduler.visibleEntries(at: currentTime)
+        scheduler.populateVisibleEntries(
+            at: currentTime,
+            sceneEntries: preparedScene.entries,
+            into: &visibleEntriesScratch
+        )
         let scale = boundsScale(preparedScene: preparedScene)
-        var sprites: [DanmakuSprite] = []
-        sprites.reserveCapacity(visibleEntries.count)
-
-        for zIndex in 0...2 {
-            for entry in visibleEntries where entry.zIndex == zIndex {
-                guard let renderState = entry.renderState(at: currentTime) else {
-                    continue
+        prewarmScratch.removeAll(keepingCapacity: true)
+        if maximumPrewarmCount > 0 {
+            let lowerBound = preparedScene.lowerBound(for: currentTime)
+            let upperBound = preparedScene.upperBound(for: currentTime + max(prewarmLookahead, 0))
+            if lowerBound < upperBound {
+                prewarmScratch.reserveCapacity(min(maximumPrewarmCount, upperBound - lowerBound))
+                for entry in preparedScene.entries[lowerBound..<upperBound] {
+                    guard let asset = textCache.imageAsset(for: entry, scale: scale) else { continue }
+                    prewarmScratch.append(asset)
+                    if prewarmScratch.count >= maximumPrewarmCount {
+                        break
+                    }
                 }
+            }
+        }
 
-                if renderState.frame.intersects(bounds) == false {
-                    continue
-                }
+        for index in spriteBuckets.indices {
+            spriteBuckets[index].removeAll(keepingCapacity: true)
+        }
 
-                guard let imageAsset = textCache.imageAsset(for: entry, scale: scale) else {
-                    continue
-                }
-
-                sprites.append(
+        for entry in visibleEntriesScratch {
+            let bucketIndex = max(0, min(entry.zIndex, spriteBuckets.count - 1))
+            if let renderState = entry.renderState(at: currentTime),
+               renderState.frame.intersects(bounds),
+               let imageAsset = textCache.imageAsset(for: entry, scale: scale) {
+                spriteBuckets[bucketIndex].append(
                     DanmakuSprite(
                         textureKey: imageAsset.key,
                         image: imageAsset.image,
@@ -1245,28 +1241,36 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
             }
         }
 
-        return sprites
+        spriteScratch.removeAll(keepingCapacity: true)
+        spriteScratch.reserveCapacity(visibleEntriesScratch.count)
+        for bucket in spriteBuckets {
+            spriteScratch.append(contentsOf: bucket)
+        }
+
+        body(prewarmScratch, spriteScratch)
     }
 
     func draw(in context: CGContext, bounds: CGRect) {
         context.interpolationQuality = .high
-        for sprite in makeSprites(in: bounds) {
-            context.saveGState()
-            context.setAlpha(CGFloat(sprite.alpha))
-            if abs(sprite.rotation) > 0.0001 {
-                context.translateBy(x: sprite.frame.midX, y: sprite.frame.midY)
-                context.rotate(by: CGFloat(sprite.rotation))
-                let drawRect = CGRect(
-                    x: -sprite.frame.width / 2,
-                    y: -sprite.frame.height / 2,
-                    width: sprite.frame.width,
-                    height: sprite.frame.height
-                )
-                context.draw(sprite.image, in: drawRect)
-            } else {
-                context.draw(sprite.image, in: sprite.frame)
+        withFrameAssets(in: bounds) { _, sprites in
+            for sprite in sprites {
+                context.saveGState()
+                context.setAlpha(CGFloat(sprite.alpha))
+                if abs(sprite.rotation) > 0.0001 {
+                    context.translateBy(x: sprite.frame.midX, y: sprite.frame.midY)
+                    context.rotate(by: CGFloat(sprite.rotation))
+                    let drawRect = CGRect(
+                        x: -sprite.frame.width / 2,
+                        y: -sprite.frame.height / 2,
+                        width: sprite.frame.width,
+                        height: sprite.frame.height
+                    )
+                    context.draw(sprite.image, in: drawRect)
+                } else {
+                    context.draw(sprite.image, in: sprite.frame)
+                }
+                context.restoreGState()
             }
-            context.restoreGState()
         }
     }
 
@@ -1388,8 +1392,15 @@ private final class DanmakuPlaybackScheduler {
         rebuild(for: scene, time: time)
     }
 
-    func visibleEntries(at time: TimeInterval) -> [DanmakuPreparedComment] {
-        guard let scene else { return [] }
+    func populateVisibleEntries(
+        at time: TimeInterval,
+        sceneEntries: [DanmakuPreparedComment],
+        into output: inout [DanmakuPreparedComment]
+    ) {
+        guard let scene else {
+            output.removeAll(keepingCapacity: true)
+            return
+        }
 
         if time + 0.1 < lastTime || time - lastTime > 5 {
             rebuild(for: scene, time: time)
@@ -1405,9 +1416,13 @@ private final class DanmakuPlaybackScheduler {
         }
 
         lastTime = time
-        return activeIndices.compactMap { index in
-            let entry = scene.entries[index]
-            return entry.endTime > time ? entry : nil
+        output.removeAll(keepingCapacity: true)
+        output.reserveCapacity(activeIndices.count)
+        for index in activeIndices {
+            let entry = sceneEntries[index]
+            if entry.endTime > time {
+                output.append(entry)
+            }
         }
     }
 
