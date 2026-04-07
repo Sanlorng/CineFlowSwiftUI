@@ -109,8 +109,8 @@ struct BangumiDetailView: View {
                         .bold()
                         .multilineTextAlignment(.leading)
 
-                    if let details = item.details, !details.isEmpty {
-                        Text(details)
+                    if let onAirDate = item.onAirDate {
+                        Text(localizedBangumiDetailDate(onAirDate))
                             .foregroundStyle(.secondary)
                     }
 
