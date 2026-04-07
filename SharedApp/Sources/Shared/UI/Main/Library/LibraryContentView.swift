@@ -39,7 +39,6 @@ struct LibraryContentView: View {
     
     @ViewBuilder
     private func mainContent(_ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>) -> some View {
-        let hasSelectedConfiguration = viewStore.selectedConfigurationID != nil
         VStack(spacing: 0) {
             libraryList(viewStore)
         }
@@ -132,20 +131,15 @@ struct LibraryContentView: View {
                         .foregroundColor(.secondary)
                 }
             } else if let message = viewStore.infoMessage {
-                Text(message)
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(.secondary)
-                    .padding()
                 if viewStore.configurations.isEmpty {
-
-                    Button {
+                    libraryOnboardingCard(message: message) {
                         viewStore.send(.setIsShowingForm(true))
-                    } label: {
-                        Label("添加远程媒体库", systemImage: "plus")
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
                     }
-                    .buttonStyle(.borderedProminent)
+                } else {
+                    Text(message)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.secondary)
+                        .padding()
                 }
             } else if viewStore.displayedBangumiItems.isEmpty {
                 if viewStore.trimmedSearchQuery.isEmpty {
@@ -161,6 +155,105 @@ struct LibraryContentView: View {
             } else {
                 LibraryGrid(viewStore: viewStore)
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func libraryOnboardingCard(
+        message: String,
+        addAction: @escaping () -> Void
+    ) -> some View {
+        VStack {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 16) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.accentColor.opacity(0.24),
+                                        Color.accentColor.opacity(0.08)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                        Image(systemName: "externaldrive.badge.plus")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .frame(width: 72, height: 72)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("远程媒体库")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .tracking(0.8)
+                        Text("先添加一个媒体库，再开始浏览和播放。")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(message)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    onboardingStep(
+                        title: "填写连接信息",
+                        subtitle: "名称、IP、端口和可选令牌"
+                    )
+                    onboardingStep(
+                        title: "验证服务可用",
+                        subtitle: "应用会先检查欢迎信息，再保存默认媒体库"
+                    )
+                    onboardingStep(
+                        title: "开始浏览番剧",
+                        subtitle: "保存后会自动加载媒体库内容"
+                    )
+                }
+
+                HStack(spacing: 10) {
+                    Button(action: addAction) {
+                        Label("添加远程媒体库", systemImage: "plus")
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Text("支持多个媒体库配置，后续可在工具栏快速切换。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 620, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.18),
+                                        Color.white.opacity(0.04)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.08), radius: 24, y: 12)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -361,6 +454,7 @@ private struct LibraryGrid: View {
                             }
                         }
                         .padding(.top, 8)
+                        .padding(.bottom, 40)
                     }
                     .coordinateSpace(name: "LibraryGridScroll")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -404,6 +498,24 @@ private struct LibraryGrid: View {
                 }
             }
         }
+    }
+}
+
+@ViewBuilder
+private func onboardingStep(title: String, subtitle: String) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+        Image(systemName: "checkmark.circle.fill")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+            .padding(.top, 1)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        Spacer(minLength: 0)
     }
 }
 
