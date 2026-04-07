@@ -1201,7 +1201,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
 
         let font = makeFont(size: fontSize, family: fontFamily)
         let strokeWidth = usesStroke ? strokeWidth(for: fontSize) : 0
-        let line = makeLine(text: text, font: font, color: NSColor.white.cgColor, strokeWidth: strokeWidth)
+        let line = makeLine(text: text, font: font, color: NSColor.white.cgColor)
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
         var leading: CGFloat = 0
@@ -1263,14 +1263,26 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         context.interpolationQuality = .high
 
         let font = makeFont(size: comment.fontSize, family: comment.fontFamily)
-        let line = makeLine(
+        let fillLine = makeLine(
             text: comment.text,
             font: font,
-            color: color(for: comment.colorRGB),
-            strokeWidth: comment.usesStroke ? strokeWidth(for: comment.fontSize) : 0
+            color: color(for: comment.colorRGB)
         )
         context.textPosition = CGPoint(x: metrics.padding, y: metrics.padding + metrics.descent)
-        CTLineDraw(line, context)
+        if comment.usesStroke {
+            let outlineWidth = strokeWidth(for: comment.fontSize)
+            let strokeLine = makeStrokedLine(
+                text: comment.text,
+                font: font,
+                strokeWidth: outlineWidth
+            )
+            context.saveGState()
+            context.setLineJoin(.round)
+            context.setLineCap(.round)
+            CTLineDraw(strokeLine, context)
+            context.restoreGState()
+        }
+        CTLineDraw(fillLine, context)
 
         guard let image = context.makeImage() else { return nil }
         imageCache.setObject(
@@ -1283,35 +1295,43 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
 
     private func makeFont(size: CGFloat, family: String?) -> CTFont {
         if let family, family.isEmpty == false {
-            let descriptor = CTFontDescriptorCreateWithAttributes([
-                kCTFontFamilyNameAttribute: family as CFString,
-                kCTFontSizeAttribute: size as CFNumber
-            ] as CFDictionary)
-            let custom = CTFontCreateWithFontDescriptor(descriptor, size, nil)
-            let resolvedFamily = CTFontCopyFamilyName(custom) as String
-            let postScriptName = CTFontCopyPostScriptName(custom) as String
-            if postScriptName.localizedCaseInsensitiveContains("LastResort") == false,
-               (
-                resolvedFamily.caseInsensitiveCompare(family) == .orderedSame
-                    || resolvedFamily.localizedCaseInsensitiveContains(family)
-                    || family.localizedCaseInsensitiveContains(resolvedFamily)
-               ) {
-                return custom
+            let descriptor = NSFontDescriptor(
+                fontAttributes: [
+                    .family: family,
+                    .traits: [NSFontDescriptor.TraitKey.weight: NSFont.Weight.semibold]
+                ]
+            )
+            if let custom = NSFont(descriptor: descriptor, size: size) {
+                let resolvedFamily = custom.familyName ?? ""
+                let postScriptName = custom.fontName
+                if postScriptName.localizedCaseInsensitiveContains("LastResort") == false,
+                   (
+                    resolvedFamily.caseInsensitiveCompare(family) == .orderedSame
+                        || resolvedFamily.localizedCaseInsensitiveContains(family)
+                        || family.localizedCaseInsensitiveContains(resolvedFamily)
+                   ) {
+                    return custom as CTFont
+                }
             }
         }
-        return CTFontCreateUIFontForLanguage(.system, size, nil)
-            ?? CTFontCreateWithName("HelveticaNeue-Medium" as CFString, size, nil)
+        return NSFont.systemFont(ofSize: size, weight: .semibold) as CTFont
     }
 
-    private func makeLine(text: String, font: CTFont, color: CGColor, strokeWidth: CGFloat) -> CTLine {
-        var attributes: [NSAttributedString.Key: Any] = [
+    private func makeLine(text: String, font: CTFont, color: CGColor) -> CTLine {
+        let attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
         ]
-        if strokeWidth > 0 {
-            attributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = NSColor.black.withAlphaComponent(0.92).cgColor
-            attributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = -strokeWidth
-        }
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        return CTLineCreateWithAttributedString(attributed)
+    }
+
+    private func makeStrokedLine(text: String, font: CTFont, strokeWidth: CGFloat) -> CTLine {
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTStrokeColorAttributeName as String): NSColor.black.withAlphaComponent(0.96).cgColor,
+            NSAttributedString.Key(kCTStrokeWidthAttributeName as String): strokeWidth,
+        ]
         let attributed = NSAttributedString(string: text, attributes: attributes)
         return CTLineCreateWithAttributedString(attributed)
     }
@@ -1324,7 +1344,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
     }
 
     private func strokeWidth(for fontSize: CGFloat) -> CGFloat {
-        min(max(fontSize * 0.14, 2.25), 5)
+        min(max(fontSize * 0.095, 1.5), 3.2)
     }
 
     private func cacheValue(_ value: CGFloat) -> Int {
