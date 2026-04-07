@@ -71,9 +71,12 @@ public final class DanmakuOverlayView: NSView {
     private var snapshot = Snapshot.empty
     private var displayLink: CVDisplayLink?
     private var debugTargetFPS: Double?
+    private var debugDisplayTickSampleStartedAt = CACurrentMediaTime()
+    private var debugDisplayTickCount = 0
+    private var debugDisplayTickFPS = 0.0
     private var debugFrameSampleStartedAt = CACurrentMediaTime()
     private var debugFrameCount = 0
-    private var debugMeasuredFPS = 0.0
+    private var debugDrawFPS = 0.0
 
     public override var isFlipped: Bool { true }
     public override var isOpaque: Bool { false }
@@ -189,7 +192,7 @@ public final class DanmakuOverlayView: NSView {
                 guard let context else { return kCVReturnSuccess }
                 let view = Unmanaged<DanmakuOverlayView>.fromOpaque(context).takeUnretainedValue()
                 DispatchQueue.main.async {
-                    view.needsDisplay = true
+                    view.handleDisplayLinkTick()
                 }
                 return kCVReturnSuccess
             },
@@ -207,22 +210,51 @@ public final class DanmakuOverlayView: NSView {
         guard elapsed >= 0.4 else { return }
 
         let instantaneousFPS = Double(debugFrameCount) / elapsed
-        if debugMeasuredFPS == 0 {
-            debugMeasuredFPS = instantaneousFPS
+        if debugDrawFPS == 0 {
+            debugDrawFPS = instantaneousFPS
         } else {
-            debugMeasuredFPS = (debugMeasuredFPS * 0.7) + (instantaneousFPS * 0.3)
+            debugDrawFPS = (debugDrawFPS * 0.7) + (instantaneousFPS * 0.3)
         }
         debugFrameCount = 0
         debugFrameSampleStartedAt = now
+    }
+
+    private func handleDisplayLinkTick() {
+        guard window != nil else { return }
+        let now = CACurrentMediaTime()
+        debugDisplayTickCount += 1
+        let elapsed = now - debugDisplayTickSampleStartedAt
+        if elapsed >= 0.4 {
+            let instantaneousFPS = Double(debugDisplayTickCount) / elapsed
+            if debugDisplayTickFPS == 0 {
+                debugDisplayTickFPS = instantaneousFPS
+            } else {
+                debugDisplayTickFPS = (debugDisplayTickFPS * 0.7) + (instantaneousFPS * 0.3)
+            }
+            debugDisplayTickCount = 0
+            debugDisplayTickSampleStartedAt = now
+        }
+
+        needsDisplay = true
+        displayIfNeeded()
     }
 
     private func drawDebugHUD(in context: CGContext) {
         let targetFPS = debugTargetFPS ?? 0
         let text: String
         if targetFPS > 0 {
-            text = String(format: "Danmaku %.1f / %.0f FPS", debugMeasuredFPS, targetFPS)
+            text = String(
+                format: "DMK D %.1f | T %.1f / %.0f",
+                debugDrawFPS,
+                debugDisplayTickFPS,
+                targetFPS
+            )
         } else {
-            text = String(format: "Danmaku %.1f FPS", debugMeasuredFPS)
+            text = String(
+                format: "DMK D %.1f | T %.1f",
+                debugDrawFPS,
+                debugDisplayTickFPS
+            )
         }
 
         let paragraphStyle = NSMutableParagraphStyle()
@@ -1222,12 +1254,12 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         context.scaleBy(x: 1, y: -1)
         context.setAllowsAntialiasing(true)
         context.setShouldAntialias(true)
-        context.setAllowsFontSmoothing(true)
-        context.setShouldSmoothFonts(true)
-        context.setAllowsFontSubpixelPositioning(true)
-        context.setShouldSubpixelPositionFonts(true)
-        context.setAllowsFontSubpixelQuantization(true)
-        context.setShouldSubpixelQuantizeFonts(true)
+        context.setAllowsFontSmoothing(false)
+        context.setShouldSmoothFonts(false)
+        context.setAllowsFontSubpixelPositioning(false)
+        context.setShouldSubpixelPositionFonts(false)
+        context.setAllowsFontSubpixelQuantization(false)
+        context.setShouldSubpixelQuantizeFonts(false)
         context.interpolationQuality = .high
 
         let font = makeFont(size: comment.fontSize, family: comment.fontFamily)
@@ -1259,9 +1291,11 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
             let resolvedFamily = CTFontCopyFamilyName(custom) as String
             let postScriptName = CTFontCopyPostScriptName(custom) as String
             if postScriptName.localizedCaseInsensitiveContains("LastResort") == false,
-               resolvedFamily.caseInsensitiveCompare(family) == .orderedSame
-                || resolvedFamily.localizedCaseInsensitiveContains(family)
-                || family.localizedCaseInsensitiveContains(resolvedFamily) {
+               (
+                resolvedFamily.caseInsensitiveCompare(family) == .orderedSame
+                    || resolvedFamily.localizedCaseInsensitiveContains(family)
+                    || family.localizedCaseInsensitiveContains(resolvedFamily)
+               ) {
                 return custom
             }
         }
