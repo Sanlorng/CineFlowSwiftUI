@@ -371,6 +371,8 @@ struct PlayerKeyboardEventMonitor: NSViewRepresentable {
             ) { [weak self] event in
                 guard let self else { return event }
                 guard self.isRelevant(event) else { return event }
+                let recognizedMediaEvent = event.type == .systemDefined
+                    && PlayerShortcutKey.from(event: event) != nil
 
                 let handled: Bool
                 switch PlayerShortcutKey.eventPhase(from: event) {
@@ -381,7 +383,7 @@ struct PlayerKeyboardEventMonitor: NSViewRepresentable {
                 case nil:
                     handled = false
                 }
-                return handled ? nil : event
+                return (handled || recognizedMediaEvent) ? nil : event
             }
         }
 
