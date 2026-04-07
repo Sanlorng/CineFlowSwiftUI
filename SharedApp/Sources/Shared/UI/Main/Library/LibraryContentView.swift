@@ -46,6 +46,7 @@ struct LibraryContentView: View {
     
     @ViewBuilder
     private func mainContent(_ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>) -> some View {
+        let hasSelectedConfiguration = viewStore.selectedConfigurationID != nil
         VStack(spacing: 0) {
             libraryList(viewStore)
         }
@@ -227,27 +228,27 @@ private struct LibraryGrid: View {
                                         }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .padding(.horizontal, 16)
-                            } header: {
-                                HStack {
-                                    Text(group.group)
-                                        .font(.title2)
-                                        .bold()
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .id(group.group)
-                                .background(
-                                    GeometryReader { geo in
-                                        Color.clear
-                                            .preference(
-                                                key: GroupPositionPreferenceKey.self,
-                                                value: [group.group: geo.frame(in: .named("LibraryGridScroll")).minY]
-                                            )
+                                    .padding(.horizontal, 16)
+                                } header: {
+                                    HStack {
+                                        Text(group.group)
+                                            .font(.title2)
+                                            .bold()
+                                        Spacer()
                                     }
-                                )
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .id(group.group)
+                                    .background(
+                                        GeometryReader { geo in
+                                            Color.clear
+                                                .preference(
+                                                    key: GroupPositionPreferenceKey.self,
+                                                    value: [group.group: geo.frame(in: .named("LibraryGridScroll")).minY]
+                                                )
+                                        }
+                                    )
+                                }
                             }
                         }
                         .padding(.top, 8)
