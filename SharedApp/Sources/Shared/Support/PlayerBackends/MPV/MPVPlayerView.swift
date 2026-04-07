@@ -459,9 +459,18 @@ final class MPVContainerViewController: PlatformViewController {
                         self.syncPlaybackState()
                     }
                 case MPV_EVENT_END_FILE:
-                    DispatchQueue.main.async {
-                        self.stateChanged(.completed)
-                        self.eventSink.onFinish?(nil)
+                    let endFile = UnsafePointer<mpv_event_end_file>(OpaquePointer(event.pointee.data))
+                    let shouldHandleCompletion = endFile?.pointee.reason == MPV_END_FILE_REASON_EOF
+#if DEBUG
+                    if let endFile {
+                        print("[MPV] end-file reason=\(endFile.pointee.reason) playlistEntryID=\(endFile.pointee.playlist_entry_id)")
+                    }
+#endif
+                    if shouldHandleCompletion {
+                        DispatchQueue.main.async {
+                            self.stateChanged(.completed)
+                            self.eventSink.onFinish?(nil)
+                        }
                     }
                 case MPV_EVENT_PROPERTY_CHANGE:
                     self.handlePropertyChange(event)
