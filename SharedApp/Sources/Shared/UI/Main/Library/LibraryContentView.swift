@@ -270,15 +270,7 @@ private struct LibraryCard: View {
     
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.secondary.opacity(0.08))
-                coverView
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(0.72, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .clipped()
+            coverContainer
             
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.title)
@@ -312,6 +304,19 @@ private struct LibraryCard: View {
                 .stroke(Color.secondary.opacity(0.1), lineWidth: 1)
         )
     }
+
+    private var coverContainer: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.secondary.opacity(0.08))
+            coverView
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .clipped()
+    }
     
     @ViewBuilder
     private var coverView: some View {
@@ -322,7 +327,8 @@ private struct LibraryCard: View {
                     image
                         .resizable()
                         .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .clipped()
                 case .failure:
                     placeholder
                 case .empty:
@@ -356,6 +362,7 @@ private struct LibraryCard: View {
                     .foregroundColor(.white.opacity(0.85))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
