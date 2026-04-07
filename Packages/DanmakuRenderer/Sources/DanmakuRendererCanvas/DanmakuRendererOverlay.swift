@@ -70,6 +70,10 @@ public final class DanmakuOverlayView: NSView {
     private let renderer = DanmakuCanvasRenderer()
     private var snapshot = Snapshot.empty
     private var displayLink: CVDisplayLink?
+    private var debugTargetFPS: Double?
+    private var debugFrameSampleStartedAt = CACurrentMediaTime()
+    private var debugFrameCount = 0
+    private var debugMeasuredFPS = 0.0
 
     public override var isFlipped: Bool { true }
     public override var isOpaque: Bool { false }
@@ -112,6 +116,8 @@ public final class DanmakuOverlayView: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.clear(bounds)
         renderer.draw(in: context, bounds: bounds)
+        recordDebugFrame()
+        drawDebugHUD(in: context)
     }
 
     private func updateRenderer() {
@@ -168,6 +174,15 @@ public final class DanmakuOverlayView: NSView {
             return
         }
 
+        let refreshPeriod = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(link)
+        if refreshPeriod.timeValue > 0, refreshPeriod.timeScale > 0 {
+            debugTargetFPS = Double(refreshPeriod.timeScale) / Double(refreshPeriod.timeValue)
+        } else if let screen = window?.screen {
+            if #available(macOS 12.0, *) {
+                debugTargetFPS = Double(screen.maximumFramesPerSecond)
+            }
+        }
+
         let callbackStatus = CVDisplayLinkSetOutputCallback(
             link,
             { _, _, _, _, _, context in
@@ -183,6 +198,68 @@ public final class DanmakuOverlayView: NSView {
 
         guard callbackStatus == kCVReturnSuccess else { return }
         displayLink = link
+    }
+
+    private func recordDebugFrame() {
+        let now = CACurrentMediaTime()
+        debugFrameCount += 1
+        let elapsed = now - debugFrameSampleStartedAt
+        guard elapsed >= 0.4 else { return }
+
+        let instantaneousFPS = Double(debugFrameCount) / elapsed
+        if debugMeasuredFPS == 0 {
+            debugMeasuredFPS = instantaneousFPS
+        } else {
+            debugMeasuredFPS = (debugMeasuredFPS * 0.7) + (instantaneousFPS * 0.3)
+        }
+        debugFrameCount = 0
+        debugFrameSampleStartedAt = now
+    }
+
+    private func drawDebugHUD(in context: CGContext) {
+        let targetFPS = debugTargetFPS ?? 0
+        let text: String
+        if targetFPS > 0 {
+            text = String(format: "Danmaku %.1f / %.0f FPS", debugMeasuredFPS, targetFPS)
+        } else {
+            text = String(format: "Danmaku %.1f FPS", debugMeasuredFPS)
+        }
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .right
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraphStyle
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let textSize = attributed.size()
+        let padding = NSEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        let badgeSize = CGSize(
+            width: ceil(textSize.width + padding.left + padding.right),
+            height: ceil(textSize.height + padding.top + padding.bottom)
+        )
+        let badgeRect = CGRect(
+            x: max(bounds.width - badgeSize.width - 14, 0),
+            y: 14,
+            width: badgeSize.width,
+            height: badgeSize.height
+        )
+
+        let badgePath = NSBezierPath(roundedRect: badgeRect, xRadius: 9, yRadius: 9)
+        context.saveGState()
+        context.setFillColor(NSColor.black.withAlphaComponent(0.58).cgColor)
+        context.addPath(badgePath.cgPath)
+        context.fillPath()
+        context.restoreGState()
+
+        let textRect = CGRect(
+            x: badgeRect.minX + padding.left,
+            y: badgeRect.minY + padding.top,
+            width: textSize.width,
+            height: textSize.height
+        )
+        attributed.draw(in: textRect)
     }
 }
 
@@ -1145,6 +1222,12 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
         context.scaleBy(x: 1, y: -1)
         context.setAllowsAntialiasing(true)
         context.setShouldAntialias(true)
+        context.setAllowsFontSmoothing(true)
+        context.setShouldSmoothFonts(true)
+        context.setAllowsFontSubpixelPositioning(true)
+        context.setShouldSubpixelPositionFonts(true)
+        context.setAllowsFontSubpixelQuantization(true)
+        context.setShouldSubpixelQuantizeFonts(true)
         context.interpolationQuality = .high
 
         let font = makeFont(size: comment.fontSize, family: comment.fontFamily)
@@ -1168,10 +1251,17 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
 
     private func makeFont(size: CGFloat, family: String?) -> CTFont {
         if let family, family.isEmpty == false {
-            let custom = CTFontCreateWithName(family as CFString, size, nil)
+            let descriptor = CTFontDescriptorCreateWithAttributes([
+                kCTFontFamilyNameAttribute: family as CFString,
+                kCTFontSizeAttribute: size as CFNumber
+            ] as CFDictionary)
+            let custom = CTFontCreateWithFontDescriptor(descriptor, size, nil)
+            let resolvedFamily = CTFontCopyFamilyName(custom) as String
             let postScriptName = CTFontCopyPostScriptName(custom) as String
-            if postScriptName.caseInsensitiveCompare(family) == .orderedSame
-                || postScriptName.localizedCaseInsensitiveContains(family) {
+            if postScriptName.localizedCaseInsensitiveContains("LastResort") == false,
+               resolvedFamily.caseInsensitiveCompare(family) == .orderedSame
+                || resolvedFamily.localizedCaseInsensitiveContains(family)
+                || family.localizedCaseInsensitiveContains(resolvedFamily) {
                 return custom
             }
         }
@@ -1243,3 +1333,33 @@ private extension String {
         isEmpty ? nil : self
     }
 }
+
+#if os(macOS)
+private extension NSBezierPath {
+    var cgPath: CGPath {
+        let path = CGMutablePath()
+        var points = [NSPoint](repeating: .zero, count: 3)
+
+        for index in 0..<elementCount {
+            switch element(at: index, associatedPoints: &points) {
+            case .moveTo:
+                path.move(to: points[0])
+            case .lineTo:
+                path.addLine(to: points[0])
+            case .curveTo:
+                path.addCurve(to: points[2], control1: points[0], control2: points[1])
+            case .cubicCurveTo:
+                path.addCurve(to: points[2], control1: points[0], control2: points[1])
+            case .quadraticCurveTo:
+                path.addQuadCurve(to: points[1], control: points[0])
+            case .closePath:
+                path.closeSubpath()
+            @unknown default:
+                break
+            }
+        }
+
+        return path
+    }
+}
+#endif
