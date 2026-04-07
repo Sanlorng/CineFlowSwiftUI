@@ -65,6 +65,7 @@ struct PlayerPresenter {
         }
         
         let configuration: LibraryPresenter.State.Configuration
+        let seriesTitle: String?
         let coverURL: URL?
         var playlist: IdentifiedArrayOf<PlaylistItem>
         var currentIndex: Int
@@ -94,12 +95,14 @@ struct PlayerPresenter {
         
         init(
             configuration: LibraryPresenter.State.Configuration,
+            seriesTitle: String? = nil,
             coverURL: URL? = nil,
             playlist: [PlaylistItem],
             currentIndex: Int,
             allEpisodeFiles: [Components.Schemas.LibraryBangumiEpisode: [Components.Schemas.LibraryBangumiMatchedFile]]
         ) {
             self.configuration = configuration
+            self.seriesTitle = seriesTitle
             self.coverURL = coverURL
             self.playlist = IdentifiedArray(uniqueElements: playlist)
             self.currentIndex = playlist.indices.contains(currentIndex) ? currentIndex : 0

@@ -807,12 +807,16 @@ private struct PlayerContentMainView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .tracking(0.8)
-                Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
+                Text(viewStore.seriesTitle ?? "未命名番剧")
                     .font(.title3.weight(.semibold))
-                    .lineLimit(2)
-                Text("\(viewStore.playlist.count) 集内容")
+                    .lineLimit(2...2)
+                Text(currentTitle(for: viewStore.currentItem?.episode ?? .init()))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Text("\(viewStore.playlist.count) 集内容")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary.opacity(0.85))
             }
             episodePagePicker(viewStore: viewStore)
             ScrollViewReader { proxy in
@@ -1785,77 +1789,71 @@ private func episodeBrowserRow(
     item: PlayerPresenter.State.PlaylistItem,
     isSelected: Bool
 ) -> some View {
-    HStack(spacing: 12) {
-        episodeOrdinalBadge(for: item.episode)
-        VStack(alignment: .leading, spacing: 4) {
-            Text(currentTitleStatic(for: item.episode))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-            Text(item.file.name ?? "未知文件")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        Spacer(minLength: 0)
-        if isSelected {
-            Image(systemName: "play.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
-                .padding(8)
-                .background(
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.16))
-                )
-        }
-    }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 12)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(
-                isSelected
-                ? LinearGradient(
-                    colors: [
-                        Color.accentColor.opacity(0.24),
-                        Color.accentColor.opacity(0.12)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                : LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.1),
-                        Color.white.opacity(0.04)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-    )
-    .overlay(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .stroke(
-                isSelected ? Color.accentColor.opacity(0.55) : Color.white.opacity(0.08),
-                lineWidth: 1
-            )
-    )
+    EpisodeBrowserRowContent(item: item, isSelected: isSelected)
 }
 
-@MainActor
-@ViewBuilder
-private func episodeOrdinalBadge(for episode: Components.Schemas.LibraryBangumiEpisode) -> some View {
-    let label = episode.episodeNumber?.isEmpty == false ? (episode.episodeNumber ?? "") : "EP"
-    Text(label)
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.white.opacity(0.82))
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
+private struct EpisodeBrowserRowContent: View {
+    let item: PlayerPresenter.State.PlaylistItem
+    let isSelected: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(currentTitleStatic(for: item.episode))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Text(item.file.name ?? "未知文件")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(.white.opacity(0.08))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    isSelected
+                    ? LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0.24),
+                            Color.accentColor.opacity(0.12)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    : LinearGradient(
+                        colors: [
+                            Color.white.opacity(isHovering ? 0.16 : 0.1),
+                            Color.white.opacity(isHovering ? 0.08 : 0.04)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(
+                    isSelected
+                    ? Color.accentColor.opacity(0.55)
+                    : Color.white.opacity(isHovering ? 0.18 : 0.08),
+                    lineWidth: 1
+                )
+        )
+#if os(macOS)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+#endif
+    }
 }
 
 private func currentTitleStatic(for episode: Components.Schemas.LibraryBangumiEpisode) -> String {
