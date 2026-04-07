@@ -63,7 +63,7 @@ struct BangumiDetailView: View {
     @ViewBuilder
     private func content(for viewStore: ViewStore<BangumiDetailPresenter.State, BangumiDetailPresenter.Action>) -> some View {
         VStack(alignment: .leading, spacing: 24) {
-            headerSection(for: viewStore.summary)
+            headerSection(for: viewStore.summary, detail: viewStore.detail)
             
             if viewStore.isLoading {
                 VStack(spacing: 12) {
@@ -88,7 +88,10 @@ struct BangumiDetailView: View {
     }
     
     @ViewBuilder
-    private func headerSection(for item: LibraryPresenter.State.BangumiItem) -> some View {
+    private func headerSection(
+        for item: LibraryPresenter.State.BangumiItem,
+        detail: Components.Schemas.LibraryBangumiDetailsResponse?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top, spacing: 16) {
                 coverView(url: item.coverURL)
@@ -114,6 +117,32 @@ struct BangumiDetailView: View {
                         Text(metadata)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                    }
+
+                    if let latestWatchedEpisode = detail?.episodes?.first(where: { $0.isLatestWatched == true }) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("最近观看到")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .tracking(0.6)
+                            Text(bangumiEpisodeDisplayTitle(latestWatchedEpisode))
+                                .font(.subheadline.weight(.semibold))
+                            if let watchedDate = preferredLastWatchedDate(for: latestWatchedEpisode) {
+                                Text(localizedBangumiDetailDateTime(watchedDate))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.12))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                        )
                     }
                 }
                 Spacer(minLength: 0)
@@ -191,6 +220,15 @@ struct BangumiDetailView: View {
 private struct EpisodeCard: View {
     let episode: Components.Schemas.LibraryBangumiEpisode
     let onTap: () -> Void
+    @State private var isHovering = false
+
+    private var isSelected: Bool {
+        episode.isLatestWatched == true
+    }
+
+    private var isDisabled: Bool {
+        episode.localMatchedFiles?.isEmpty ?? true
+    }
     
     var body: some View {
         Button(action: onTap) {
@@ -199,13 +237,21 @@ private struct EpisodeCard: View {
                     Text(title)
                         .lineLimit(2...2)
                         .font(.headline)
-                    if episode.isLatestWatched == true {
+                    if isSelected {
                         TagView(text: "最近观看")
                     }
                     Spacer()
                 }
                 
                 HStack(spacing: 12) {
+                    if let watchedDate = preferredLastWatchedDate(for: episode) {
+                        Label(
+                            "上次观看 \(localizedBangumiDetailDateTime(watchedDate))",
+                            systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                     if let airDate = episode.airDate {
                         Label {
                             Text(localizedBangumiDetailDate(airDate))
@@ -230,28 +276,37 @@ private struct EpisodeCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.platformBackground.opacity(0.25))
+                    .fill(
+                        isSelected
+                        ? Color.accentColor.opacity(isDisabled ? 0.12 : 0.2)
+                        : Color.platformBackground.opacity(isHovering ? 0.36 : 0.25)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.platformBackground.opacity(0.25), lineWidth: 1)
+                    .stroke(
+                        isSelected
+                        ? Color.accentColor.opacity(isDisabled ? 0.4 : 0.7)
+                        : Color.platformBackground.opacity(isHovering ? 0.5 : 0.25),
+                        lineWidth: 1.2
+                    )
             )
+            .scaleEffect(isHovering && !isDisabled ? 1.01 : 1)
+            .opacity(isDisabled ? 0.72 : 1)
         }
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .buttonStyle(.plain)
+#if os(macOS)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+#endif
     }
     
     private var title: String {
-        var components: [String] = []
-        if let number = episode.episodeNumber, !number.isEmpty {
-            components.append("#\(number)")
-        }
-        if let episodeTitle = episode.episodeTitle, !episodeTitle.isEmpty {
-            components.append(episodeTitle)
-        }
-        else if let displayTitle = episode.displayTitle, !displayTitle.isEmpty {
-            components.append(displayTitle)
-        }
-        return components.isEmpty ? "未命名剧集" : components.joined(separator: " ")
+        bangumiEpisodeDisplayTitle(episode)
     }
 }
 
@@ -283,6 +338,44 @@ private func localizedBangumiDetailDate(_ date: Date) -> String {
     formatter.dateStyle = .medium
     formatter.timeStyle = .none
     return formatter.string(from: date)
+}
+
+private func localizedBangumiDetailDateTime(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    if let preferredLanguage = Locale.preferredLanguages.first, !preferredLanguage.isEmpty {
+        formatter.locale = Locale(identifier: preferredLanguage)
+    } else {
+        formatter.locale = .autoupdatingCurrent
+    }
+    formatter.calendar = .autoupdatingCurrent
+    formatter.timeZone = .autoupdatingCurrent
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter.string(from: date)
+}
+
+private func preferredLastWatchedDate(
+    for episode: Components.Schemas.LibraryBangumiEpisode
+) -> Date? {
+    episode.lastWatched ?? episode.lastWatchedCloud
+}
+
+private func bangumiEpisodeDisplayTitle(
+    _ episode: Components.Schemas.LibraryBangumiEpisode
+) -> String {
+    if let episodeTitle = episode.episodeTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !episodeTitle.isEmpty {
+        return episodeTitle
+    }
+    if let displayTitle = episode.displayTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !displayTitle.isEmpty {
+        return displayTitle
+    }
+    if let number = episode.episodeNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !number.isEmpty {
+        return "第\(number)话"
+    }
+    return "未命名剧集"
 }
 
 // MARK: - Helpers
