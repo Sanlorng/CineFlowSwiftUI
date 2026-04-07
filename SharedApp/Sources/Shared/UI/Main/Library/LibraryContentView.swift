@@ -158,9 +158,6 @@ struct LibraryContentView: View {
         if let rating = item.rating ?? item.userRating {
             components.append(String(format: "评分 %.1f", rating))
         }
-        if let group = item.groupName, !group.isEmpty {
-            components.append(group)
-        }
         if let count = item.videoFileCount, count > 0 {
             components.append("文件 \(count)")
         }
@@ -181,7 +178,7 @@ private struct LibraryGrid: View {
         ScrollViewReader { proxy in
             let hasSidebar = viewStore.groupedBangumiItems.count > 1
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24, pinnedViews: [.sectionHeaders]) {
+                LazyVStack(alignment: .leading, spacing: 24) {
                     ForEach(viewStore.groupedBangumiItems, id: \.group) { group in
                         Section {
                             LazyVGrid(columns: columns, spacing: 16) {
@@ -201,7 +198,6 @@ private struct LibraryGrid: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
-                            .background(.regularMaterial)
                             .id(group.group)
                             .background(
                                 GeometryReader { geo in
@@ -219,7 +215,7 @@ private struct LibraryGrid: View {
             }
             .coordinateSpace(name: "LibraryGridScroll")
             .padding(.leading, 0)
-            .padding(.trailing, hasSidebar ? 120 : 0)
+            .padding(.trailing, hasSidebar ? 96 : 0)
             .overlay(alignment: .topTrailing) {
                 if hasSidebar {
                     GroupSidebar(
@@ -276,13 +272,14 @@ private struct LibraryCard: View {
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             coverView
+                .frame(maxWidth: .infinity)
                 .frame(height: 200)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.title)
                     .font(.headline)
-                    .lineLimit(2)
+                    .lineLimit(2, reservesSpace: true)
                     .multilineTextAlignment(.leading)
                 
                 if let details = item.details, !details.isEmpty {
@@ -363,33 +360,47 @@ private struct GroupSidebar: View {
     let action: (String) -> Void
     
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .trailing, spacing: 8) {
-                ForEach(groups, id: \.self) { group in
-                    Button {
-                        action(group)
-                    } label: {
-                        Text(group)
-                            .font(.caption)
-                            .foregroundColor(selected == group ? .white : .primary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(selected == group ? Color.accentColor : Color.secondary.opacity(0.2))
-                            )
-                            .frame(minWidth: 72, alignment: .trailing)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    ForEach(groups, id: \.self) { group in
+                        Button {
+                            action(group)
+                        } label: {
+                            Text(group)
+                                .font(.caption)
+                                .foregroundColor(selected == group ? .white : .primary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(selected == group ? Color.accentColor : Color.secondary.opacity(0.2))
+                                )
+                        }
+                        .id(group)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                }
+            }
+            .onAppear {
+                guard let selected else { return }
+                DispatchQueue.main.async {
+                    proxy.scrollTo(selected, anchor: .center)
+                }
+            }
+            .onChange(of: selected) { _, newValue in
+                guard let newValue else { return }
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    proxy.scrollTo(newValue, anchor: .center)
                 }
             }
         }
-        .frame(width: 110, alignment: .trailing)
         .frame(maxHeight: 360)
         .padding(12)
         .background(.thinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 20))
         .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 8)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
