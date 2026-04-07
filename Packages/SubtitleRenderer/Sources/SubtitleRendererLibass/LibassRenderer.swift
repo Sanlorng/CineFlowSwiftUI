@@ -14,6 +14,7 @@ public enum LibassRendererError: Error, Equatable {
 }
 
 public final class LibassRenderer: SubtitleRenderingBackend {
+    private static let baseFontSize: Double = 54
     public static var isRuntimeAvailable: Bool {
         (try? LibassRuntime()) != nil
     }
@@ -29,7 +30,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
     public init(
         viewport: SubtitleViewport,
         defaultFontFamily: String? = nil,
-        fontScale: Double = 1,
+        fontSize: Double = Self.baseFontSize,
         fontsDirectory: URL? = nil
     ) throws {
         do {
@@ -59,7 +60,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
 
         try applyViewport(viewport)
         try configureFonts(defaultFontFamily: defaultFontFamily)
-        applyFontScale(fontScale)
+        applyFontSize(fontSize)
     }
 
     deinit {
@@ -134,8 +135,10 @@ public final class LibassRenderer: SubtitleRenderingBackend {
         }
     }
 
-    private func applyFontScale(_ fontScale: Double) {
-        runtime.assSetFontScale(renderer, max(fontScale, 0.25))
+    private func applyFontSize(_ fontSize: Double) {
+        let normalizedFontSize = max(fontSize, 12)
+        let scale = normalizedFontSize / Self.baseFontSize
+        runtime.assSetFontScale(renderer, max(scale, 0.25))
     }
 
     private func applyViewport(_ viewport: SubtitleViewport) throws {

@@ -8,7 +8,7 @@ struct PlayerLoadOptions: Equatable, Sendable {
     var selectedAudioTrackID: String?
     var selectedEmbeddedSubtitleTrackID: String?
     var subtitleTimeOffset: TimeInterval
-    var subtitleFontScale: Double
+    var subtitleFontSize: Double
     var subtitleFontFamily: String?
 
     init(
@@ -19,7 +19,7 @@ struct PlayerLoadOptions: Equatable, Sendable {
         selectedAudioTrackID: String? = nil,
         selectedEmbeddedSubtitleTrackID: String? = nil,
         subtitleTimeOffset: TimeInterval = 0,
-        subtitleFontScale: Double = 1,
+        subtitleFontSize: Double = 54,
         subtitleFontFamily: String? = nil
     ) {
         self.headers = headers
@@ -29,7 +29,7 @@ struct PlayerLoadOptions: Equatable, Sendable {
         self.selectedAudioTrackID = selectedAudioTrackID
         self.selectedEmbeddedSubtitleTrackID = selectedEmbeddedSubtitleTrackID
         self.subtitleTimeOffset = subtitleTimeOffset
-        self.subtitleFontScale = subtitleFontScale
+        self.subtitleFontSize = subtitleFontSize
         self.subtitleFontFamily = subtitleFontFamily
     }
 }

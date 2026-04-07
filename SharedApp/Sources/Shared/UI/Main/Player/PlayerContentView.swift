@@ -58,7 +58,7 @@ private struct PlayerContentMainView: View {
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
     @AppStorage("player.danmaku.speed") private var danmakuSpeed = 1.0
     @AppStorage("player.subtitle.timeOffset") private var subtitleTimeOffset = 0.0
-    @AppStorage("player.subtitle.fontScale") private var subtitleFontScale = 1.0
+    @AppStorage("player.subtitle.fontSize") private var subtitleFontSize = 54.0
     @AppStorage("player.subtitle.fontFamily") private var subtitleFontFamily = ""
     @AppStorage("player.playback.mode") private var playbackModeRawValue = PlaybackMode.sequential.rawValue
     
@@ -71,7 +71,7 @@ private struct PlayerContentMainView: View {
                         selectedAudioTrackID: viewStore.selectedAudioTrackID,
                         selectedEmbeddedSubtitleTrackID: effectiveEmbeddedSubtitleTrackID(viewStore: viewStore),
                         subtitleTimeOffset: subtitleTimeOffset,
-                        subtitleFontScale: subtitleFontScale,
+                        subtitleFontSize: subtitleFontSize,
                         subtitleFontFamily: effectiveSubtitleFontFamily,
                         allowAutoPlay: shouldAllowAutoPlay(
                             viewStore: viewStore,
@@ -223,7 +223,7 @@ private struct PlayerContentMainView: View {
                         subtitleTimeOffset: subtitleTimeOffset
                     ),
                     defaultFontFamily: effectiveSubtitleFontFamily,
-                    fontScale: subtitleFontScale,
+                    fontSize: subtitleFontSize,
                     onReadinessChanged: { ready in
                         if isSubtitleRendererReady != ready {
                             debugLogSubtitleRenderer(
@@ -365,6 +365,12 @@ private struct PlayerContentMainView: View {
                             metadataPill(
                                 title: "第\(episodeNumber)话",
                                 systemImage: "play.tv"
+                            )
+                        }
+                        if hasVisibleSubtitleOffset(subtitleTimeOffset) {
+                            metadataPill(
+                                title: subtitleOffsetStatusTitle(subtitleTimeOffset),
+                                systemImage: "captions.bubble"
                             )
                         }
                     }
@@ -607,6 +613,9 @@ private struct PlayerContentMainView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 10) {
                         settingsSectionTitle("字幕")
+                        if hasVisibleSubtitleOffset(subtitleTimeOffset) {
+                            subtitleOffsetNotice(subtitleTimeOffset)
+                        }
                         controlSettingRow(
                             title: "时间偏移",
                             value: formattedSubtitleTimeOffset(subtitleTimeOffset)
@@ -627,20 +636,20 @@ private struct PlayerContentMainView: View {
                             }
                         }
                         controlSettingRow(
-                            title: "字号缩放",
-                            value: "\(Int((subtitleFontScale * 100).rounded()))%"
+                            title: "字号",
+                            value: formattedSubtitleFontSize(subtitleFontSize)
                         ) {
                             VStack(alignment: .leading, spacing: 8) {
-                                Slider(value: $subtitleFontScale, in: 0.7...1.8, step: 0.05)
+                                Slider(value: $subtitleFontSize, in: 24...84, step: 2)
                                 HStack(spacing: 8) {
                                     smallSettingButton("缩小") {
-                                        subtitleFontScale = max(subtitleFontScale - 0.1, 0.7)
+                                        subtitleFontSize = max(subtitleFontSize - 2, 24)
                                     }
                                     smallSettingButton("重置") {
-                                        subtitleFontScale = 1
+                                        subtitleFontSize = 54
                                     }
                                     smallSettingButton("放大") {
-                                        subtitleFontScale = min(subtitleFontScale + 0.1, 1.8)
+                                        subtitleFontSize = min(subtitleFontSize + 2, 84)
                                     }
                                 }
                             }
@@ -1439,7 +1448,7 @@ private func makeOptions(
     selectedAudioTrackID: String?,
     selectedEmbeddedSubtitleTrackID: String?,
     subtitleTimeOffset: TimeInterval,
-    subtitleFontScale: Double,
+    subtitleFontSize: Double,
     subtitleFontFamily: String?,
     allowAutoPlay: Bool
 ) -> PlayerLoadOptions {
@@ -1450,7 +1459,7 @@ private func makeOptions(
         selectedAudioTrackID: selectedAudioTrackID,
         selectedEmbeddedSubtitleTrackID: selectedEmbeddedSubtitleTrackID,
         subtitleTimeOffset: subtitleTimeOffset,
-        subtitleFontScale: subtitleFontScale,
+        subtitleFontSize: subtitleFontSize,
         subtitleFontFamily: subtitleFontFamily
     )
 }
@@ -1626,6 +1635,34 @@ private func smallSettingButton(_ title: String, action: @escaping () -> Void) -
     Button(title, action: action)
         .buttonStyle(.bordered)
         .controlSize(.small)
+}
+
+@MainActor
+@ViewBuilder
+private func subtitleOffsetNotice(_ offset: TimeInterval) -> some View {
+    HStack(spacing: 10) {
+        Image(systemName: offset < 0 ? "backward.frame.fill" : "forward.frame.fill")
+            .font(.system(size: 12, weight: .semibold))
+        VStack(alignment: .leading, spacing: 2) {
+            Text("当前总偏移")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(subtitleOffsetStatusTitle(offset))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 10)
+    .background(
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color.accentColor.opacity(0.12))
+    )
+    .overlay(
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .stroke(Color.accentColor.opacity(0.24), lineWidth: 1)
+    )
 }
 
 @MainActor
@@ -1946,6 +1983,25 @@ private func formattedSubtitleTimeOffset(_ offset: TimeInterval) -> String {
     }
     let sign = milliseconds > 0 ? "+" : "-"
     return "\(sign)\(abs(milliseconds)) ms"
+}
+
+private func formattedSubtitleFontSize(_ fontSize: Double) -> String {
+    "\(Int(fontSize.rounded())) pt"
+}
+
+private func hasVisibleSubtitleOffset(_ offset: TimeInterval) -> Bool {
+    abs(offset) >= 0.05
+}
+
+private func subtitleOffsetStatusTitle(_ offset: TimeInterval) -> String {
+    let seconds = abs(offset)
+    let formatted = seconds >= 10
+        ? String(format: "%.0fs", seconds)
+        : String(format: "%.1fs", seconds)
+    if offset < 0 {
+        return "字幕提前 \(formatted)"
+    }
+    return "字幕推后 \(formatted)"
 }
 
 private enum PlaybackMode: String, CaseIterable, Identifiable {

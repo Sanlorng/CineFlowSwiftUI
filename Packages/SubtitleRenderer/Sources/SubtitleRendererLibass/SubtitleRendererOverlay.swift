@@ -9,20 +9,20 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
     public let document: SubtitleDocument?
     public let playbackTime: TimeInterval
     public let defaultFontFamily: String?
-    public let fontScale: Double
+    public let fontSize: Double
     public let onReadinessChanged: (@MainActor (Bool) -> Void)?
 
     public init(
         document: SubtitleDocument?,
         playbackTime: TimeInterval,
         defaultFontFamily: String? = nil,
-        fontScale: Double = 1,
+        fontSize: Double = 54,
         onReadinessChanged: (@MainActor (Bool) -> Void)? = nil
     ) {
         self.document = document
         self.playbackTime = playbackTime
         self.defaultFontFamily = defaultFontFamily
-        self.fontScale = fontScale
+        self.fontSize = fontSize
         self.onReadinessChanged = onReadinessChanged
     }
 
@@ -42,7 +42,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             document: document,
             playbackTime: playbackTime,
             defaultFontFamily: defaultFontFamily,
-            fontScale: fontScale,
+            fontSize: fontSize,
             onReadinessChanged: onReadinessChanged
         )
     }
@@ -55,7 +55,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
     public final class Coordinator {
         private struct RenderStyle: Equatable {
             let defaultFontFamily: String?
-            let fontScale: Double
+            let fontSize: Double
         }
 
         private var renderer: LibassRenderer?
@@ -85,7 +85,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             document: SubtitleDocument?,
             playbackTime: TimeInterval,
             defaultFontFamily: String?,
-            fontScale: Double,
+            fontSize: Double,
             onReadinessChanged: (@MainActor (Bool) -> Void)?
         ) {
             guard let document else {
@@ -95,7 +95,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
 
             let renderStyle = RenderStyle(
                 defaultFontFamily: defaultFontFamily?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-                fontScale: max(fontScale, 0.25)
+                fontSize: max(fontSize, 12)
             )
 
             let viewport = SubtitleViewport(
@@ -116,7 +116,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
                     renderer = try LibassRenderer(
                         viewport: viewport,
                         defaultFontFamily: renderStyle.defaultFontFamily,
-                        fontScale: renderStyle.fontScale
+                        fontSize: renderStyle.fontSize
                     )
                     currentViewport = viewport
                     currentRenderStyle = renderStyle
@@ -182,20 +182,20 @@ public struct SubtitleRendererOverlay: View {
     public let document: SubtitleDocument?
     public let playbackTime: TimeInterval
     public let defaultFontFamily: String?
-    public let fontScale: Double
+    public let fontSize: Double
     public let onReadinessChanged: (@MainActor (Bool) -> Void)?
 
     public init(
         document: SubtitleDocument?,
         playbackTime: TimeInterval,
         defaultFontFamily: String? = nil,
-        fontScale: Double = 1,
+        fontSize: Double = 54,
         onReadinessChanged: (@MainActor (Bool) -> Void)? = nil
     ) {
         self.document = document
         self.playbackTime = playbackTime
         self.defaultFontFamily = defaultFontFamily
-        self.fontScale = fontScale
+        self.fontSize = fontSize
         self.onReadinessChanged = onReadinessChanged
     }
 

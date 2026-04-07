@@ -411,8 +411,8 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         guard let mpv else { return }
         var subtitleDelay = options.subtitleTimeOffset
         _ = mpv_set_property(mpv, MPVProperty.subDelay, MPV_FORMAT_DOUBLE, &subtitleDelay)
-        var subtitleScale = max(options.subtitleFontScale, 0.25)
-        _ = mpv_set_property(mpv, MPVProperty.subScale, MPV_FORMAT_DOUBLE, &subtitleScale)
+        var subtitleFontSize = max(options.subtitleFontSize, 12)
+        _ = mpv_set_property(mpv, MPVProperty.subFontSize, MPV_FORMAT_DOUBLE, &subtitleFontSize)
         _ = mpv_set_property_string(mpv, MPVProperty.subFont, options.subtitleFontFamily ?? "")
     }
 
@@ -624,7 +624,7 @@ private enum MPVProperty {
     static let aid = "aid"
     static let sid = "sid"
     static let subDelay = "sub-delay"
-    static let subScale = "sub-scale"
+    static let subFontSize = "sub-font-size"
     static let subFont = "sub-font"
     static let trackList = "track-list"
     static let videoParams = "video-params"
