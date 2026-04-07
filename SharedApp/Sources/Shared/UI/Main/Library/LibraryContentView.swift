@@ -98,10 +98,11 @@ struct LibraryContentView: View {
                     Label("选择排序方式", systemImage: "square.grid.3x1.below.line.grid.1x2")
                 }
                 .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
+            }
 
+            ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 8) {
                     librarySearchField(viewStore)
-
                     Button {
                         viewStore.send(.refresh)
                     } label: {
@@ -134,7 +135,7 @@ struct LibraryContentView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .frame(width: 148, alignment: .leading)
+        .frame(width: 132, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.secondary.opacity(0.08))
@@ -208,24 +209,24 @@ private struct LibraryGrid: View {
     @State private var selectedGroup: String?
     @State private var isProgrammaticScroll = false
     
-    private let columns = [
-        GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 16, alignment: .top)
-    ]
-    
     var body: some View {
         ScrollViewReader { proxy in
             let hasSidebar = viewStore.groupedBangumiItems.count > 1
             HStack(alignment: .top, spacing: 12) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 24) {
-                        ForEach(viewStore.groupedBangumiItems, id: \.group) { group in
-                            Section {
-                                LazyVGrid(columns: columns, spacing: 16) {
-                                    ForEach(group.items) { item in
-                                        LibraryCard(item: item) {
-                                            viewStore.send(.bangumiTapped(item))
+                GeometryReader { geometry in
+                    let gridMetrics = libraryGridMetrics(for: geometry.size.width)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 24) {
+                            ForEach(viewStore.groupedBangumiItems, id: \.group) { group in
+                                Section {
+                                    LazyVGrid(columns: gridMetrics.columns, spacing: 16) {
+                                        ForEach(group.items) { item in
+                                            LibraryCard(item: item, width: gridMetrics.itemWidth) {
+                                                viewStore.send(.bangumiTapped(item))
+                                            }
                                         }
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .padding(.horizontal, 16)
                             } header: {
@@ -249,10 +250,11 @@ private struct LibraryGrid: View {
                                 )
                             }
                         }
+                        .padding(.top, 8)
                     }
-                    .padding(.top, 8)
+                    .coordinateSpace(name: "LibraryGridScroll")
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .coordinateSpace(name: "LibraryGridScroll")
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if hasSidebar {
@@ -297,6 +299,7 @@ private struct LibraryGrid: View {
 
 private struct LibraryCard: View {
     let item: LibraryPresenter.State.BangumiItem
+    let width: CGFloat
     let onTap: () -> Void
     
     var body: some View {
@@ -332,7 +335,7 @@ private struct LibraryCard: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color.secondary.opacity(0.08))
@@ -350,7 +353,7 @@ private struct LibraryCard: View {
             coverView
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 220)
+        .frame(height: max(width * 1.38, 180))
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .contentShape(RoundedRectangle(cornerRadius: 14))
         .clipped()
@@ -402,6 +405,29 @@ private struct LibraryCard: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+private struct LibraryGridMetrics {
+    let columns: [GridItem]
+    let itemWidth: CGFloat
+}
+
+private func libraryGridMetrics(for availableWidth: CGFloat) -> LibraryGridMetrics {
+    let minimumItemWidth: CGFloat = 180
+    let maximumItemWidth: CGFloat = 220
+    let spacing: CGFloat = 16
+    let resolvedWidth = max(availableWidth - 32, minimumItemWidth)
+    let columnCount = max(
+        Int((resolvedWidth + spacing) / (minimumItemWidth + spacing)),
+        1
+    )
+    let rawItemWidth = (resolvedWidth - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount)
+    let itemWidth = min(max(rawItemWidth, minimumItemWidth), maximumItemWidth)
+    let columns = Array(
+        repeating: GridItem(.fixed(itemWidth), spacing: spacing, alignment: .top),
+        count: columnCount
+    )
+    return .init(columns: columns, itemWidth: itemWidth)
 }
 
 private struct GroupSidebar: View {
