@@ -958,7 +958,7 @@ private func configurationPanelHeader(
     title: String,
     subtitle: String
 ) -> some View {
-    HStack(alignment: .top, spacing: 14) {
+    HStack(alignment: .center, spacing: 12) {
         ZStack {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(
@@ -985,11 +985,13 @@ private func configurationPanelHeader(
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
         Spacer(minLength: 0)
     }
     .padding(.horizontal, 20)
     .padding(.top, 20)
-    .padding(.bottom, 16)
+    .padding(.bottom, 14)
 }
 
 @ViewBuilder
@@ -997,19 +999,19 @@ private func configurationListRow<Content: View>(
     label: String,
     @ViewBuilder field: () -> Content
 ) -> some View {
-    HStack(alignment: .center, spacing: 20) {
+    HStack(alignment: .center, spacing: 16) {
         Text(label)
             .font(.subheadline.weight(.semibold))
             .frame(width: 112, alignment: .leading)
             .foregroundStyle(.primary)
         field()
-            .font(.title3.weight(.medium))
+            .font(.body.weight(.medium))
             .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(.horizontal, 20)
-    .padding(.vertical, 18)
-    .frame(minHeight: 68)
+    .padding(.vertical, 12)
+    .frame(minHeight: 54)
 }
 
 @ViewBuilder
