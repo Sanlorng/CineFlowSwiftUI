@@ -7,6 +7,9 @@ struct PlayerLoadOptions: Equatable, Sendable {
     var playbackTimeNotificationInterval: TimeInterval
     var selectedAudioTrackID: String?
     var selectedEmbeddedSubtitleTrackID: String?
+    var subtitleTimeOffset: TimeInterval
+    var subtitleFontScale: Double
+    var subtitleFontFamily: String?
 
     init(
         headers: [String: String] = [:],
@@ -14,7 +17,10 @@ struct PlayerLoadOptions: Equatable, Sendable {
         allowAutoPlay: Bool = true,
         playbackTimeNotificationInterval: TimeInterval = 1 / 30,
         selectedAudioTrackID: String? = nil,
-        selectedEmbeddedSubtitleTrackID: String? = nil
+        selectedEmbeddedSubtitleTrackID: String? = nil,
+        subtitleTimeOffset: TimeInterval = 0,
+        subtitleFontScale: Double = 1,
+        subtitleFontFamily: String? = nil
     ) {
         self.headers = headers
         self.enableHardwareDecoding = enableHardwareDecoding
@@ -22,5 +28,8 @@ struct PlayerLoadOptions: Equatable, Sendable {
         self.playbackTimeNotificationInterval = playbackTimeNotificationInterval
         self.selectedAudioTrackID = selectedAudioTrackID
         self.selectedEmbeddedSubtitleTrackID = selectedEmbeddedSubtitleTrackID
+        self.subtitleTimeOffset = subtitleTimeOffset
+        self.subtitleFontScale = subtitleFontScale
+        self.subtitleFontFamily = subtitleFontFamily
     }
 }

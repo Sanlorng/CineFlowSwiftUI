@@ -29,6 +29,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
     public init(
         viewport: SubtitleViewport,
         defaultFontFamily: String? = nil,
+        fontScale: Double = 1,
         fontsDirectory: URL? = nil
     ) throws {
         do {
@@ -58,6 +59,7 @@ public final class LibassRenderer: SubtitleRenderingBackend {
 
         try applyViewport(viewport)
         try configureFonts(defaultFontFamily: defaultFontFamily)
+        applyFontScale(fontScale)
     }
 
     deinit {
@@ -130,6 +132,10 @@ public final class LibassRenderer: SubtitleRenderingBackend {
                 1
             )
         }
+    }
+
+    private func applyFontScale(_ fontScale: Double) {
+        runtime.assSetFontScale(renderer, max(fontScale, 0.25))
     }
 
     private func applyViewport(_ viewport: SubtitleViewport) throws {

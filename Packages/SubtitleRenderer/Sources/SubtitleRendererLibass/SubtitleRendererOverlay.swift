@@ -8,15 +8,21 @@ import QuartzCore
 public struct SubtitleRendererOverlay: NSViewRepresentable {
     public let document: SubtitleDocument?
     public let playbackTime: TimeInterval
+    public let defaultFontFamily: String?
+    public let fontScale: Double
     public let onReadinessChanged: (@MainActor (Bool) -> Void)?
 
     public init(
         document: SubtitleDocument?,
         playbackTime: TimeInterval,
+        defaultFontFamily: String? = nil,
+        fontScale: Double = 1,
         onReadinessChanged: (@MainActor (Bool) -> Void)? = nil
     ) {
         self.document = document
         self.playbackTime = playbackTime
+        self.defaultFontFamily = defaultFontFamily
+        self.fontScale = fontScale
         self.onReadinessChanged = onReadinessChanged
     }
 
@@ -35,6 +41,8 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             view: view,
             document: document,
             playbackTime: playbackTime,
+            defaultFontFamily: defaultFontFamily,
+            fontScale: fontScale,
             onReadinessChanged: onReadinessChanged
         )
     }
@@ -45,9 +53,15 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
 
     @MainActor
     public final class Coordinator {
+        private struct RenderStyle: Equatable {
+            let defaultFontFamily: String?
+            let fontScale: Double
+        }
+
         private var renderer: LibassRenderer?
         private var currentDocument: SubtitleDocument?
         private var currentViewport: SubtitleViewport?
+        private var currentRenderStyle: RenderStyle?
         private var isReady = false
 
         func attach(to view: SubtitleOverlayView) {
@@ -63,18 +77,26 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             renderer = nil
             currentDocument = nil
             currentViewport = nil
+            currentRenderStyle = nil
         }
 
         func update(
             view: SubtitleOverlayView,
             document: SubtitleDocument?,
             playbackTime: TimeInterval,
+            defaultFontFamily: String?,
+            fontScale: Double,
             onReadinessChanged: (@MainActor (Bool) -> Void)?
         ) {
             guard let document else {
                 clear(view: view, onReadinessChanged: onReadinessChanged)
                 return
             }
+
+            let renderStyle = RenderStyle(
+                defaultFontFamily: defaultFontFamily?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                fontScale: max(fontScale, 0.25)
+            )
 
             let viewport = SubtitleViewport(
                 size: view.bounds.size,
@@ -90,9 +112,15 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             }
 
             do {
-                if renderer == nil {
-                    renderer = try LibassRenderer(viewport: viewport)
+                if renderer == nil || currentRenderStyle != renderStyle {
+                    renderer = try LibassRenderer(
+                        viewport: viewport,
+                        defaultFontFamily: renderStyle.defaultFontFamily,
+                        fontScale: renderStyle.fontScale
+                    )
                     currentViewport = viewport
+                    currentRenderStyle = renderStyle
+                    currentDocument = nil
                 } else if currentViewport != viewport {
                     try renderer?.updateViewport(viewport)
                     currentViewport = viewport
@@ -132,6 +160,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             renderer = nil
             currentDocument = nil
             currentViewport = nil
+            currentRenderStyle = nil
         }
 
         private func updateReadiness(
@@ -152,15 +181,21 @@ public final class SubtitleOverlayView: NSView {
 public struct SubtitleRendererOverlay: View {
     public let document: SubtitleDocument?
     public let playbackTime: TimeInterval
+    public let defaultFontFamily: String?
+    public let fontScale: Double
     public let onReadinessChanged: (@MainActor (Bool) -> Void)?
 
     public init(
         document: SubtitleDocument?,
         playbackTime: TimeInterval,
+        defaultFontFamily: String? = nil,
+        fontScale: Double = 1,
         onReadinessChanged: (@MainActor (Bool) -> Void)? = nil
     ) {
         self.document = document
         self.playbackTime = playbackTime
+        self.defaultFontFamily = defaultFontFamily
+        self.fontScale = fontScale
         self.onReadinessChanged = onReadinessChanged
     }
 
@@ -169,3 +204,9 @@ public struct SubtitleRendererOverlay: View {
     }
 }
 #endif
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}

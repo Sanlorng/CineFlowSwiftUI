@@ -43,6 +43,7 @@ private struct PlayerContentMainView: View {
     @State private var isSpeedPopoverPresented = false
     @State private var isEpisodePopoverPresented = false
     @State private var isDanmakuPopoverPresented = false
+    @State private var isPlaybackSettingsPopoverPresented = false
     @State private var observedWindow: NSWindow?
     @State private var isFullscreen = false
     @State private var isCursorHidden = false
@@ -56,6 +57,10 @@ private struct PlayerContentMainView: View {
     @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
     @AppStorage("player.danmaku.speed") private var danmakuSpeed = 1.0
+    @AppStorage("player.subtitle.timeOffset") private var subtitleTimeOffset = 0.0
+    @AppStorage("player.subtitle.fontScale") private var subtitleFontScale = 1.0
+    @AppStorage("player.subtitle.fontFamily") private var subtitleFontFamily = ""
+    @AppStorage("player.playback.mode") private var playbackModeRawValue = PlaybackMode.sequential.rawValue
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -65,6 +70,9 @@ private struct PlayerContentMainView: View {
                         for: stream,
                         selectedAudioTrackID: viewStore.selectedAudioTrackID,
                         selectedEmbeddedSubtitleTrackID: effectiveEmbeddedSubtitleTrackID(viewStore: viewStore),
+                        subtitleTimeOffset: subtitleTimeOffset,
+                        subtitleFontScale: subtitleFontScale,
+                        subtitleFontFamily: effectiveSubtitleFontFamily,
                         allowAutoPlay: shouldAllowAutoPlay(
                             viewStore: viewStore,
                             isSubtitleRendererReady: isSubtitleRendererReady
@@ -151,6 +159,9 @@ private struct PlayerContentMainView: View {
         .onChange(of: isDanmakuPopoverPresented) { _, _ in
             scheduleControlBarVisibilityUpdate()
         }
+        .onChange(of: isPlaybackSettingsPopoverPresented) { _, _ in
+            scheduleControlBarVisibilityUpdate()
+        }
     }
 
     @ViewBuilder
@@ -190,6 +201,8 @@ private struct PlayerContentMainView: View {
                     .onFinish { error in
                         if let error {
                             viewStore.send(.setPlaybackError(error.localizedDescription))
+                        } else {
+                            handlePlaybackCompletion(viewStore: viewStore)
                         }
                     }
                     .onTracksChanged { tracks in
@@ -205,7 +218,12 @@ private struct PlayerContentMainView: View {
                     }
                 SubtitleRendererOverlay(
                     document: customSubtitleDocument,
-                    playbackTime: playerController.timeline.currentTime,
+                    playbackTime: adjustedSubtitlePlaybackTime(
+                        playerController.timeline.currentTime,
+                        subtitleTimeOffset: subtitleTimeOffset
+                    ),
+                    defaultFontFamily: effectiveSubtitleFontFamily,
+                    fontScale: subtitleFontScale,
                     onReadinessChanged: { ready in
                         if isSubtitleRendererReady != ready {
                             debugLogSubtitleRenderer(
@@ -406,11 +424,12 @@ private struct PlayerContentMainView: View {
                         if isFullscreen {
                             episodeMenu(viewStore: viewStore)
                     }
-                    glassIconButton("gobackward.10") {
-                        playerController.seekBy(-10)
+                        glassIconButton("gobackward.10") {
+                            playerController.seekBy(-10)
                     }
                     danmakuMenu()
                     speedMenu()
+                    playbackSettingsMenu(viewStore: viewStore)
                     glassIconButton("goforward.10") {
                         playerController.seekBy(10)
                     }
@@ -543,21 +562,21 @@ private struct PlayerContentMainView: View {
                 Toggle("显示弹幕", isOn: $isDanmakuVisible)
                     .toggleStyle(.switch)
 
-                danmakuSettingRow(
+                controlSettingRow(
                     title: "字号",
                     value: "\(Int((danmakuFontScale * 100).rounded()))%"
                 ) {
                     Slider(value: $danmakuFontScale, in: 1.0...2.5, step: 0.1)
                 }
 
-                danmakuSettingRow(
+                controlSettingRow(
                     title: "透明度",
                     value: "\(Int((danmakuOpacity * 100).rounded()))%"
                 ) {
                     Slider(value: $danmakuOpacity, in: 0.2...1.0, step: 0.05)
                 }
 
-                danmakuSettingRow(
+                controlSettingRow(
                     title: "速度",
                     value: String(format: "%.1fx", danmakuSpeed)
                 ) {
@@ -566,6 +585,124 @@ private struct PlayerContentMainView: View {
             }
             .padding(14)
             .frame(width: 260, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func playbackSettingsMenu(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) -> some View {
+        Button {
+            isPlaybackSettingsPopoverPresented.toggle()
+            revealControls()
+        } label: {
+            glassCapsuleLabel(
+                title: "播放设置",
+                systemImage: "slider.horizontal.3"
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPlaybackSettingsPopoverPresented, arrowEdge: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingsSectionTitle("字幕")
+                        controlSettingRow(
+                            title: "时间偏移",
+                            value: formattedSubtitleTimeOffset(subtitleTimeOffset)
+                        ) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Slider(value: $subtitleTimeOffset, in: -10...10, step: 0.1)
+                                HStack(spacing: 8) {
+                                    smallSettingButton("提前 0.5s") {
+                                        subtitleTimeOffset = max(subtitleTimeOffset - 0.5, -10)
+                                    }
+                                    smallSettingButton("重置") {
+                                        subtitleTimeOffset = 0
+                                    }
+                                    smallSettingButton("推后 0.5s") {
+                                        subtitleTimeOffset = min(subtitleTimeOffset + 0.5, 10)
+                                    }
+                                }
+                            }
+                        }
+                        controlSettingRow(
+                            title: "字号缩放",
+                            value: "\(Int((subtitleFontScale * 100).rounded()))%"
+                        ) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Slider(value: $subtitleFontScale, in: 0.7...1.8, step: 0.05)
+                                HStack(spacing: 8) {
+                                    smallSettingButton("缩小") {
+                                        subtitleFontScale = max(subtitleFontScale - 0.1, 0.7)
+                                    }
+                                    smallSettingButton("重置") {
+                                        subtitleFontScale = 1
+                                    }
+                                    smallSettingButton("放大") {
+                                        subtitleFontScale = min(subtitleFontScale + 0.1, 1.8)
+                                    }
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("默认字体")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                Text(currentSubtitleFontOption.title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(subtitleFontOptions) { option in
+                                Button {
+                                    subtitleFontFamily = option.rawValue
+                                } label: {
+                                    selectionRowLabel(
+                                        title: option.title,
+                                        subtitle: option.preview,
+                                        isSelected: subtitleFontFamily == option.rawValue
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingsSectionTitle("播放模式")
+                        ForEach(PlaybackMode.allCases) { mode in
+                            Button {
+                                playbackModeRawValue = mode.rawValue
+                            } label: {
+                                selectionRowLabel(
+                                    title: mode.title,
+                                    subtitle: mode.description,
+                                    isSelected: playbackMode == mode
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        settingsSectionTitle("当前状态")
+                        Text("后端：\(PlayerBackendKind.defaultDistributable.displayName)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("当前字幕：\(subtitleMenuTitle(externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore), embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName, isSuppressed: viewStore.areSubtitlesSuppressed))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(14)
+            }
+            .frame(width: 320, height: 460, alignment: .topLeading)
         }
     }
 
@@ -948,6 +1085,7 @@ private struct PlayerContentMainView: View {
             || isSpeedPopoverPresented
             || isEpisodePopoverPresented
             || isDanmakuPopoverPresented
+            || isPlaybackSettingsPopoverPresented
     }
 
     private var currentDanmakuSettings: DanmakuRenderSettings {
@@ -957,6 +1095,42 @@ private struct PlayerContentMainView: View {
             opacity: danmakuOpacity,
             speed: danmakuSpeed
         )
+    }
+
+    private var effectiveSubtitleFontFamily: String? {
+        subtitleFontFamily.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    private var currentSubtitleFontOption: SubtitleFontOption {
+        subtitleFontOptions.first(where: { $0.rawValue == subtitleFontFamily }) ?? .systemDefault
+    }
+
+    private var playbackMode: PlaybackMode {
+        PlaybackMode(rawValue: playbackModeRawValue) ?? .sequential
+    }
+
+    private func handlePlaybackCompletion(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        switch playbackMode {
+        case .singleRepeat:
+            playerController.seekTo(0)
+            playerController.setPaused(false)
+        case .sequential:
+            guard viewStore.currentIndex + 1 < viewStore.playlist.count else { return }
+            viewStore.send(.playNext)
+        case .listRepeat:
+            if viewStore.currentIndex + 1 < viewStore.playlist.count {
+                viewStore.send(.playNext)
+            } else if let firstItem = viewStore.playlist.first {
+                if firstItem.id == viewStore.currentItem?.id {
+                    playerController.seekTo(0)
+                    playerController.setPaused(false)
+                } else {
+                    viewStore.send(.playItem(firstItem.id))
+                }
+            }
+        }
     }
 
     private func subtitleOverlayViewportSize(in containerSize: CGSize) -> CGSize {
@@ -1264,6 +1438,9 @@ private func makeOptions(
     for stream: RemoteMediaLibraryClient.StreamContext,
     selectedAudioTrackID: String?,
     selectedEmbeddedSubtitleTrackID: String?,
+    subtitleTimeOffset: TimeInterval,
+    subtitleFontScale: Double,
+    subtitleFontFamily: String?,
     allowAutoPlay: Bool
 ) -> PlayerLoadOptions {
     PlayerLoadOptions(
@@ -1271,8 +1448,18 @@ private func makeOptions(
         enableHardwareDecoding: true,
         allowAutoPlay: allowAutoPlay,
         selectedAudioTrackID: selectedAudioTrackID,
-        selectedEmbeddedSubtitleTrackID: selectedEmbeddedSubtitleTrackID
+        selectedEmbeddedSubtitleTrackID: selectedEmbeddedSubtitleTrackID,
+        subtitleTimeOffset: subtitleTimeOffset,
+        subtitleFontScale: subtitleFontScale,
+        subtitleFontFamily: subtitleFontFamily
     )
+}
+
+private func adjustedSubtitlePlaybackTime(
+    _ playbackTime: TimeInterval,
+    subtitleTimeOffset: TimeInterval
+) -> TimeInterval {
+    max(playbackTime - subtitleTimeOffset, 0)
 }
 
 @MainActor
@@ -1405,7 +1592,7 @@ private func playbackRateTitle(_ rate: Double) -> String {
 
 @MainActor
 @ViewBuilder
-private func danmakuSettingRow<Content: View>(
+private func controlSettingRow<Content: View>(
     title: String,
     value: String,
     @ViewBuilder content: () -> Content
@@ -1422,6 +1609,23 @@ private func danmakuSettingRow<Content: View>(
         }
         content()
     }
+}
+
+@MainActor
+@ViewBuilder
+private func settingsSectionTitle(_ title: String) -> some View {
+    Text(title)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .tracking(0.8)
+}
+
+@MainActor
+@ViewBuilder
+private func smallSettingButton(_ title: String, action: @escaping () -> Void) -> some View {
+    Button(title, action: action)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
 }
 
 @MainActor
@@ -1735,6 +1939,81 @@ private func externalSubtitleDisplayTitle(fileName: String) -> String? {
     return displayName.isEmpty ? cleanedComponent : displayName
 }
 
+private func formattedSubtitleTimeOffset(_ offset: TimeInterval) -> String {
+    let milliseconds = Int((offset * 1000).rounded())
+    if milliseconds == 0 {
+        return "0 ms"
+    }
+    let sign = milliseconds > 0 ? "+" : "-"
+    return "\(sign)\(abs(milliseconds)) ms"
+}
+
+private enum PlaybackMode: String, CaseIterable, Identifiable {
+    case sequential
+    case singleRepeat
+    case listRepeat
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sequential:
+            return "顺序播放"
+        case .singleRepeat:
+            return "单集循环"
+        case .listRepeat:
+            return "列表循环"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .sequential:
+            return "播放完成后自动进入下一集，最后一集结束后停止"
+        case .singleRepeat:
+            return "当前集播放完成后从头重新播放"
+        case .listRepeat:
+            return "播放完成后自动进入下一集，最后一集结束后回到第一集"
+        }
+    }
+}
+
+private enum SubtitleFontOption: String, CaseIterable, Identifiable {
+    case systemDefault = ""
+    case pingFangSC = "PingFang SC"
+    case hiraginoSansGB = "Hiragino Sans GB"
+    case songtiSC = "Songti SC"
+    case helveticaNeue = "Helvetica Neue"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .systemDefault:
+            return "系统默认"
+        case .pingFangSC:
+            return "苹方"
+        case .hiraginoSansGB:
+            return "冬青黑体"
+        case .songtiSC:
+            return "宋体"
+        case .helveticaNeue:
+            return "Helvetica Neue"
+        }
+    }
+
+    var preview: String {
+        switch self {
+        case .systemDefault:
+            return "跟随渲染器默认字体"
+        case .pingFangSC, .hiraginoSansGB, .songtiSC, .helveticaNeue:
+            return rawValue
+        }
+    }
+}
+
+private let subtitleFontOptions: [SubtitleFontOption] = SubtitleFontOption.allCases
+
 private let supportedSubtitleContentTypes: [UTType] = {
     [
         UTType(filenameExtension: "ass"),
@@ -1762,6 +2041,12 @@ private func debugLogSubtitleRenderer(_ message: @autoclosure () -> String) {
 #if DEBUG
     print("[PlayerContentView][SubtitleRenderer] \(message())")
 #endif
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
 }
 
 private extension Color {

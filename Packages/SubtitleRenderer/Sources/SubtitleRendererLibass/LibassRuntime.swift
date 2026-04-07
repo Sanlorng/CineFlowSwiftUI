@@ -30,6 +30,7 @@ final class LibassRuntime {
         UnsafePointer<CChar>?,
         Int32
     ) -> Void
+    typealias AssSetFontScale = @convention(c) (OpaquePointer?, Double) -> Void
     typealias AssReadMemory = @convention(c) (
         OpaquePointer?,
         UnsafeMutablePointer<CChar>?,
@@ -56,6 +57,7 @@ final class LibassRuntime {
     let assSetLinePosition: AssSetLinePosition
     let assSetHinting: AssSetHinting
     let assSetFonts: AssSetFonts
+    let assSetFontScale: AssSetFontScale
     let assReadMemory: AssReadMemory
     let assFreeTrack: AssFreeTrack
     let assRenderFrame: AssRenderFrame
@@ -112,6 +114,7 @@ final class LibassRuntime {
         assSetLinePosition = try loadSymbol("ass_set_line_position", as: AssSetLinePosition.self)
         assSetHinting = try loadSymbol("ass_set_hinting", as: AssSetHinting.self)
         assSetFonts = try loadSymbol("ass_set_fonts", as: AssSetFonts.self)
+        assSetFontScale = try loadSymbol("ass_set_font_scale", as: AssSetFontScale.self)
         assReadMemory = try loadSymbol("ass_read_memory", as: AssReadMemory.self)
         assFreeTrack = try loadSymbol("ass_free_track", as: AssFreeTrack.self)
         assRenderFrame = try loadSymbol("ass_render_frame", as: AssRenderFrame.self)

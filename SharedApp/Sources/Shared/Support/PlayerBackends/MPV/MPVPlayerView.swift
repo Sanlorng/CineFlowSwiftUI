@@ -233,6 +233,7 @@ final class MPVContainerViewController: PlatformViewController {
         startPlaybackIfReady()
         applyAudioTrackSelection(options.selectedAudioTrackID)
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
+        applySubtitleSettings(options)
         if options.allowAutoPlay {
             setPause(false)
         }
@@ -349,6 +350,7 @@ final class MPVContainerViewController: PlatformViewController {
         applyHTTPHeaders(source.headers, to: mpv)
         applyAudioTrackSelection(options.selectedAudioTrackID)
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
+        applySubtitleSettings(options)
         stateChanged(.preparing)
 
         if !options.allowAutoPlay {
@@ -416,6 +418,15 @@ final class MPVContainerViewController: PlatformViewController {
             _ = mpv_set_property_string(mpv, MPVProperty.sid, "no")
             _ = mpv_set_property_string(mpv, "sub-visibility", "no")
         }
+    }
+
+    private func applySubtitleSettings(_ options: PlayerLoadOptions) {
+        guard let mpv else { return }
+        var subtitleDelay = options.subtitleTimeOffset
+        _ = mpv_set_property(mpv, MPVProperty.subDelay, MPV_FORMAT_DOUBLE, &subtitleDelay)
+        var subtitleScale = max(options.subtitleFontScale, 0.25)
+        _ = mpv_set_property(mpv, MPVProperty.subScale, MPV_FORMAT_DOUBLE, &subtitleScale)
+        _ = mpv_set_property_string(mpv, MPVProperty.subFont, options.subtitleFontFamily ?? "")
     }
 
     private func runCommand(_ command: String, args: [String] = []) {
@@ -595,6 +606,9 @@ private enum MPVProperty {
     static let duration = "duration"
     static let aid = "aid"
     static let sid = "sid"
+    static let subDelay = "sub-delay"
+    static let subScale = "sub-scale"
+    static let subFont = "sub-font"
     static let trackList = "track-list"
     static let videoParams = "video-params"
 }
