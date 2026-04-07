@@ -52,6 +52,10 @@ struct LibraryContentView: View {
         }
         .navigationTitle("远程媒体库")
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                librarySearchField(viewStore)
+            }
+
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     viewStore.send(.setIsShowingForm(true))
@@ -99,18 +103,13 @@ struct LibraryContentView: View {
                     Label("选择排序方式", systemImage: "square.grid.3x1.below.line.grid.1x2")
                 }
                 .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
-            }
 
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 8) {
-                    librarySearchField(viewStore)
-                    Button {
-                        viewStore.send(.refresh)
-                    } label: {
-                        Label("刷新", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
+                Button {
+                    viewStore.send(.refresh)
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
                 }
+                .disabled(!hasSelectedConfiguration || viewStore.isLoadingLibrary)
             }
         }
         .onAppear {
@@ -122,28 +121,11 @@ struct LibraryContentView: View {
     private func librarySearchField(
         _ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>
     ) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField(
-                "搜索番剧",
-                text: Binding(
-                    get: { viewStore.searchQuery },
-                    set: { viewStore.send(.setSearchQuery($0)) }
-                )
+        AdaptiveLibraryToolbarSearchField(
+            query: Binding(
+                get: { viewStore.searchQuery },
+                set: { viewStore.send(.setSearchQuery($0)) }
             )
-            .textFieldStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(width: 132, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.secondary.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
         )
     }
     
@@ -202,6 +184,120 @@ struct LibraryContentView: View {
             components.append("文件 \(count)")
         }
         return components.isEmpty ? nil : components.joined(separator: " • ")
+    }
+}
+
+private struct AdaptiveLibraryToolbarSearchField: View {
+    @Binding var query: String
+    @State private var isPopoverPresented = false
+    @FocusState private var isInlineFieldFocused: Bool
+    @FocusState private var isPopoverFieldFocused: Bool
+
+    private let collapsedButtonSize: CGFloat = 32
+    private let minimumExpandedWidth: CGFloat = 144
+    private let idealExpandedWidth: CGFloat = 160
+    private let maximumExpandedWidth: CGFloat = 240
+    private let popoverExpandedWidth: CGFloat = 220
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            searchField(focused: $isInlineFieldFocused)
+                .frame(
+                    minWidth: minimumExpandedWidth,
+                    idealWidth: idealExpandedWidth,
+                    maxWidth: maximumExpandedWidth
+                )
+
+            collapsedSearchButton
+        }
+    }
+
+    private var collapsedSearchButton: some View {
+        Button {
+            isPopoverPresented = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(searchAccentColor)
+                .frame(width: collapsedButtonSize, height: collapsedButtonSize)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.clear)
+                        .glassEffect()
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(searchBorderColor, lineWidth: 0.6)
+                }
+        }
+        .buttonStyle(.plain)
+        .help("搜索番剧")
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
+            searchField(focused: $isPopoverFieldFocused)
+                .frame(width: popoverExpandedWidth)
+                .padding(10)
+                .onAppear {
+                    isPopoverFieldFocused = true
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func searchField(
+        focused focusBinding: FocusState<Bool>.Binding
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            TextField(
+                "搜索番剧",
+                text: $query,
+                prompt: Text("搜索番剧").foregroundStyle(.secondary)
+            )
+            .textFieldStyle(.plain)
+            .focused(focusBinding)
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                    focusBinding.wrappedValue = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, query.isEmpty ? 12 : 10)
+        .padding(.vertical, 7)
+        .background {
+            Capsule(style: .continuous)
+                .fill(.clear)
+                .glassEffect()
+        }
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(searchBorderColor, lineWidth: 0.6)
+        }
+        .contentShape(Capsule(style: .continuous))
+        .onTapGesture {
+            focusBinding.wrappedValue = true
+        }
+    }
+
+    private var searchBorderColor: Color {
+        if isInlineFieldFocused || isPopoverFieldFocused {
+            return .accentColor.opacity(0.28)
+        }
+        return .white.opacity(query.isEmpty ? 0.14 : 0.22)
+    }
+
+    private var searchAccentColor: Color {
+        query.isEmpty ? .primary : .accentColor
     }
 }
 
