@@ -50,6 +50,14 @@ struct LibraryContentView: View {
             libraryList(viewStore)
         }
         .navigationTitle("远程媒体库")
+        .searchable(
+            text: Binding(
+                get: { viewStore.searchQuery },
+                set: { viewStore.send(.setSearchQuery($0)) }
+            ),
+            placement: .toolbar,
+            prompt: "搜索番剧"
+        )
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 
@@ -139,6 +147,14 @@ struct LibraryContentView: View {
                             .padding(.vertical, 8)
                     }
                     .buttonStyle(.borderedProminent)
+                }
+            } else if viewStore.displayedBangumiItems.isEmpty {
+                if viewStore.trimmedSearchQuery.isEmpty {
+                    Text("没有可显示的动漫内容。")
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("没有匹配“\(viewStore.trimmedSearchQuery)”的番剧。")
+                        .foregroundColor(.secondary)
                 }
             } else if viewStore.bangumiItems.isEmpty {
                 Text("没有可显示的动漫内容。")

@@ -104,6 +104,7 @@ struct LibraryPresenter {
         var selectedConfigurationID: UUID?
         var bangumiItems: IdentifiedArrayOf<BangumiItem> = []
         var selectedSort: SortOption = .lastPlay
+        var searchQuery: String = ""
         
         var isLoadingLibrary = false
         var isCheckingWelcome = false
@@ -184,6 +185,7 @@ struct LibraryPresenter {
         case setFormPort(String)
         case setFormToken(String)
         case setSort(SortOption)
+        case setSearchQuery(String)
         case bangumiTapped(State.BangumiItem)
         case path(StackAction<Path.State, Path.Action>)
     }
@@ -395,6 +397,10 @@ struct LibraryPresenter {
                 state.selectedSort = sort
                 guard let id = state.selectedConfigurationID else { return .none }
                 return triggerFetchLibraryEffect(id)
+
+            case let .setSearchQuery(query):
+                state.searchQuery = query
+                return .none
             }
         }
         .forEach(\.path, action: /Action.path) {
@@ -525,11 +531,26 @@ extension LibraryPresenter.State.BangumiItem {
 }
 
 extension LibraryPresenter.State {
+    var trimmedSearchQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var displayedBangumiItems: IdentifiedArrayOf<BangumiItem> {
+        let query = trimmedSearchQuery
+        guard !query.isEmpty else { return bangumiItems }
+        let terms = normalizedSearchTerms(from: query)
+        guard !terms.isEmpty else { return bangumiItems }
+        let filtered = bangumiItems.filter { item in
+            item.matchesSearchTerms(terms)
+        }
+        return IdentifiedArray(uniqueElements: filtered)
+    }
+
     var groupedBangumiItems: [(group: String, items: [BangumiItem])] {
         var order: [String] = []
         var storage: [String: [BangumiItem]] = [:]
         
-        for item in bangumiItems {
+        for item in displayedBangumiItems {
             let rawGroup = item.groupName?.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = (rawGroup?.isEmpty == false) ? rawGroup! : "未分组"
             if storage[key] == nil {
@@ -546,6 +567,36 @@ extension LibraryPresenter.State {
     
     var groupTitles: [String] {
         groupedBangumiItems.map(\.group)
+    }
+}
+
+private func normalizedSearchTerms(from query: String) -> [String] {
+    query
+        .lowercased()
+        .folding(options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive], locale: .autoupdatingCurrent)
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+}
+
+private extension LibraryPresenter.State.BangumiItem {
+    func matchesSearchTerms(_ terms: [String]) -> Bool {
+        let haystacks = [
+            title,
+            details,
+            groupName,
+            episodeProgress,
+            animeId.map(String.init),
+            videoFileCount.map { "文件 \($0)" }
+        ]
+        .compactMap { $0 }
+        .map {
+            $0.lowercased()
+                .folding(options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive], locale: .autoupdatingCurrent)
+        }
+
+        return terms.allSatisfy { term in
+            haystacks.contains(where: { $0.contains(term) })
+        }
     }
 }
 
