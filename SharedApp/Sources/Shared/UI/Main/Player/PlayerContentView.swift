@@ -811,10 +811,6 @@ private struct PlayerContentMainView: View {
     private func episodeSidebar(viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("剧集")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .tracking(0.8)
                 Text(viewStore.seriesTitle ?? "未命名番剧")
                     .font(.title3.weight(.semibold))
                     .lineLimit(2...2)
