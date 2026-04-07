@@ -46,6 +46,7 @@ private struct PlayerContentMainView: View {
     @State private var isPlaybackSettingsPopoverPresented = false
     @State private var observedWindow: NSWindow?
     @State private var isFullscreen = false
+    @State private var usesFullscreenLayout = false
     @State private var isCursorHidden = false
     @State private var lastPointerLocation: CGPoint?
     @State private var lastPointerMovementAt: ContinuousClock.Instant?
@@ -62,7 +63,6 @@ private struct PlayerContentMainView: View {
     @State private var isTemporaryBoostShortcutActive = false
     @State private var forwardShortcutActivationTask: Task<Void, Never>?
     @State private var fullscreenShortcutHUD: PlayerShortcutHUDState?
-    @State private var suppressControlRevealOnNextFullscreenChange = false
     @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
     @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
@@ -120,7 +120,7 @@ private struct PlayerContentMainView: View {
     private func playerScreen(
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
     ) -> some View {
-        VStack(spacing: isFullscreen ? 0 : 16) {
+        VStack(spacing: usesFullscreenLayout ? 0 : 16) {
             if let stream = viewStore.currentItem?.stream {
                 let options = makeOptions(
                     for: stream,
@@ -138,7 +138,7 @@ private struct PlayerContentMainView: View {
                     from: viewStore.activeSubtitle,
                     isSuppressed: viewStore.areSubtitlesSuppressed
                 )
-                HStack(alignment: .top, spacing: isFullscreen ? 0 : 18) {
+                HStack(alignment: .top, spacing: usesFullscreenLayout ? 0 : 18) {
                     playerStage(
                         viewStore: viewStore,
                         stream: stream,
@@ -147,7 +147,7 @@ private struct PlayerContentMainView: View {
                     )
                     .frame(maxWidth: .infinity)
 
-                    if !isFullscreen {
+                    if !usesFullscreenLayout {
                         episodeSidebar(viewStore: viewStore)
                             .frame(width: 300)
                     }
@@ -157,14 +157,14 @@ private struct PlayerContentMainView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !isFullscreen, let error = viewStore.subtitleError {
+            if !usesFullscreenLayout, let error = viewStore.subtitleError {
                 Text(error)
                     .font(.footnote)
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !isFullscreen, let playbackError = viewStore.playbackError, !playbackError.isEmpty {
+            if !usesFullscreenLayout, let playbackError = viewStore.playbackError, !playbackError.isEmpty {
                 Text(playbackError)
                     .font(.footnote)
                     .foregroundStyle(.red)
@@ -172,7 +172,7 @@ private struct PlayerContentMainView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(isFullscreen ? 0 : 16)
+        .padding(usesFullscreenLayout ? 0 : 16)
         .background {
             playerBackgroundLayer(for: viewStore.coverURL)
                 .ignoresSafeArea()
@@ -314,30 +314,27 @@ private struct PlayerContentMainView: View {
                 PlayerWindowObserver(
                     onWindowChanged: { window in
                         observedWindow = window
-                        isFullscreen = window?.styleMask.contains(.fullScreen) ?? false
+                        let fullscreen = window?.styleMask.contains(.fullScreen) ?? false
+                        isFullscreen = fullscreen
+                        usesFullscreenLayout = fullscreen
                         updateWindowToolbarVisibility()
                         scheduleControlBarVisibilityUpdate()
                     },
+                    onFullscreenWillChange: { fullscreen in
+                        handleFullscreenTransitionStart(to: fullscreen)
+                    },
                     onFullscreenChanged: { fullscreen in
                         isFullscreen = fullscreen
+                        usesFullscreenLayout = fullscreen
                         updateWindowToolbarVisibility()
-                        if !fullscreen {
-                            cancelFullscreenPointerTasks()
-                            dismissFullscreenShortcutHUD()
-                            showCursorIfNeeded()
-                        }
-                        let shouldRevealControls = !suppressControlRevealOnNextFullscreenChange
-                        suppressControlRevealOnNextFullscreenChange = false
-                        if shouldRevealControls {
-                            revealControls()
-                        }
+                        handleFullscreenTransitionCompletion(to: fullscreen)
                     }
                 )
                 .frame(width: 0, height: 0)
 #endif
             }
         }
-        .frame(minHeight: 240, maxHeight: isFullscreen ? .infinity : nil)
+        .frame(minHeight: 240, maxHeight: usesFullscreenLayout ? .infinity : nil)
         .clipped()
 #if os(macOS)
         .onContinuousHover(coordinateSpace: .local) { phase in
@@ -350,7 +347,7 @@ private struct PlayerContentMainView: View {
             case .ended:
                 isPointerInsidePlayer = false
                 lastPointerLocation = nil
-                if !isFullscreen {
+                if !usesFullscreenLayout {
                     scheduleControlBarVisibilityUpdate()
                 }
             }
@@ -402,6 +399,7 @@ private struct PlayerContentMainView: View {
             lastPointerLocation = nil
             cancelFullscreenPointerTasks()
             isFullscreen = false
+            usesFullscreenLayout = false
             updateWindowToolbarVisibility()
             showCursorIfNeeded()
         }
@@ -523,7 +521,7 @@ private struct PlayerContentMainView: View {
 #if os(macOS)
         .onHover { inside in
             isPointerInsideControls = inside
-            if isFullscreen {
+            if usesFullscreenLayout {
                 if inside {
                     cancelControlBarAutoHide()
                     revealControlsIfNeeded()
@@ -566,14 +564,16 @@ private struct PlayerContentMainView: View {
             controlButtonCluster(opacity: 0.14) {
                 audioMenu(viewStore: viewStore, displayMode: displayMode)
                 subtitleMenu(viewStore: viewStore, displayMode: displayMode)
-                episodeMenu(viewStore: viewStore)
+                if usesFullscreenLayout {
+                    episodeMenu(viewStore: viewStore)
+                }
             }
 
             Spacer(minLength: 0)
 
 #if os(macOS)
             glassIconButton(
-                isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+                usesFullscreenLayout ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
             ) {
                 observedWindow?.toggleFullScreen(nil)
             }
@@ -1460,7 +1460,6 @@ private struct PlayerContentMainView: View {
 
         switch action {
         case .toggleFullscreen:
-            suppressControlRevealOnNextFullscreenChange = true
             observedWindow?.toggleFullScreen(nil)
         case .togglePlayPause:
             playerController.togglePlayPause()
@@ -1590,6 +1589,43 @@ private struct PlayerContentMainView: View {
         }
         isForwardShortcutPressed = false
         isTemporaryBoostShortcutActive = false
+    }
+
+    private func handleFullscreenTransitionStart(to fullscreen: Bool) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            usesFullscreenLayout = fullscreen
+        }
+        updateWindowToolbarVisibility()
+
+        if fullscreen {
+            cancelControlBarAutoHide()
+            lastPointerLocation = nil
+            isPointerInsideControls = false
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isControlBarVisible = false
+            }
+            hideCursorIfNeeded()
+        } else {
+            cancelFullscreenPointerTasks()
+            dismissFullscreenShortcutHUD()
+            showCursorIfNeeded()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isControlBarVisible = true
+            }
+            scheduleControlBarVisibilityUpdate()
+        }
+    }
+
+    private func handleFullscreenTransitionCompletion(to fullscreen: Bool) {
+        if fullscreen {
+            cancelControlBarAutoHide()
+            hideCursorIfNeeded()
+            isControlBarVisible = false
+        } else {
+            dismissFullscreenShortcutHUD()
+            showCursorIfNeeded()
+            scheduleControlBarVisibilityUpdate()
+        }
     }
 
     private func showFullscreenShortcutHUD(title: String, value: String, systemImage: String) {
@@ -1762,7 +1798,7 @@ private struct PlayerContentMainView: View {
         cancelControlBarAutoHide()
 
 #if os(macOS)
-        if isFullscreen {
+        if usesFullscreenLayout {
             if isAnyControlPopoverPresented || isPointerInsideControls {
                 revealControlsIfNeeded()
                 cancelControlBarAutoHide()
@@ -1788,7 +1824,7 @@ private struct PlayerContentMainView: View {
             try? await Task.sleep(for: delay)
 #if os(macOS)
             let stillEligible: Bool
-            if isFullscreen {
+            if usesFullscreenLayout {
                 stillEligible = lastPointerMovementAt == expectedMovementInstant
                     && !isPointerInsideControls
                     && !isAnyControlPopoverPresented
@@ -1801,7 +1837,7 @@ private struct PlayerContentMainView: View {
             let stillEligible = false
 #endif
             guard stillEligible else { return }
-            if isFullscreen {
+            if usesFullscreenLayout {
                 hideCursorIfNeeded()
             }
             withAnimation(.easeInOut(duration: 0.22)) {
@@ -1812,7 +1848,7 @@ private struct PlayerContentMainView: View {
 
     private func handlePlayerPointerMovement() {
         lastPointerMovementAt = .now
-        if isFullscreen {
+        if usesFullscreenLayout {
             if isCursorHidden {
                 showCursorIfNeeded()
             }
@@ -1840,7 +1876,7 @@ private struct PlayerContentMainView: View {
         let expectedMovementInstant = lastPointerMovementAt
         hideControlsTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
-            guard isFullscreen,
+            guard usesFullscreenLayout,
                   lastPointerMovementAt == expectedMovementInstant,
                   !isPointerInsideControls,
                   !isAnyControlPopoverPresented else { return }
@@ -1853,7 +1889,7 @@ private struct PlayerContentMainView: View {
 
 #if os(macOS)
     private func updateWindowToolbarVisibility() {
-        observedWindow?.toolbar?.isVisible = !isFullscreen
+        observedWindow?.toolbar?.isVisible = !usesFullscreenLayout
     }
 
     private func hideCursorIfNeeded() {
@@ -2467,10 +2503,15 @@ private func currentTitleStatic(for episode: Components.Schemas.LibraryBangumiEp
 #if os(macOS)
 private struct PlayerWindowObserver: NSViewRepresentable {
     let onWindowChanged: (NSWindow?) -> Void
+    let onFullscreenWillChange: (Bool) -> Void
     let onFullscreenChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onWindowChanged: onWindowChanged, onFullscreenChanged: onFullscreenChanged)
+        Coordinator(
+            onWindowChanged: onWindowChanged,
+            onFullscreenWillChange: onFullscreenWillChange,
+            onFullscreenChanged: onFullscreenChanged
+        )
     }
 
     func makeNSView(context: Context) -> WindowObserverView {
@@ -2487,15 +2528,18 @@ private struct PlayerWindowObserver: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         private let onWindowChanged: (NSWindow?) -> Void
+        private let onFullscreenWillChange: (Bool) -> Void
         private let onFullscreenChanged: (Bool) -> Void
         private weak var observedWindow: NSWindow?
         private var notificationTokens: [NSObjectProtocol] = []
 
         init(
             onWindowChanged: @escaping (NSWindow?) -> Void,
+            onFullscreenWillChange: @escaping (Bool) -> Void,
             onFullscreenChanged: @escaping (Bool) -> Void
         ) {
             self.onWindowChanged = onWindowChanged
+            self.onFullscreenWillChange = onFullscreenWillChange
             self.onFullscreenChanged = onFullscreenChanged
         }
 
@@ -2509,6 +2553,28 @@ private struct PlayerWindowObserver: NSViewRepresentable {
             reportFullscreenChange(window?.styleMask.contains(.fullScreen) ?? false)
 
             guard let window else { return }
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.willEnterFullScreenNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.reportFullscreenWillChange(true)
+                    }
+                }
+            )
+            notificationTokens.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.willExitFullScreenNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.reportFullscreenWillChange(false)
+                    }
+                }
+            )
             notificationTokens.append(
                 NotificationCenter.default.addObserver(
                     forName: NSWindow.didEnterFullScreenNotification,
@@ -2536,6 +2602,12 @@ private struct PlayerWindowObserver: NSViewRepresentable {
         private func reportWindowChange(_ window: NSWindow?) {
             Task { @MainActor in
                 onWindowChanged(window)
+            }
+        }
+
+        private func reportFullscreenWillChange(_ fullscreen: Bool) {
+            Task { @MainActor in
+                onFullscreenWillChange(fullscreen)
             }
         }
 
