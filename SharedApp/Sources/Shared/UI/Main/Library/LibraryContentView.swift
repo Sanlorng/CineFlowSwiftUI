@@ -302,6 +302,10 @@ private struct LibraryCard: View {
     let item: LibraryPresenter.State.BangumiItem
     let width: CGFloat
     let onTap: () -> Void
+
+    private let cardPadding: CGFloat = 12
+    private let coverCornerRadius: CGFloat = 14
+    private let coverAspectRatio: CGFloat = 2 / 3
     
     var body: some View {
         Button(action: onTap) {
@@ -334,9 +338,11 @@ private struct LibraryCard: View {
                         .lineLimit(1)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .frame(width: width, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(cardPadding)
+        .frame(width: width, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color.secondary.opacity(0.08))
@@ -349,15 +355,15 @@ private struct LibraryCard: View {
 
     private var coverContainer: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: coverCornerRadius)
                 .fill(Color.secondary.opacity(0.08))
             coverView
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: max(width * 1.38, 180))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .contentShape(RoundedRectangle(cornerRadius: 14))
-        .clipped()
+        .frame(width: coverWidth)
+        .aspectRatio(coverAspectRatio, contentMode: .fit)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: coverCornerRadius))
+        .contentShape(RoundedRectangle(cornerRadius: coverCornerRadius))
     }
     
     @ViewBuilder
@@ -405,6 +411,10 @@ private struct LibraryCard: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var coverWidth: CGFloat {
+        max(width - (cardPadding * 2), 0)
     }
 }
 
