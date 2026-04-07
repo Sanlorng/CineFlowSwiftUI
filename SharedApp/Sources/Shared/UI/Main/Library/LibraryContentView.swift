@@ -319,13 +319,17 @@ private struct LibraryGrid: View {
     @ObservedObject var viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>
     @State private var selectedGroup: String?
     @State private var isProgrammaticScroll = false
+    private let gridLeadingPadding: CGFloat = 16
+    private let gridTrailingPadding: CGFloat = 30
     
     var body: some View {
         ScrollViewReader { proxy in
             let hasSidebar = viewStore.groupedBangumiItems.count > 1
             HStack(alignment: .top, spacing: 12) {
                 GeometryReader { geometry in
-                    let gridMetrics = libraryGridMetrics(for: geometry.size.width)
+                    let gridMetrics = libraryGridMetrics(
+                        for: geometry.size.width - gridLeadingPadding - gridTrailingPadding
+                    )
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(viewStore.groupedBangumiItems, id: \.group) { group in
@@ -338,7 +342,8 @@ private struct LibraryGrid: View {
                                         }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 16)
+                                    .padding(.leading, gridLeadingPadding)
+                                    .padding(.trailing, gridTrailingPadding)
                                 } header: {
                                     HStack {
                                         Text(group.group)
@@ -346,7 +351,8 @@ private struct LibraryGrid: View {
                                             .bold()
                                         Spacer()
                                     }
-                                    .padding(.horizontal, 16)
+                                    .padding(.leading, gridLeadingPadding)
+                                    .padding(.trailing, gridTrailingPadding)
                                     .padding(.vertical, 8)
                                     .id(group.group)
                                     .background(
@@ -412,6 +418,7 @@ private struct LibraryCard: View {
     let item: LibraryPresenter.State.BangumiItem
     let width: CGFloat
     let onTap: () -> Void
+    @State private var isHovering = false
 
     private let cardPadding: CGFloat = 12
     private let coverCornerRadius: CGFloat = 14
@@ -422,6 +429,19 @@ private struct LibraryCard: View {
             cardContent
         }
         .buttonStyle(.plain)
+        .scaleEffect(isHovering ? 1.014 : 1)
+        .offset(y: isHovering ? -4 : 0)
+        .shadow(
+            color: Color.black.opacity(isHovering ? 0.16 : 0.05),
+            radius: isHovering ? 22 : 10,
+            x: 0,
+            y: isHovering ? 12 : 4
+        )
+        .zIndex(isHovering ? 1 : 0)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .animation(.spring(response: 0.24, dampingFraction: 0.84), value: isHovering)
     }
     
     private var cardContent: some View {
@@ -451,14 +471,8 @@ private struct LibraryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(cardPadding)
         .frame(width: width, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.secondary.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.secondary.opacity(0.1), lineWidth: 1)
-        )
+        .background(cardBackground)
+        .overlay(cardBorder)
     }
 
     private var coverContainer: some View {
@@ -472,6 +486,10 @@ private struct LibraryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: coverCornerRadius))
         .contentShape(RoundedRectangle(cornerRadius: coverCornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: coverCornerRadius)
+                .stroke(Color.white.opacity(isHovering ? 0.14 : 0), lineWidth: 1)
+        }
     }
     
     @ViewBuilder
@@ -483,6 +501,7 @@ private struct LibraryCard: View {
                     image
                         .resizable()
                         .scaledToFill()
+                        .scaleEffect(isHovering ? 1.035 : 1)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                         .clipped()
                 case .failure:
@@ -524,6 +543,33 @@ private struct LibraryCard: View {
     private var coverWidth: CGFloat {
         max(width - (cardPadding * 2), 0)
     }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 18)
+            .fill(
+                LinearGradient(
+                    colors: isHovering
+                        ? [
+                            Color.white.opacity(0.18),
+                            Color.secondary.opacity(0.12)
+                        ]
+                        : [
+                            Color.secondary.opacity(0.08),
+                            Color.secondary.opacity(0.06)
+                        ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+    }
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 18)
+            .stroke(
+                isHovering ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.1),
+                lineWidth: isHovering ? 1.2 : 1
+            )
+    }
 }
 
 private struct LibraryGridMetrics {
@@ -535,7 +581,7 @@ private func libraryGridMetrics(for availableWidth: CGFloat) -> LibraryGridMetri
     let minimumItemWidth: CGFloat = 180
     let maximumItemWidth: CGFloat = 220
     let spacing: CGFloat = 16
-    let resolvedWidth = max(availableWidth - 32, minimumItemWidth)
+    let resolvedWidth = max(availableWidth, minimumItemWidth)
     let columnCount = max(
         Int((resolvedWidth + spacing) / (minimumItemWidth + spacing)),
         1
