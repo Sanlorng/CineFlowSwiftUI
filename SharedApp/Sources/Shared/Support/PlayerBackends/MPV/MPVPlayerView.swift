@@ -86,6 +86,10 @@ extension MPVPlayerView {
             self.currentSource = source
             self.currentOptions = options
             surfaceController.configure(source: source, options: options)
+            surfaceController.synchronizeState(
+                playbackRate: controller.playbackRate,
+                volume: controller.volume
+            )
             handleCommandIfNeeded(from: controller)
             return surfaceController
         }
@@ -97,6 +101,10 @@ extension MPVPlayerView {
                 currentSource = source
                 currentOptions = options
                 surfaceController.configure(source: source, options: options)
+                surfaceController.synchronizeState(
+                    playbackRate: controller.playbackRate,
+                    volume: controller.volume
+                )
                 handleCommandIfNeeded(from: controller)
                 return
             }
@@ -106,6 +114,10 @@ extension MPVPlayerView {
                 surfaceController.apply(options: options)
             }
             handleCommandIfNeeded(from: controller)
+            surfaceController.synchronizeState(
+                playbackRate: controller.playbackRate,
+                volume: controller.volume
+            )
         }
 
         func reset() {
@@ -149,6 +161,8 @@ final class MPVContainerViewController: PlatformViewController {
     private var isPaused = false
     private var isBuffering = false
     private var currentDuration: TimeInterval?
+    private var currentPlaybackRate = 1.0
+    private var currentVolume = 1.0
 
     init(
         eventSink: PlayerBackendEventSink,
@@ -234,6 +248,8 @@ final class MPVContainerViewController: PlatformViewController {
         applyAudioTrackSelection(options.selectedAudioTrackID)
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         applySubtitleSettings(options)
+        applyPlaybackRate(currentPlaybackRate)
+        applyVolume(currentVolume)
         if options.allowAutoPlay {
             setPause(false)
         }
@@ -245,11 +261,24 @@ final class MPVContainerViewController: PlatformViewController {
             setPause(!isPaused)
         case let .setPaused(paused):
             setPause(paused)
+        case let .setRate(rate):
+            currentPlaybackRate = rate
+            applyPlaybackRate(rate)
+        case let .setVolume(volume):
+            currentVolume = volume
+            applyVolume(volume)
         case let .seekBy(delta):
             runCommand("seek", args: [String(delta), "relative"])
         case let .seekTo(time):
             runCommand("seek", args: [String(max(time, 0)), "absolute"])
         }
+    }
+
+    func synchronizeState(playbackRate: Double, volume: Double) {
+        currentPlaybackRate = playbackRate
+        currentVolume = volume
+        applyPlaybackRate(playbackRate)
+        applyVolume(volume)
     }
 
     func shutdown() {
@@ -351,6 +380,8 @@ final class MPVContainerViewController: PlatformViewController {
         applyAudioTrackSelection(options.selectedAudioTrackID)
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         applySubtitleSettings(options)
+        applyPlaybackRate(currentPlaybackRate)
+        applyVolume(currentVolume)
         stateChanged(.preparing)
 
         if !options.allowAutoPlay {
@@ -398,6 +429,18 @@ final class MPVContainerViewController: PlatformViewController {
         var flag: Int32 = paused ? 1 : 0
         _ = mpv_set_property(mpv, MPVProperty.pause, MPV_FORMAT_FLAG, &flag)
         syncPlaybackState()
+    }
+
+    private func applyPlaybackRate(_ rate: Double) {
+        guard let mpv else { return }
+        var value = rate
+        _ = mpv_set_property(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &value)
+    }
+
+    private func applyVolume(_ volume: Double) {
+        guard let mpv else { return }
+        var value = min(max(volume, 0), 1) * 100
+        _ = mpv_set_property(mpv, MPVProperty.volume, MPV_FORMAT_DOUBLE, &value)
     }
 
     private func applyAudioTrackSelection(_ trackID: String?) {
@@ -613,6 +656,8 @@ private enum MPVProperty {
     static let pausedForCache = "paused-for-cache"
     static let timePos = "time-pos"
     static let duration = "duration"
+    static let speed = "speed"
+    static let volume = "volume"
     static let aid = "aid"
     static let sid = "sid"
     static let subDelay = "sub-delay"

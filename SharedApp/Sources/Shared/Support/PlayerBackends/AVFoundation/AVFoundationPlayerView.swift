@@ -83,8 +83,9 @@ extension AVFoundationPlayerView {
         func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> PlayerContainerView {
             let view = PlayerContainerView(frame: .zero)
             self.view = view
-            attachPlayer(to: view, source: source, options: options)
+            attachPlayer(to: view, source: source, controller: controller, options: options)
             handleCommandIfNeeded(from: controller)
+            syncControllerState(from: controller)
             return view
         }
 
@@ -92,8 +93,9 @@ extension AVFoundationPlayerView {
             self.view = view
 
             if source != currentSource {
-                attachPlayer(to: view, source: source, options: options)
+                attachPlayer(to: view, source: source, controller: controller, options: options)
                 handleCommandIfNeeded(from: controller)
+                syncControllerState(from: controller)
                 return
             }
 
@@ -105,6 +107,7 @@ extension AVFoundationPlayerView {
                 }
             }
             handleCommandIfNeeded(from: controller)
+            syncControllerState(from: controller)
         }
 
         func reset() {
@@ -122,17 +125,24 @@ extension AVFoundationPlayerView {
             }
         }
 
-        private func attachPlayer(to view: PlayerContainerView, source: PlayerSource, options: PlayerLoadOptions) {
+        private func attachPlayer(
+            to view: PlayerContainerView,
+            source: PlayerSource,
+            controller: PlayerController,
+            options: PlayerLoadOptions
+        ) {
             clearObservers()
 
             currentSource = source
             currentOptions = options
             state = .preparing
+            currentPlaybackRate = controller.playbackRate
 
             let asset = makeAsset(for: source)
             let item = AVPlayerItem(asset: asset)
             let player = AVPlayer(playerItem: item)
             player.automaticallyWaitsToMinimizeStalling = true
+            player.volume = Float(controller.volume)
 
             self.player = player
             self.playerItem = item
@@ -297,6 +307,8 @@ extension AVFoundationPlayerView {
                 if state == .playing {
                     player?.rate = Float(rate)
                 }
+            case let .setVolume(volume):
+                player?.volume = Float(volume)
             case let .seekBy(delta):
                 guard let player else { return }
                 let current = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
@@ -312,6 +324,16 @@ extension AVFoundationPlayerView {
             player.play()
             if currentPlaybackRate != 1 {
                 player.rate = Float(currentPlaybackRate)
+            }
+        }
+
+        private func syncControllerState(from controller: PlayerController) {
+            currentPlaybackRate = controller.playbackRate
+            if let player, abs(Double(player.volume) - controller.volume) >= 0.001 {
+                player.volume = Float(controller.volume)
+            }
+            if state == .playing {
+                player?.rate = Float(controller.playbackRate)
             }
         }
 

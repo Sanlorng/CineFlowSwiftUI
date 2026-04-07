@@ -56,6 +56,12 @@ private struct PlayerContentMainView: View {
     @State private var selectedEpisodePageIndex = 0
     @State private var hideControlsTask: Task<Void, Never>?
     @State private var subtitleOffsetPopupTask: Task<Void, Never>?
+    @State private var shortcutHUDTask: Task<Void, Never>?
+    @State private var pendingShortcutCaptureAction: PlayerShortcutAction?
+    @State private var isForwardShortcutPressed = false
+    @State private var isTemporaryBoostShortcutActive = false
+    @State private var forwardShortcutActivationTask: Task<Void, Never>?
+    @State private var fullscreenShortcutHUD: PlayerShortcutHUDState?
     @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
     @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
@@ -64,6 +70,18 @@ private struct PlayerContentMainView: View {
     @AppStorage("player.subtitle.fontSize") private var subtitleFontSize = 54.0
     @AppStorage("player.subtitle.fontFamily") private var subtitleFontFamily = ""
     @AppStorage("player.playback.mode") private var playbackModeRawValue = PlaybackMode.sequential.rawValue
+    @AppStorage("player.shortcut.seekStepMilliseconds") private var shortcutSeekStepMilliseconds = PlayerShortcutDefaults.seekStepMilliseconds
+    @AppStorage("player.shortcut.holdToBoostRate") private var shortcutHoldToBoostRate = PlayerShortcutDefaults.holdToBoostRate
+    @AppStorage("player.shortcut.volumeStepPercent") private var shortcutVolumeStepPercent = PlayerShortcutDefaults.volumeStepPercent
+    @AppStorage("player.shortcut.binding.toggleFullscreen") private var shortcutToggleFullscreenRawValue = PlayerShortcutAction.toggleFullscreen.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.togglePlayPause") private var shortcutTogglePlayPauseRawValue = PlayerShortcutAction.togglePlayPause.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.seekBackward") private var shortcutSeekBackwardRawValue = PlayerShortcutAction.seekBackward.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.seekForwardOrBoost") private var shortcutSeekForwardOrBoostRawValue = PlayerShortcutAction.seekForwardOrBoost.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.decreasePlaybackRate") private var shortcutDecreasePlaybackRateRawValue = PlayerShortcutAction.decreasePlaybackRate.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.increasePlaybackRate") private var shortcutIncreasePlaybackRateRawValue = PlayerShortcutAction.increasePlaybackRate.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.resetPlaybackRate") private var shortcutResetPlaybackRateRawValue = PlayerShortcutAction.resetPlaybackRate.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.volumeUp") private var shortcutVolumeUpRawValue = PlayerShortcutAction.volumeUp.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.volumeDown") private var shortcutVolumeDownRawValue = PlayerShortcutAction.volumeDown.defaultKey.rawValue
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -92,6 +110,7 @@ private struct PlayerContentMainView: View {
             if !isPresented {
                 cancelSubtitleOffsetPopup()
                 isAdjustingSubtitleOffset = false
+                pendingShortcutCaptureAction = nil
             }
         }
     }
@@ -157,6 +176,18 @@ private struct PlayerContentMainView: View {
             playerBackgroundLayer(for: viewStore.coverURL)
                 .ignoresSafeArea()
         }
+#if os(macOS)
+        .overlay {
+            PlayerKeyboardEventMonitor(
+                onKeyDown: handlePlayerKeyDown(_:),
+                onKeyUp: handlePlayerKeyUp(_:),
+                canHandleEvent: {
+                    observedWindow != nil
+                }
+            )
+            .frame(width: 0, height: 0)
+        }
+#endif
         .sheet(
             item: viewStore.binding(
                 get: \.fileSelection,
@@ -263,6 +294,16 @@ private struct PlayerContentMainView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
+                if let fullscreenShortcutHUD, isFullscreen {
+                    VStack {
+                        fullscreenShortcutHUDView(fullscreenShortcutHUD)
+                            .padding(.top, 28)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 playbackControlBar(viewStore: viewStore)
                     .opacity(isControlBarVisible ? 1 : 0)
                     .offset(y: isControlBarVisible ? 0 : 28)
@@ -281,6 +322,7 @@ private struct PlayerContentMainView: View {
                         updateWindowToolbarVisibility()
                         if !fullscreen {
                             cancelFullscreenPointerTasks()
+                            dismissFullscreenShortcutHUD()
                             showCursorIfNeeded()
                         }
                         revealControls()
@@ -317,6 +359,8 @@ private struct PlayerContentMainView: View {
         .onChange(of: viewStore.currentItem?.stream) { _, newStream in
             guard newStream != nil else { return }
             playerController.reset()
+            cancelForwardShortcutTracking()
+            dismissFullscreenShortcutHUD()
             scrubPosition = 0
             isScrubbing = false
             isSubtitleRendererReady = false
@@ -344,6 +388,8 @@ private struct PlayerContentMainView: View {
         }
         .onDisappear {
             playerController.reset()
+            cancelForwardShortcutTracking()
+            dismissFullscreenShortcutHUD()
             scrubPosition = 0
             isScrubbing = false
             isSubtitleRendererReady = false
@@ -722,6 +768,99 @@ private struct PlayerContentMainView: View {
 
                         Divider()
 
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                settingsSectionTitle("快捷键")
+                                Spacer(minLength: 0)
+                                smallSettingButton("恢复默认") {
+                                    resetShortcutSettingsToDefaults()
+                                }
+                            }
+
+                            Text("同一个按键只保留最后一次绑定。点击右侧当前按键后直接按键，按 Esc 取消。")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
+                            if let pendingShortcutCaptureAction {
+                                Text("正在录制“\(pendingShortcutCaptureAction.title)”")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.12))
+                                    )
+                            }
+
+                            controlSettingRow(
+                                title: "前进 / 后退步进",
+                                value: formattedShortcutMilliseconds(shortcutSeekStepMilliseconds)
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Slider(value: $shortcutSeekStepMilliseconds, in: 1000...30000, step: 500)
+                                    HStack(spacing: 8) {
+                                        smallSettingButton("-500 ms") {
+                                            shortcutSeekStepMilliseconds = max(shortcutSeekStepMilliseconds - 500, 1000)
+                                        }
+                                        smallSettingButton("重置") {
+                                            shortcutSeekStepMilliseconds = PlayerShortcutDefaults.seekStepMilliseconds
+                                        }
+                                        smallSettingButton("+500 ms") {
+                                            shortcutSeekStepMilliseconds = min(shortcutSeekStepMilliseconds + 500, 30000)
+                                        }
+                                    }
+                                }
+                            }
+
+                            controlSettingRow(
+                                title: "按住右键倍速",
+                                value: playbackRateTitle(shortcutHoldToBoostRate)
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Slider(value: $shortcutHoldToBoostRate, in: 1.25...6.0, step: 0.25)
+                                    HStack(spacing: 8) {
+                                        smallSettingButton("-0.25x") {
+                                            shortcutHoldToBoostRate = max(shortcutHoldToBoostRate - 0.25, 1.25)
+                                        }
+                                        smallSettingButton("重置") {
+                                            shortcutHoldToBoostRate = PlayerShortcutDefaults.holdToBoostRate
+                                        }
+                                        smallSettingButton("+0.25x") {
+                                            shortcutHoldToBoostRate = min(shortcutHoldToBoostRate + 0.25, 6)
+                                        }
+                                    }
+                                }
+                            }
+
+                            controlSettingRow(
+                                title: "音量步进",
+                                value: formattedVolumeStepPercent(shortcutVolumeStepPercent)
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Slider(value: $shortcutVolumeStepPercent, in: 1...20, step: 1)
+                                    HStack(spacing: 8) {
+                                        smallSettingButton("-1%") {
+                                            shortcutVolumeStepPercent = max(shortcutVolumeStepPercent - 1, 1)
+                                        }
+                                        smallSettingButton("重置") {
+                                            shortcutVolumeStepPercent = PlayerShortcutDefaults.volumeStepPercent
+                                        }
+                                        smallSettingButton("+1%") {
+                                            shortcutVolumeStepPercent = min(shortcutVolumeStepPercent + 1, 20)
+                                        }
+                                    }
+                                }
+                            }
+
+                            ForEach(PlayerShortcutAction.allCases) { action in
+                                shortcutBindingRow(for: action)
+                            }
+                        }
+
+                        Divider()
+
                         VStack(alignment: .leading, spacing: 8) {
                             settingsSectionTitle("当前状态")
                             Text("后端：\(PlayerBackendKind.defaultDistributable.displayName)")
@@ -741,8 +880,58 @@ private struct PlayerContentMainView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .frame(width: 320, height: 460, alignment: .topLeading)
+            .frame(width: 340, height: 620, alignment: .topLeading)
         }
+    }
+
+    @ViewBuilder
+    private func shortcutBindingRow(for action: PlayerShortcutAction) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(action.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(action.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                Button {
+                    pendingShortcutCaptureAction = pendingShortcutCaptureAction == action ? nil : action
+                } label: {
+                    Text(
+                        pendingShortcutCaptureAction == action
+                        ? "按键中…"
+                        : (shortcutBinding(for: action)?.displayTitle ?? "未绑定")
+                    )
+                    .font(.caption.monospacedDigit())
+                    .frame(minWidth: 72)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(pendingShortcutCaptureAction == action ? Color.accentColor : Color.secondary)
+
+                HStack(spacing: 6) {
+                    if shortcutBinding(for: action) != nil {
+                        smallSettingButton("清空") {
+                            setShortcutBinding(nil, for: action)
+                            if pendingShortcutCaptureAction == action {
+                                pendingShortcutCaptureAction = nil
+                            }
+                        }
+                    }
+                    smallSettingButton("默认") {
+                        resetShortcutBindingToDefault(for: action)
+                        if pendingShortcutCaptureAction == action {
+                            pendingShortcutCaptureAction = nil
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 6)
     }
 
     @ViewBuilder
@@ -1152,6 +1341,292 @@ private struct PlayerContentMainView: View {
 
     private var playbackMode: PlaybackMode {
         PlaybackMode(rawValue: playbackModeRawValue) ?? .sequential
+    }
+
+    private var shortcutSeekStepSeconds: TimeInterval {
+        max(shortcutSeekStepMilliseconds, 0) / 1000
+    }
+
+    private var shortcutVolumeStep: Double {
+        min(max(shortcutVolumeStepPercent, 0), 100) / 100
+    }
+
+    private func shortcutBinding(for action: PlayerShortcutAction) -> PlayerShortcutKey? {
+        let rawValue = switch action {
+        case .toggleFullscreen:
+            shortcutToggleFullscreenRawValue
+        case .togglePlayPause:
+            shortcutTogglePlayPauseRawValue
+        case .seekBackward:
+            shortcutSeekBackwardRawValue
+        case .seekForwardOrBoost:
+            shortcutSeekForwardOrBoostRawValue
+        case .decreasePlaybackRate:
+            shortcutDecreasePlaybackRateRawValue
+        case .increasePlaybackRate:
+            shortcutIncreasePlaybackRateRawValue
+        case .resetPlaybackRate:
+            shortcutResetPlaybackRateRawValue
+        case .volumeUp:
+            shortcutVolumeUpRawValue
+        case .volumeDown:
+            shortcutVolumeDownRawValue
+        }
+        guard !rawValue.isEmpty else { return nil }
+        return PlayerShortcutKey(rawValue: rawValue)
+    }
+
+    private func setShortcutBinding(_ binding: PlayerShortcutKey?, for action: PlayerShortcutAction) {
+        if let binding {
+            for otherAction in PlayerShortcutAction.allCases where otherAction != action {
+                if shortcutBinding(for: otherAction) == binding {
+                    setShortcutBinding(nil, for: otherAction)
+                }
+            }
+        }
+
+        let rawValue = binding?.rawValue ?? ""
+        switch action {
+        case .toggleFullscreen:
+            shortcutToggleFullscreenRawValue = rawValue
+        case .togglePlayPause:
+            shortcutTogglePlayPauseRawValue = rawValue
+        case .seekBackward:
+            shortcutSeekBackwardRawValue = rawValue
+        case .seekForwardOrBoost:
+            shortcutSeekForwardOrBoostRawValue = rawValue
+        case .decreasePlaybackRate:
+            shortcutDecreasePlaybackRateRawValue = rawValue
+        case .increasePlaybackRate:
+            shortcutIncreasePlaybackRateRawValue = rawValue
+        case .resetPlaybackRate:
+            shortcutResetPlaybackRateRawValue = rawValue
+        case .volumeUp:
+            shortcutVolumeUpRawValue = rawValue
+        case .volumeDown:
+            shortcutVolumeDownRawValue = rawValue
+        }
+    }
+
+    private func resetShortcutBindingToDefault(for action: PlayerShortcutAction) {
+        setShortcutBinding(action.defaultKey, for: action)
+    }
+
+    private func resetShortcutSettingsToDefaults() {
+        for action in PlayerShortcutAction.allCases {
+            setShortcutBinding(action.defaultKey, for: action)
+        }
+        shortcutSeekStepMilliseconds = PlayerShortcutDefaults.seekStepMilliseconds
+        shortcutHoldToBoostRate = PlayerShortcutDefaults.holdToBoostRate
+        shortcutVolumeStepPercent = PlayerShortcutDefaults.volumeStepPercent
+        pendingShortcutCaptureAction = nil
+    }
+
+#if os(macOS)
+    private func handlePlayerKeyDown(_ event: NSEvent) -> Bool {
+        if let pendingShortcutCaptureAction {
+            return captureShortcutIfNeeded(event, action: pendingShortcutCaptureAction)
+        }
+
+        guard !hasUnsupportedShortcutModifiers(event),
+              let action = matchingShortcutAction(for: event) else {
+            return false
+        }
+
+        if event.isARepeat {
+            return action == .seekForwardOrBoost
+        }
+
+        switch action {
+        case .toggleFullscreen:
+            observedWindow?.toggleFullScreen(nil)
+        case .togglePlayPause:
+            playerController.togglePlayPause()
+        case .seekBackward:
+            playerController.seekBy(-shortcutSeekStepSeconds)
+        case .seekForwardOrBoost:
+            beginForwardShortcutTracking()
+        case .decreasePlaybackRate:
+            let newRate = max(playerController.playbackRate - PlayerShortcutDefaults.playbackRateAdjustmentDelta, 0.25)
+            playerController.setPlaybackRate(newRate)
+            showFullscreenShortcutHUD(
+                title: "播放速度",
+                value: playbackRateTitle(newRate),
+                systemImage: "gauge.with.dots.needle.50percent"
+            )
+        case .increasePlaybackRate:
+            let newRate = max(playerController.playbackRate + PlayerShortcutDefaults.playbackRateAdjustmentDelta, 0.25)
+            playerController.setPlaybackRate(newRate)
+            showFullscreenShortcutHUD(
+                title: "播放速度",
+                value: playbackRateTitle(newRate),
+                systemImage: "gauge.with.dots.needle.50percent"
+            )
+        case .resetPlaybackRate:
+            playerController.setPlaybackRate(PlayerShortcutDefaults.resetPlaybackRate)
+            showFullscreenShortcutHUD(
+                title: "播放速度",
+                value: playbackRateTitle(PlayerShortcutDefaults.resetPlaybackRate),
+                systemImage: "gauge.with.dots.needle.50percent"
+            )
+        case .volumeUp:
+            let newVolume = min(max(playerController.volume + shortcutVolumeStep, 0), 1)
+            playerController.setVolume(newVolume)
+            showFullscreenShortcutHUD(
+                title: "音量",
+                value: formattedVolumeValue(newVolume),
+                systemImage: "speaker.wave.2.fill"
+            )
+        case .volumeDown:
+            let newVolume = min(max(playerController.volume - shortcutVolumeStep, 0), 1)
+            playerController.setVolume(newVolume)
+            showFullscreenShortcutHUD(
+                title: "音量",
+                value: formattedVolumeValue(newVolume),
+                systemImage: newVolume <= 0.001 ? "speaker.slash.fill" : "speaker.wave.1.fill"
+            )
+        }
+        revealControls()
+        return true
+    }
+
+    private func handlePlayerKeyUp(_ event: NSEvent) -> Bool {
+        if pendingShortcutCaptureAction != nil {
+            return true
+        }
+        guard !hasUnsupportedShortcutModifiers(event),
+              shortcutBinding(for: .seekForwardOrBoost)?.matches(event) == true,
+              isForwardShortcutPressed || isTemporaryBoostShortcutActive else {
+            return false
+        }
+
+        endForwardShortcutTracking()
+        revealControls()
+        return true
+    }
+
+    private func matchingShortcutAction(for event: NSEvent) -> PlayerShortcutAction? {
+        PlayerShortcutAction.allCases.first { action in
+            shortcutBinding(for: action)?.matches(event) == true
+        }
+    }
+
+    private func hasUnsupportedShortcutModifiers(_ event: NSEvent) -> Bool {
+        let allowed: NSEvent.ModifierFlags = [.numericPad, .function]
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return !modifiers.subtracting(allowed).isEmpty
+    }
+
+    private func captureShortcutIfNeeded(_ event: NSEvent, action: PlayerShortcutAction) -> Bool {
+        guard !hasUnsupportedShortcutModifiers(event) else { return true }
+        if PlayerShortcutKey.escape.matches(event) {
+            pendingShortcutCaptureAction = nil
+            return true
+        }
+        guard let binding = PlayerShortcutKey.from(event: event) else {
+            return true
+        }
+        setShortcutBinding(binding, for: action)
+        pendingShortcutCaptureAction = nil
+        return true
+    }
+#endif
+
+    private func beginForwardShortcutTracking() {
+        forwardShortcutActivationTask?.cancel()
+        forwardShortcutActivationTask = nil
+        isForwardShortcutPressed = true
+        isTemporaryBoostShortcutActive = false
+        forwardShortcutActivationTask = Task { @MainActor in
+            try? await Task.sleep(for: PlayerShortcutDefaults.holdToBoostActivationDelay)
+            guard !Task.isCancelled, isForwardShortcutPressed else { return }
+            isTemporaryBoostShortcutActive = true
+            playerController.setPlaybackRate(shortcutHoldToBoostRate)
+            revealControls()
+        }
+    }
+
+    private func endForwardShortcutTracking() {
+        forwardShortcutActivationTask?.cancel()
+        forwardShortcutActivationTask = nil
+
+        let shouldRestoreNormalRate = isTemporaryBoostShortcutActive
+        let shouldSeekForward = isForwardShortcutPressed && !isTemporaryBoostShortcutActive
+
+        isForwardShortcutPressed = false
+        isTemporaryBoostShortcutActive = false
+
+        if shouldRestoreNormalRate {
+            playerController.setPlaybackRate(1)
+        } else if shouldSeekForward {
+            playerController.seekBy(shortcutSeekStepSeconds)
+        }
+    }
+
+    private func cancelForwardShortcutTracking() {
+        forwardShortcutActivationTask?.cancel()
+        forwardShortcutActivationTask = nil
+        if isTemporaryBoostShortcutActive {
+            playerController.setPlaybackRate(1)
+        }
+        isForwardShortcutPressed = false
+        isTemporaryBoostShortcutActive = false
+    }
+
+    private func showFullscreenShortcutHUD(title: String, value: String, systemImage: String) {
+        guard isFullscreen else { return }
+        shortcutHUDTask?.cancel()
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.88)) {
+            fullscreenShortcutHUD = .init(title: title, value: value, systemImage: systemImage)
+        }
+        shortcutHUDTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.15))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                fullscreenShortcutHUD = nil
+            }
+            shortcutHUDTask = nil
+        }
+    }
+
+    private func dismissFullscreenShortcutHUD() {
+        shortcutHUDTask?.cancel()
+        shortcutHUDTask = nil
+        fullscreenShortcutHUD = nil
+    }
+
+    @ViewBuilder
+    private func fullscreenShortcutHUDView(_ hud: PlayerShortcutHUDState) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: hud.systemImage)
+                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hud.title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .tracking(0.6)
+                Text(hud.value)
+                    .font(.headline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.96))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: 220, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.22), radius: 24, y: 10)
     }
 
     private func handlePlaybackCompletion(
@@ -2086,6 +2561,18 @@ private func formattedSubtitleTimeOffset(_ offset: TimeInterval) -> String {
     return "\(sign)\(abs(milliseconds)) ms"
 }
 
+private func formattedShortcutMilliseconds(_ milliseconds: Double) -> String {
+    "\(Int(milliseconds.rounded())) ms"
+}
+
+private func formattedVolumeStepPercent(_ percent: Double) -> String {
+    "\(Int(percent.rounded()))%"
+}
+
+private func formattedVolumeValue(_ value: Double) -> String {
+    "\(Int((min(max(value, 0), 1) * 100).rounded()))%"
+}
+
 private func formattedSubtitleFontSize(_ fontSize: Double) -> String {
     "\(Int(fontSize.rounded())) pt"
 }
@@ -2133,6 +2620,12 @@ private enum PlaybackMode: String, CaseIterable, Identifiable {
             return "播放完成后自动进入下一集，最后一集结束后回到第一集"
         }
     }
+}
+
+private struct PlayerShortcutHUDState: Equatable {
+    let title: String
+    let value: String
+    let systemImage: String
 }
 
 private enum SubtitleFontOption: String, CaseIterable, Identifiable {

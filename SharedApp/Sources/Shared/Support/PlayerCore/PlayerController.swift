@@ -6,6 +6,7 @@ final class PlayerController: ObservableObject {
     @Published private(set) var playbackState: PlayerPlaybackState = .idle
     @Published private(set) var timeline = PlayerTimeline()
     @Published private(set) var playbackRate: Double = 1
+    @Published private(set) var volume: Double = 1
     @Published private(set) var videoPresentationSize: CGSize?
 
     @Published private(set) var commandRevision: UInt64 = 0
@@ -35,6 +36,16 @@ final class PlayerController: ObservableObject {
         let sanitized = max(rate, 0.25)
         playbackRate = sanitized
         send(.setRate(sanitized))
+    }
+
+    func setVolume(_ volume: Double) {
+        let sanitized = min(max(volume, 0), 1)
+        self.volume = sanitized
+        send(.setVolume(sanitized))
+    }
+
+    func adjustVolume(by delta: Double) {
+        setVolume(volume + delta)
     }
 
     func updatePlaybackState(_ state: PlayerPlaybackState) {

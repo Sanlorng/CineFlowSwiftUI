@@ -62,6 +62,10 @@ extension MPVMacOSPlayerView {
             self.currentSource = source
             self.currentOptions = options
             surfaceController.configure(source: source, options: options)
+            surfaceController.synchronizeState(
+                playbackRate: controller.playbackRate,
+                volume: controller.volume
+            )
             handleCommandIfNeeded(from: controller)
             return surfaceController
         }
@@ -73,6 +77,10 @@ extension MPVMacOSPlayerView {
                 currentSource = source
                 currentOptions = options
                 surfaceController.configure(source: source, options: options)
+                surfaceController.synchronizeState(
+                    playbackRate: controller.playbackRate,
+                    volume: controller.volume
+                )
                 handleCommandIfNeeded(from: controller)
                 return
             }
@@ -82,6 +90,10 @@ extension MPVMacOSPlayerView {
                 surfaceController.apply(options: options)
             }
             handleCommandIfNeeded(from: controller)
+            surfaceController.synchronizeState(
+                playbackRate: controller.playbackRate,
+                volume: controller.volume
+            )
         }
 
         func reset() {
@@ -117,6 +129,8 @@ final class MPVMacOSViewController: NSViewController {
     private var glView: MPVMacOSOpenGLView?
     private var currentSource: PlayerSource?
     private var currentOptions: PlayerLoadOptions?
+    private var preferredPlaybackRate = 1.0
+    private var preferredVolume = 1.0
 
     init(
         eventSink: PlayerBackendEventSink,
@@ -147,6 +161,10 @@ final class MPVMacOSViewController: NSViewController {
         self.glView = glView
         glView.setupContext()
         glView.setupMpv()
+        glView.synchronizeState(
+            playbackRate: preferredPlaybackRate,
+            volume: preferredVolume
+        )
 
         if let currentSource, let currentOptions {
             glView.load(source: currentSource, options: currentOptions)
@@ -166,6 +184,12 @@ final class MPVMacOSViewController: NSViewController {
 
     func handle(command: PlayerCommand) {
         glView?.handle(command: command)
+    }
+
+    func synchronizeState(playbackRate: Double, volume: Double) {
+        preferredPlaybackRate = playbackRate
+        preferredVolume = volume
+        glView?.synchronizeState(playbackRate: playbackRate, volume: volume)
     }
 
     func shutdown() {
@@ -189,6 +213,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var defaultFBO: GLint = -1
     private var currentDuration: TimeInterval?
     private var currentPlaybackRate: Double = 1
+    private var currentVolume: Double = 1
 
     init(
         frame frameRect: NSRect,
@@ -290,6 +315,8 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         applyAudioTrackSelection(options.selectedAudioTrackID)
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         applySubtitleSettings(options)
+        applyPlaybackRate(currentPlaybackRate)
+        applyVolume(currentVolume)
         stateChanged(.preparing)
 
         if !options.allowAutoPlay {
@@ -315,6 +342,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         applySubtitleSettings(options)
         applyPlaybackRate(currentPlaybackRate)
+        applyVolume(currentVolume)
         if options.allowAutoPlay {
             setPause(false)
         }
@@ -329,11 +357,21 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         case let .setRate(rate):
             currentPlaybackRate = rate
             applyPlaybackRate(rate)
+        case let .setVolume(volume):
+            currentVolume = volume
+            applyVolume(volume)
         case let .seekBy(delta):
             runCommand("seek", args: [String(delta), "relative"])
         case let .seekTo(time):
             runCommand("seek", args: [String(max(time, 0)), "absolute"])
         }
+    }
+
+    func synchronizeState(playbackRate: Double, volume: Double) {
+        currentPlaybackRate = playbackRate
+        currentVolume = volume
+        applyPlaybackRate(playbackRate)
+        applyVolume(volume)
     }
 
     func shutdown() {
@@ -420,6 +458,12 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         guard let mpv else { return }
         var value = rate
         _ = mpv_set_property(mpv, MPVProperty.speed, MPV_FORMAT_DOUBLE, &value)
+    }
+
+    private func applyVolume(_ volume: Double) {
+        guard let mpv else { return }
+        var value = min(max(volume, 0), 1) * 100
+        _ = mpv_set_property(mpv, MPVProperty.volume, MPV_FORMAT_DOUBLE, &value)
     }
 
     private func setPause(_ paused: Bool) {
@@ -630,6 +674,7 @@ private enum MPVProperty {
     static let timePos = "time-pos"
     static let duration = "duration"
     static let speed = "speed"
+    static let volume = "volume"
     static let aid = "aid"
     static let sid = "sid"
     static let subDelay = "sub-delay"
