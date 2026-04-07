@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #if __has_include("ffmpeg_lite.h")
 
@@ -14,6 +15,32 @@ typedef struct BridgeStringBuilder {
     size_t length;
     size_t capacity;
 } BridgeStringBuilder;
+
+#if DEBUG
+static double bridge_now_milliseconds(void) {
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return ((double) time.tv_sec * 1000.0) + ((double) time.tv_nsec / 1000000.0);
+}
+
+static void bridge_log(const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    fprintf(stderr, "[SubtitleFFmpegBridge] ");
+    vfprintf(stderr, format, arguments);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    va_end(arguments);
+}
+#else
+static double bridge_now_milliseconds(void) {
+    return 0;
+}
+
+static void bridge_log(const char *format, ...) {
+    (void) format;
+}
+#endif
 
 static void bridge_builder_free(BridgeStringBuilder *builder) {
     if (builder->data) {
@@ -127,32 +154,64 @@ static int bridge_open_input(
 ) {
     *format_context = NULL;
     avformat_network_init();
+    size_t header_length = headers ? strlen(headers) : 0;
+    double started_at = bridge_now_milliseconds();
+    bridge_log(
+        "open_input start url=%s headerBytes=%zu",
+        media_url ? media_url : "<null>",
+        header_length
+    );
 
     AVDictionary *options = NULL;
     if (headers && headers[0] != '\0') {
         av_dict_set(&options, "headers", headers, 0);
     }
 
+    double open_started_at = bridge_now_milliseconds();
     int result = avformat_open_input(format_context, media_url, NULL, &options);
+    double open_elapsed = bridge_now_milliseconds() - open_started_at;
     av_dict_free(&options);
+    bridge_log(
+        "open_input avformat_open_input result=%d elapsed=%.1fms",
+        result,
+        open_elapsed
+    );
     if (result < 0 || !*format_context) {
+        bridge_log("open_input failed while opening source");
         bridge_set_error(error_message, "打开媒体失败。");
         return -1;
     }
 
+    double info_started_at = bridge_now_milliseconds();
     result = avformat_find_stream_info(*format_context, NULL);
+    double info_elapsed = bridge_now_milliseconds() - info_started_at;
+    bridge_log(
+        "open_input avformat_find_stream_info result=%d elapsed=%.1fms streams=%u",
+        result,
+        info_elapsed,
+        (*format_context)->nb_streams
+    );
     if (result < 0) {
         bridge_set_error(error_message, "读取媒体流信息失败。");
         avformat_close_input(format_context);
         return -1;
     }
 
+    bridge_log(
+        "open_input ready totalElapsed=%.1fms",
+        bridge_now_milliseconds() - started_at
+    );
     return 0;
 }
 
 static char *bridge_dict_value(AVDictionary *dictionary, const char *key) {
     AVDictionaryEntry *entry = av_dict_get(dictionary, key, NULL, 0);
     return entry ? bridge_strdup(entry->value) : NULL;
+}
+
+static const char *bridge_dict_borrowed_value(AVDictionary *dictionary, const char *key) {
+    AVDictionaryEntry *entry = av_dict_get(dictionary, key, NULL, 0);
+    return entry ? entry->value : NULL;
 }
 
 static const char *bridge_default_ass_header =
@@ -366,16 +425,23 @@ int subtitle_bridge_copy_tracks(
     int *count,
     char **error_message
 ) {
+    double started_at = bridge_now_milliseconds();
     *tracks = NULL;
     *count = 0;
     if (error_message) {
         *error_message = NULL;
     }
+    bridge_log(
+        "copy_tracks start url=%s",
+        media_url ? media_url : "<null>"
+    );
 
     AVFormatContext *format_context = NULL;
     if (bridge_open_input(media_url, headers, &format_context, error_message) < 0) {
+        bridge_log("copy_tracks failed before stream scan");
         return -1;
     }
+    unsigned int stream_count = format_context->nb_streams;
 
     SubtitleBridgeTrackInfo *items = calloc(format_context->nb_streams, sizeof(SubtitleBridgeTrackInfo));
     if (!items) {
@@ -396,17 +462,35 @@ int subtitle_bridge_copy_tracks(
         item->codec_name = bridge_strdup(avcodec_get_name(stream->codecpar->codec_id));
         item->language = bridge_dict_value(stream->metadata, "language");
         item->title = bridge_dict_value(stream->metadata, "title");
+        bridge_log(
+            "copy_tracks found stream=%d codec=%s language=%s title=%s",
+            item->stream_index,
+            item->codec_name ? item->codec_name : "<unknown>",
+            item->language ? item->language : "<none>",
+            item->title ? item->title : "<none>"
+        );
     }
 
     avformat_close_input(&format_context);
 
     if (subtitle_count == 0) {
         free(items);
+        bridge_log(
+            "copy_tracks completed subtitleCount=0 totalStreams=%u elapsed=%.1fms",
+            stream_count,
+            bridge_now_milliseconds() - started_at
+        );
         return 0;
     }
 
     *tracks = items;
     *count = subtitle_count;
+    bridge_log(
+        "copy_tracks completed subtitleCount=%d totalStreams=%u elapsed=%.1fms",
+        subtitle_count,
+        stream_count,
+        bridge_now_milliseconds() - started_at
+    );
     return 0;
 }
 
@@ -417,13 +501,21 @@ int subtitle_bridge_copy_ass_document(
     char **ass_document,
     char **error_message
 ) {
+    double started_at = bridge_now_milliseconds();
     *ass_document = NULL;
     if (error_message) {
         *error_message = NULL;
     }
+    bridge_log(
+        "copy_ass_document start url=%s stream=%d headerBytes=%zu",
+        media_url ? media_url : "<null>",
+        stream_index,
+        headers ? strlen(headers) : 0
+    );
 
     AVFormatContext *format_context = NULL;
     if (bridge_open_input(media_url, headers, &format_context, error_message) < 0) {
+        bridge_log("copy_ass_document failed before locating target stream");
         return -1;
     }
 
@@ -438,13 +530,31 @@ int subtitle_bridge_copy_ass_document(
 
     if (!target_stream) {
         avformat_close_input(&format_context);
+        bridge_log("copy_ass_document target stream %d not found", stream_index);
         bridge_set_error(error_message, "找不到内嵌字幕轨。");
         return -1;
     }
+    bridge_log(
+        "copy_ass_document target stream located stream=%d codec=%s language=%s title=%s timebase=%d/%d",
+        target_stream->index,
+        avcodec_get_name(target_stream->codecpar->codec_id),
+        bridge_dict_borrowed_value(target_stream->metadata, "language")
+            ? bridge_dict_borrowed_value(target_stream->metadata, "language")
+            : "<none>",
+        bridge_dict_borrowed_value(target_stream->metadata, "title")
+            ? bridge_dict_borrowed_value(target_stream->metadata, "title")
+            : "<none>",
+        target_stream->time_base.num,
+        target_stream->time_base.den
+    );
 
     const AVCodec *codec = avcodec_find_decoder(target_stream->codecpar->codec_id);
     if (!codec) {
         avformat_close_input(&format_context);
+        bridge_log(
+            "copy_ass_document no decoder for codec=%s",
+            avcodec_get_name(target_stream->codecpar->codec_id)
+        );
         bridge_set_error(error_message, "找不到字幕解码器。");
         return -1;
     }
@@ -452,17 +562,27 @@ int subtitle_bridge_copy_ass_document(
     AVCodecContext *codec_context = avcodec_alloc_context3(codec);
     if (!codec_context) {
         avformat_close_input(&format_context);
+        bridge_log("copy_ass_document failed to allocate codec context");
         bridge_set_error(error_message, "分配字幕解码器失败。");
         return -1;
     }
 
     if (avcodec_parameters_to_context(codec_context, target_stream->codecpar) < 0 ||
         avcodec_open2(codec_context, codec, NULL) < 0) {
+        bridge_log(
+            "copy_ass_document failed to open decoder=%s",
+            avcodec_get_name(target_stream->codecpar->codec_id)
+        );
         avcodec_free_context(&codec_context);
         avformat_close_input(&format_context);
         bridge_set_error(error_message, "打开字幕解码器失败。");
         return -1;
     }
+    bridge_log(
+        "copy_ass_document decoder ready name=%s extradataBytes=%d",
+        avcodec_get_name(target_stream->codecpar->codec_id),
+        codec_context->extradata_size
+    );
 
     BridgeStringBuilder ass_header = {0};
     BridgeStringBuilder ass_events = {0};
@@ -488,17 +608,59 @@ int subtitle_bridge_copy_ass_document(
 
     bool has_ass_events = false;
     bool has_text_events = false;
+    int total_packets = 0;
+    int subtitle_packets = 0;
+    int decoded_subtitles = 0;
+    int decode_failures = 0;
+    int ass_rect_count = 0;
+    int text_rect_count = 0;
+    double packet_scan_started_at = bridge_now_milliseconds();
+    bridge_log("copy_ass_document packet scan start stream=%d", stream_index);
 
     while (av_read_frame(format_context, packet) >= 0) {
+        total_packets += 1;
         if (packet->stream_index != stream_index) {
             av_packet_unref(packet);
             continue;
+        }
+        subtitle_packets += 1;
+        if (subtitle_packets == 1) {
+            bridge_log(
+                "copy_ass_document first subtitle packet pts=%lld duration=%lld size=%d",
+                (long long) packet->pts,
+                (long long) packet->duration,
+                packet->size
+            );
+        }
+        if ((subtitle_packets % 100) == 0) {
+            bridge_log(
+                "copy_ass_document progress totalPackets=%d subtitlePackets=%d decoded=%d assRects=%d textRects=%d failures=%d elapsed=%.1fms",
+                total_packets,
+                subtitle_packets,
+                decoded_subtitles,
+                ass_rect_count,
+                text_rect_count,
+                decode_failures,
+                bridge_now_milliseconds() - packet_scan_started_at
+            );
         }
 
         AVSubtitle subtitle = {0};
         int got_subtitle = 0;
         int decode_result = avcodec_decode_subtitle2(codec_context, &subtitle, &got_subtitle, packet);
+        if (decode_result < 0) {
+            decode_failures += 1;
+            if (decode_failures <= 3 || (decode_failures % 25) == 0) {
+                bridge_log(
+                    "copy_ass_document decode failure code=%d packetPts=%lld packetDuration=%lld",
+                    decode_result,
+                    (long long) packet->pts,
+                    (long long) packet->duration
+                );
+            }
+        }
         if (decode_result >= 0 && got_subtitle) {
+            decoded_subtitles += 1;
             for (unsigned int rect_index = 0; rect_index < subtitle.num_rects; rect_index++) {
                 AVSubtitleRect *rect = subtitle.rects[rect_index];
                 if (!rect) {
@@ -506,6 +668,7 @@ int subtitle_bridge_copy_ass_document(
                 }
                 if (rect->type == SUBTITLE_ASS && rect->ass && rect->ass[0] != '\0') {
                     has_ass_events = true;
+                    ass_rect_count += 1;
                     bridge_append_ass_event_dialogue(
                         &ass_events,
                         rect->ass,
@@ -518,6 +681,7 @@ int subtitle_bridge_copy_ass_document(
                     );
                 } else if (rect->text && rect->text[0] != '\0') {
                     has_text_events = true;
+                    text_rect_count += 1;
                     bridge_append_text_dialogue(
                         &text_events,
                         rect->text,
@@ -539,6 +703,16 @@ int subtitle_bridge_copy_ass_document(
     av_packet_free(&packet);
     avcodec_free_context(&codec_context);
     avformat_close_input(&format_context);
+    bridge_log(
+        "copy_ass_document packet scan finished totalPackets=%d subtitlePackets=%d decoded=%d assRects=%d textRects=%d failures=%d elapsed=%.1fms",
+        total_packets,
+        subtitle_packets,
+        decoded_subtitles,
+        ass_rect_count,
+        text_rect_count,
+        decode_failures,
+        bridge_now_milliseconds() - packet_scan_started_at
+    );
 
     BridgeStringBuilder final_document = {0};
     if (has_ass_events) {
@@ -547,13 +721,27 @@ int subtitle_bridge_copy_ass_document(
         }
         bridge_builder_append_string(&final_document, ass_header.data);
         bridge_builder_append_string(&final_document, ass_events.data);
+        bridge_log(
+            "copy_ass_document assembled ASS document bytes=%zu totalElapsed=%.1fms",
+            final_document.length,
+            bridge_now_milliseconds() - started_at
+        );
     } else if (has_text_events) {
         bridge_builder_append_string(&final_document, bridge_default_ass_header);
         bridge_builder_append_string(&final_document, text_events.data);
+        bridge_log(
+            "copy_ass_document assembled text ASS document bytes=%zu totalElapsed=%.1fms",
+            final_document.length,
+            bridge_now_milliseconds() - started_at
+        );
     } else {
         bridge_builder_free(&ass_header);
         bridge_builder_free(&ass_events);
         bridge_builder_free(&text_events);
+        bridge_log(
+            "copy_ass_document produced no renderable events totalElapsed=%.1fms",
+            bridge_now_milliseconds() - started_at
+        );
         bridge_set_error(error_message, "当前内嵌字幕轨暂不支持自渲染。");
         return -1;
     }

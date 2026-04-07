@@ -211,6 +211,11 @@ struct PlayerPresenter {
                     incoming: backendSubtitleTracks,
                     preferIncoming: false
                 )
+                if !backendSubtitleTracks.isEmpty {
+                    debugLogEmbeddedSubtitlePlayback(
+                        "backend track list updated fileID=\(fileID) count=\(backendSubtitleTracks.count) tracks=[\(describeEmbeddedSubtitleTracks(backendSubtitleTracks))]"
+                    )
+                }
                 if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
                    state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
                     state.selectedEmbeddedSubtitleTrackID = nil
@@ -243,6 +248,9 @@ struct PlayerPresenter {
                     incoming: tracks,
                     preferIncoming: true
                 )
+                debugLogEmbeddedSubtitlePlayback(
+                    "extractor track list loaded fileID=\(fileID) count=\(tracks.count) tracks=[\(describeEmbeddedSubtitleTracks(tracks))]"
+                )
                 if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
                    state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
                     state.selectedEmbeddedSubtitleTrackID = nil
@@ -254,6 +262,9 @@ struct PlayerPresenter {
                 guard state.currentFileID == fileID else { return .none }
                 state.isLoadingEmbeddedSubtitles = false
                 state.availableEmbeddedSubtitles = []
+                debugLogEmbeddedSubtitlePlayback(
+                    "extractor track list failed fileID=\(fileID) error=\(error.localizedDescription)"
+                )
                 state.subtitleError = error.localizedDescription
                 return autoSelectSubtitleIfNeeded(for: &state)
                 
@@ -340,18 +351,34 @@ struct PlayerPresenter {
 
                 let extractor = EmbeddedSubtitleExtractor()
                 let stream = currentItem.stream
+                debugLogEmbeddedSubtitlePlayback(
+                    "embedded subtitle selected fileID=\(fileID) trackID=\(trackID) streamURL=\(stream.url.absoluteString)"
+                )
                 return .run { send in
                     await send(
                         .embeddedSubtitleContentResponse(
                             fileID,
                             trackID,
                             TaskResult {
+                                debugLogEmbeddedSubtitlePlayback(
+                                    "load embedded subtitle document start fileID=\(fileID) trackID=\(trackID)"
+                                )
                                 let document = try await extractor.loadDocument(
                                     for: trackID,
                                     from: stream.url,
                                     headers: stream.headers
                                 )
-                                return makeLoadedSubtitle(document: document, fallbackFileName: "embedded-\(trackID).ass")
+                                debugLogEmbeddedSubtitlePlayback(
+                                    "embedded subtitle document ready fileID=\(fileID) trackID=\(trackID) fileName=\(document.fileName ?? "embedded-\(trackID).ass")"
+                                )
+                                let loadedSubtitle = makeLoadedSubtitle(
+                                    document: document,
+                                    fallbackFileName: "embedded-\(trackID).ass"
+                                )
+                                debugLogEmbeddedSubtitlePlayback(
+                                    "embedded subtitle render payload ready fileID=\(fileID) trackID=\(trackID) fileName=\(loadedSubtitle.fileName)"
+                                )
+                                return loadedSubtitle
                             }
                         )
                     )
@@ -363,6 +390,9 @@ struct PlayerPresenter {
                 guard state.selectedEmbeddedSubtitleTrackID == trackID else {
                     return .none
                 }
+                debugLogEmbeddedSubtitlePlayback(
+                    "embedded subtitle render attached fileID=\(fileID) trackID=\(trackID) fileName=\(loadedSubtitle.fileName)"
+                )
                 state.subtitleError = nil
                 state.activeSubtitle = loadedSubtitle
                 return .none
@@ -373,6 +403,9 @@ struct PlayerPresenter {
                 guard state.selectedEmbeddedSubtitleTrackID == trackID else {
                     return .none
                 }
+                debugLogEmbeddedSubtitlePlayback(
+                    "embedded subtitle render failed fileID=\(fileID) trackID=\(trackID) error=\(error.localizedDescription)"
+                )
                 state.subtitleError = error.localizedDescription
                 state.activeSubtitle = nil
                 return .none
@@ -546,6 +579,9 @@ struct PlayerPresenter {
             state.isLoadingEmbeddedSubtitles = true
             embeddedTracksEffect = .run { send in
                 let extractor = EmbeddedSubtitleExtractor()
+                debugLogEmbeddedSubtitlePlayback(
+                    "extractor track scan start fileID=\(fileID) streamURL=\(stream.url.absoluteString)"
+                )
                 await send(
                     .embeddedSubtitleTracksResponse(
                         fileID,
@@ -666,4 +702,15 @@ private func mergeEmbeddedSubtitleTracks(
         }
         return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
     }
+}
+
+private func debugLogEmbeddedSubtitlePlayback(_ message: @autoclosure () -> String) {
+#if DEBUG
+    print("[PlayerPresenter][EmbeddedSubtitle] \(message())")
+#endif
+}
+
+private func describeEmbeddedSubtitleTracks(_ tracks: [SubtitleTrack]) -> String {
+    guard !tracks.isEmpty else { return "<empty>" }
+    return tracks.map { "\($0.id):\($0.displayName)" }.joined(separator: ", ")
 }

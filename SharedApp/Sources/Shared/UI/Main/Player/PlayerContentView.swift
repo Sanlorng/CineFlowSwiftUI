@@ -198,6 +198,11 @@ private struct PlayerContentMainView: View {
                     document: customSubtitleDocument,
                     playbackTime: playerController.timeline.currentTime,
                     onReadinessChanged: { ready in
+                        if isSubtitleRendererReady != ready {
+                            debugLogSubtitleRenderer(
+                                "readiness changed ready=\(ready) fileID=\(viewStore.currentFileID ?? "<none>") activeSubtitle=\(viewStore.activeSubtitle?.fileName ?? "<none>")"
+                            )
+                        }
                         isSubtitleRendererReady = ready
                     }
                 )
@@ -277,6 +282,16 @@ private struct PlayerContentMainView: View {
         .onChange(of: playerController.timeline.currentTime) { _, newValue in
             guard !isScrubbing else { return }
             scrubPosition = newValue
+        }
+        .onChange(of: viewStore.activeSubtitle?.fileName) { oldValue, newValue in
+            debugLogSubtitleRenderer(
+                "active subtitle changed old=\(oldValue ?? "<none>") new=\(newValue ?? "<none>") fileID=\(viewStore.currentFileID ?? "<none>")"
+            )
+        }
+        .onChange(of: viewStore.selectedEmbeddedSubtitleTrackID) { oldValue, newValue in
+            debugLogSubtitleRenderer(
+                "selected embedded subtitle track changed old=\(oldValue ?? "<none>") new=\(newValue ?? "<none>") fileID=\(viewStore.currentFileID ?? "<none>")"
+            )
         }
         .onDisappear {
             playerController.reset()
@@ -1711,6 +1726,12 @@ private func makeCustomSubtitleDocument(
     return subtitle.document
 #else
     return nil
+#endif
+}
+
+private func debugLogSubtitleRenderer(_ message: @autoclosure () -> String) {
+#if DEBUG
+    print("[PlayerContentView][SubtitleRenderer] \(message())")
 #endif
 }
 

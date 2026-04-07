@@ -21,109 +21,148 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
     private static let documentCache = EmbeddedSubtitleDocumentCache()
 
     func availableTracks(for mediaURL: URL, headers: [String: String]) async throws -> [SubtitleTrack] {
+        let startedAt = Date()
         let headerValue = makeHeaderValue(headers)
-        return try mediaURL.absoluteString.withCString { mediaURLCString in
-            try withHeaderCString(headerValue) { headerCString in
-                var tracksPointer: UnsafeMutablePointer<SubtitleBridgeTrackInfo>?
-                var count: Int32 = 0
-                var errorPointer: UnsafeMutablePointer<CChar>?
-
-                defer {
-                    if let tracksPointer {
-                        subtitle_bridge_free_tracks(tracksPointer, count)
-                    }
-                    if let errorPointer {
-                        subtitle_bridge_free_string(errorPointer)
-                    }
-                }
-
-                let result = subtitle_bridge_copy_tracks(
-                    mediaURLCString,
-                    headerCString,
-                    &tracksPointer,
-                    &count,
-                    &errorPointer
-                )
-
-                guard result == 0 else {
-                    throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕轨失败。")
-                }
-
-                guard let tracksPointer, count > 0 else {
-#if DEBUG
-                    print("[EmbeddedSubtitleExtractor] No embedded subtitle tracks for \(mediaURL.absoluteString)")
-#endif
-                    return [SubtitleTrack]()
-                }
-
-                let buffer = UnsafeBufferPointer(start: tracksPointer, count: Int(count))
-                let tracks: [SubtitleTrack] = buffer.map { item in
-                    SubtitleTrack(
-                        id: String(item.stream_index),
-                        displayName: makeDisplayName(title: item.title, language: item.language, codecName: item.codec_name, streamIndex: item.stream_index),
-                        language: item.language.flatMap { String(cString: $0) },
-                        formatHint: .ass,
-                        kind: .embedded
-                    )
-                }
-#if DEBUG
-                let summary = tracks.map { "\($0.id):\($0.displayName)" }.joined(separator: ", ")
-                print("[EmbeddedSubtitleExtractor] Tracks => [\(summary)]")
-#endif
-                return tracks
-            }
-        }
-    }
-
-    func loadDocument(for trackID: SubtitleTrack.ID, from mediaURL: URL, headers: [String: String]) async throws -> SubtitleDocument {
-        guard let streamIndex = Int(trackID) else {
-            throw EmbeddedSubtitleExtractorError.invalidTrackIdentifier(trackID)
-        }
-
-        let headerValue = makeHeaderValue(headers)
-        let cacheKey = EmbeddedSubtitleDocumentCache.Key(
-            mediaURL: mediaURL.absoluteString,
-            headerValue: headerValue ?? "",
-            trackID: trackID
+        debugLogEmbeddedSubtitleExtractor(
+            "availableTracks start url=\(mediaURL.absoluteString) headerBytes=\(headerValue?.utf8.count ?? 0) headerKeys=\(describeHeaderKeys(headers))"
         )
-        return try await Self.documentCache.document(for: cacheKey) {
-            try mediaURL.absoluteString.withCString { mediaURLCString in
+        do {
+            let tracks = try mediaURL.absoluteString.withCString { mediaURLCString in
                 try withHeaderCString(headerValue) { headerCString in
-                    var documentPointer: UnsafeMutablePointer<CChar>?
+                    var tracksPointer: UnsafeMutablePointer<SubtitleBridgeTrackInfo>?
+                    var count: Int32 = 0
                     var errorPointer: UnsafeMutablePointer<CChar>?
 
                     defer {
-                        if let documentPointer {
-                            subtitle_bridge_free_string(documentPointer)
+                        if let tracksPointer {
+                            subtitle_bridge_free_tracks(tracksPointer, count)
                         }
                         if let errorPointer {
                             subtitle_bridge_free_string(errorPointer)
                         }
                     }
 
-                    let result = subtitle_bridge_copy_ass_document(
+                    let bridgeStartedAt = Date()
+                    debugLogEmbeddedSubtitleExtractor(
+                        "availableTracks bridge_copy_tracks start url=\(mediaURL.absoluteString)"
+                    )
+                    let result = subtitle_bridge_copy_tracks(
                         mediaURLCString,
                         headerCString,
-                        Int32(streamIndex),
-                        &documentPointer,
+                        &tracksPointer,
+                        &count,
                         &errorPointer
                     )
+                    debugLogEmbeddedSubtitleExtractor(
+                        "availableTracks bridge_copy_tracks finished result=\(result) count=\(count) elapsed=\(debugElapsedMilliseconds(since: bridgeStartedAt))"
+                    )
 
-                    guard result == 0, let documentPointer else {
-                        throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕失败。")
+                    guard result == 0 else {
+                        throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕轨失败。")
                     }
 
-#if DEBUG
-                    print("[EmbeddedSubtitleExtractor] Loaded embedded subtitle track \(streamIndex)")
-#endif
-                    return .ass(
-                        String(cString: documentPointer),
-                        fileName: "embedded-\(streamIndex).ass"
-                    )
+                    guard let tracksPointer, count > 0 else {
+                        return [SubtitleTrack]()
+                    }
+
+                    let buffer = UnsafeBufferPointer(start: tracksPointer, count: Int(count))
+                    return buffer.map { item in
+                        SubtitleTrack(
+                            id: String(item.stream_index),
+                            displayName: makeDisplayName(title: item.title, language: item.language, codecName: item.codec_name, streamIndex: item.stream_index),
+                            language: item.language.flatMap { String(cString: $0) },
+                            formatHint: .ass,
+                            kind: .embedded
+                        )
+                    }
                 }
             }
+            debugLogEmbeddedSubtitleExtractor(
+                "availableTracks success count=\(tracks.count) tracks=[\(describeTracks(tracks))] elapsed=\(debugElapsedMilliseconds(since: startedAt))"
+            )
+            return tracks
+        } catch {
+            debugLogEmbeddedSubtitleExtractor(
+                "availableTracks failed elapsed=\(debugElapsedMilliseconds(since: startedAt)) error=\(error.localizedDescription)"
+            )
+            throw error
         }
     }
+
+    func loadDocument(for trackID: SubtitleTrack.ID, from mediaURL: URL, headers: [String: String]) async throws -> SubtitleDocument {
+        let startedAt = Date()
+        let headerValue = makeHeaderValue(headers)
+        debugLogEmbeddedSubtitleExtractor(
+            "loadDocument start trackID=\(trackID) url=\(mediaURL.absoluteString) headerBytes=\(headerValue?.utf8.count ?? 0) headerKeys=\(describeHeaderKeys(headers))"
+        )
+        guard let streamIndex = Int(trackID) else {
+            debugLogEmbeddedSubtitleExtractor("loadDocument invalid track identifier trackID=\(trackID)")
+            throw EmbeddedSubtitleExtractorError.invalidTrackIdentifier(trackID)
+        }
+
+        let cacheKey = EmbeddedSubtitleDocumentCache.Key(
+            mediaURL: mediaURL.absoluteString,
+            headerValue: headerValue ?? "",
+            trackID: trackID
+        )
+        do {
+            let document = try await Self.documentCache.document(for: cacheKey) {
+                let bridgeStartedAt = Date()
+                debugLogEmbeddedSubtitleExtractor(
+                    "loadDocument bridge_copy_ass_document start trackID=\(trackID) streamIndex=\(streamIndex)"
+                )
+                return try mediaURL.absoluteString.withCString { mediaURLCString in
+                    try withHeaderCString(headerValue) { headerCString in
+                        var documentPointer: UnsafeMutablePointer<CChar>?
+                        var errorPointer: UnsafeMutablePointer<CChar>?
+
+                        defer {
+                            if let documentPointer {
+                                subtitle_bridge_free_string(documentPointer)
+                            }
+                            if let errorPointer {
+                                subtitle_bridge_free_string(errorPointer)
+                            }
+                        }
+
+                        let result = subtitle_bridge_copy_ass_document(
+                            mediaURLCString,
+                            headerCString,
+                            Int32(streamIndex),
+                            &documentPointer,
+                            &errorPointer
+                        )
+
+                        guard result == 0, let documentPointer else {
+                            debugLogEmbeddedSubtitleExtractor(
+                                "loadDocument bridge_copy_ass_document failed trackID=\(trackID) result=\(result) elapsed=\(debugElapsedMilliseconds(since: bridgeStartedAt)) error=\(string(from: errorPointer) ?? "提取内嵌字幕失败。")"
+                            )
+                            throw EmbeddedSubtitleExtractorError.extractionFailed(string(from: errorPointer) ?? "提取内嵌字幕失败。")
+                        }
+
+                        let documentString = String(cString: documentPointer)
+                        debugLogEmbeddedSubtitleExtractor(
+                            "loadDocument bridge_copy_ass_document succeeded trackID=\(trackID) bytes=\(documentString.utf8.count) elapsed=\(debugElapsedMilliseconds(since: bridgeStartedAt))"
+                        )
+                        return .ass(
+                            documentString,
+                            fileName: "embedded-\(streamIndex).ass"
+                        )
+                    }
+                }
+            }
+            debugLogEmbeddedSubtitleExtractor(
+                "loadDocument success trackID=\(trackID) fileName=\(document.fileName ?? "embedded-\(trackID).ass") elapsed=\(debugElapsedMilliseconds(since: startedAt))"
+            )
+            return document
+        } catch {
+            debugLogEmbeddedSubtitleExtractor(
+                "loadDocument failed trackID=\(trackID) elapsed=\(debugElapsedMilliseconds(since: startedAt)) error=\(error.localizedDescription)"
+            )
+            throw error
+        }
+    }
+
     private func makeHeaderValue(_ headers: [String: String]) -> String? {
         guard !headers.isEmpty else { return nil }
         return headers
@@ -186,12 +225,22 @@ private actor EmbeddedSubtitleDocumentCache {
         loader: @escaping @Sendable () async throws -> SubtitleDocument
     ) async throws -> SubtitleDocument {
         if let cachedDocument = cachedDocuments[key] {
+            debugLogEmbeddedSubtitleExtractor(
+                "documentCache hit trackID=\(key.trackID) url=\(key.mediaURL)"
+            )
             return cachedDocument
         }
         if let inFlightLoad = inFlightLoads[key] {
+            debugLogEmbeddedSubtitleExtractor(
+                "documentCache join in-flight load trackID=\(key.trackID) url=\(key.mediaURL)"
+            )
             return try await inFlightLoad.value
         }
 
+        let startedAt = Date()
+        debugLogEmbeddedSubtitleExtractor(
+            "documentCache miss trackID=\(key.trackID) url=\(key.mediaURL)"
+        )
         let task = Task {
             try await loader()
         }
@@ -201,12 +250,38 @@ private actor EmbeddedSubtitleDocumentCache {
             let document = try await task.value
             cachedDocuments[key] = document
             inFlightLoads[key] = nil
+            debugLogEmbeddedSubtitleExtractor(
+                "documentCache stored trackID=\(key.trackID) url=\(key.mediaURL) elapsed=\(debugElapsedMilliseconds(since: startedAt))"
+            )
             return document
         } catch {
             inFlightLoads[key] = nil
+            debugLogEmbeddedSubtitleExtractor(
+                "documentCache failed trackID=\(key.trackID) url=\(key.mediaURL) elapsed=\(debugElapsedMilliseconds(since: startedAt)) error=\(error.localizedDescription)"
+            )
             throw error
         }
     }
+}
+
+private func debugLogEmbeddedSubtitleExtractor(_ message: @autoclosure () -> String) {
+#if DEBUG
+    print("[EmbeddedSubtitleExtractor] \(message())")
+#endif
+}
+
+private func debugElapsedMilliseconds(since startedAt: Date) -> String {
+    String(format: "%.1fms", Date().timeIntervalSince(startedAt) * 1000)
+}
+
+private func describeHeaderKeys(_ headers: [String: String]) -> String {
+    guard !headers.isEmpty else { return "<none>" }
+    return headers.keys.sorted().joined(separator: ",")
+}
+
+private func describeTracks(_ tracks: [SubtitleTrack]) -> String {
+    guard !tracks.isEmpty else { return "<empty>" }
+    return tracks.map { "\($0.id):\($0.displayName)" }.joined(separator: ", ")
 }
 #else
 enum EmbeddedSubtitleExtractorError: LocalizedError {
