@@ -109,10 +109,8 @@ struct BangumiDetailView: View {
                         .bold()
                         .multilineTextAlignment(.leading)
 
-                    if let onAirDate = item.onAirDate {
-                        Text(localizedBangumiDetailDate(onAirDate))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(localizedBangumiSummaryDate(item.onAirDate))
+                        .foregroundStyle(.secondary)
 
                     if let metadata = LibraryContentView.makeMetadataLine(for: item) {
                         Text(metadata)
@@ -479,6 +477,13 @@ private func localizedBangumiDetailDate(_ date: Date) -> String {
     formatter.dateStyle = .medium
     formatter.timeStyle = .none
     return formatter.string(from: date)
+}
+
+private func localizedBangumiSummaryDate(_ date: Date?) -> String {
+    guard let date else {
+        return "暂无播出日期"
+    }
+    return localizedBangumiDetailDate(date)
 }
 
 private func localizedBangumiDetailDateTime(_ date: Date) -> String {

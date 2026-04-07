@@ -324,12 +324,10 @@ private struct LibraryCard: View {
                     .lineLimit(2, reservesSpace: true)
                     .multilineTextAlignment(.leading)
                 
-                if let onAirDate = item.onAirDate {
-                    Text(localizedLibraryCardDate(onAirDate))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
+                Text(localizedLibraryCardDate(item.onAirDate))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
                 
                 if let metadata = LibraryContentView.makeMetadataLine(for: item) {
                     Text(metadata)
@@ -508,6 +506,13 @@ private func localizedLibraryCardDate(_ date: Date) -> String {
     formatter.dateStyle = .medium
     formatter.timeStyle = .none
     return formatter.string(from: date)
+}
+
+private func localizedLibraryCardDate(_ date: Date?) -> String {
+    guard let date else {
+        return "暂无播出日期"
+    }
+    return localizedLibraryCardDate(date)
 }
 
 private extension View {
