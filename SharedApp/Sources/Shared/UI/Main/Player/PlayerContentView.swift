@@ -1610,8 +1610,12 @@ private struct PlayerContentMainView: View {
         pendingManagedFullscreenTarget = target
         fullscreenTransitionTask?.cancel()
         fullscreenTransitionTask = Task { @MainActor in
-            handleFullscreenTransitionStart(to: target)
-            try? await Task.sleep(for: .milliseconds(180))
+            if target {
+                prepareForFullscreenEntry()
+                try? await Task.sleep(for: .milliseconds(180))
+            } else {
+                dismissFullscreenShortcutHUD()
+            }
             guard !Task.isCancelled else {
                 pendingManagedFullscreenTarget = nil
                 fullscreenTransitionTask = nil
@@ -1622,13 +1626,22 @@ private struct PlayerContentMainView: View {
     }
 #endif
 
-    private func handleFullscreenTransitionStart(to fullscreen: Bool) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            usesFullscreenLayout = fullscreen
+    private func prepareForFullscreenEntry() {
+        cancelControlBarAutoHide()
+        lastPointerLocation = nil
+        isPointerInsideControls = false
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isControlBarVisible = false
         }
-        updateWindowToolbarVisibility()
+        hideCursorIfNeeded()
+    }
 
+    private func handleFullscreenTransitionStart(to fullscreen: Bool) {
         if fullscreen {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                usesFullscreenLayout = true
+            }
+            updateWindowToolbarVisibility()
             cancelControlBarAutoHide()
             lastPointerLocation = nil
             isPointerInsideControls = false
@@ -1639,11 +1652,6 @@ private struct PlayerContentMainView: View {
         } else {
             cancelFullscreenPointerTasks()
             dismissFullscreenShortcutHUD()
-            showCursorIfNeeded()
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isControlBarVisible = true
-            }
-            scheduleControlBarVisibilityUpdate()
         }
     }
 
@@ -1656,6 +1664,11 @@ private struct PlayerContentMainView: View {
             hideCursorIfNeeded()
             isControlBarVisible = false
         } else {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                usesFullscreenLayout = false
+                isControlBarVisible = true
+            }
+            updateWindowToolbarVisibility()
             dismissFullscreenShortcutHUD()
             showCursorIfNeeded()
             scheduleControlBarVisibilityUpdate()
