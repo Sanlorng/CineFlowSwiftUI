@@ -286,47 +286,41 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
         }
 
         let currentTime = clock.currentTime
-        let visibleEntries = scheduler.visibleEntries(at: currentTime).sorted { lhs, rhs in
-            if lhs.zIndex != rhs.zIndex {
-                return lhs.zIndex < rhs.zIndex
-            }
-            if lhs.appearTime != rhs.appearTime {
-                return lhs.appearTime < rhs.appearTime
-            }
-            return lhs.text < rhs.text
-        }
+        let visibleEntries = scheduler.visibleEntries(at: currentTime)
 
         context.interpolationQuality = .high
 
-        for entry in visibleEntries {
-            guard let renderState = entry.renderState(at: currentTime) else {
-                continue
-            }
+        for zIndex in 0...2 {
+            for entry in visibleEntries where entry.zIndex == zIndex {
+                guard let renderState = entry.renderState(at: currentTime) else {
+                    continue
+                }
 
-            if renderState.frame.intersects(bounds) == false {
-                continue
-            }
+                if renderState.frame.intersects(bounds) == false {
+                    continue
+                }
 
-            guard let image = textCache.image(for: entry, scale: boundsScale(preparedScene: preparedScene)) else {
-                continue
-            }
+                guard let image = textCache.image(for: entry, scale: boundsScale(preparedScene: preparedScene)) else {
+                    continue
+                }
 
-            context.saveGState()
-            context.setAlpha(CGFloat(clampedOpacity(renderState.opacity) * currentSettings.opacity))
-            if abs(renderState.rotation) > 0.0001 {
-                context.translateBy(x: renderState.frame.midX, y: renderState.frame.midY)
-                context.rotate(by: renderState.rotation)
-                let drawRect = CGRect(
-                    x: -entry.size.width / 2,
-                    y: -entry.size.height / 2,
-                    width: entry.size.width,
-                    height: entry.size.height
-                )
-                context.draw(image, in: drawRect)
-            } else {
-                context.draw(image, in: renderState.frame)
+                context.saveGState()
+                context.setAlpha(CGFloat(clampedOpacity(renderState.opacity) * currentSettings.opacity))
+                if abs(renderState.rotation) > 0.0001 {
+                    context.translateBy(x: renderState.frame.midX, y: renderState.frame.midY)
+                    context.rotate(by: renderState.rotation)
+                    let drawRect = CGRect(
+                        x: -entry.size.width / 2,
+                        y: -entry.size.height / 2,
+                        width: entry.size.width,
+                        height: entry.size.height
+                    )
+                    context.draw(image, in: drawRect)
+                } else {
+                    context.draw(image, in: renderState.frame)
+                }
+                context.restoreGState()
             }
-            context.restoreGState()
         }
     }
 
@@ -490,6 +484,22 @@ private struct DanmakuMotionTrajectory: Sendable {
     var delay: TimeInterval
     var duration: TimeInterval
     var curve: DanmakuMotionCurve
+    private var segmentLengths: [CGFloat]
+    private var totalLength: CGFloat
+
+    init(
+        points: [CGPoint],
+        delay: TimeInterval,
+        duration: TimeInterval,
+        curve: DanmakuMotionCurve
+    ) {
+        self.points = points
+        self.delay = delay
+        self.duration = duration
+        self.curve = curve
+        self.segmentLengths = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
+        self.totalLength = max(segmentLengths.reduce(0, +), 0.0001)
+    }
 
     func point(at elapsed: TimeInterval) -> CGPoint {
         guard points.isEmpty == false else { return .zero }
@@ -504,8 +514,6 @@ private struct DanmakuMotionTrajectory: Sendable {
         }
 
         let curvedProgress = curve.value(at: motionProgress)
-        let segmentLengths = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
-        let totalLength = max(segmentLengths.reduce(0, +), 0.0001)
         let targetLength = totalLength * curvedProgress
 
         var consumed: CGFloat = 0
