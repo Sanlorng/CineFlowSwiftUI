@@ -572,17 +572,11 @@ private struct PlayerContentMainView: View {
             Spacer(minLength: 0)
 
 #if os(macOS)
-            Button {
+            glassIconButton(
+                isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+            ) {
                 observedWindow?.toggleFullScreen(nil)
-            } label: {
-                glassCapsuleLabel(
-                    title: "全屏",
-                    systemImage: isFullscreen
-                        ? "arrow.down.right.and.arrow.up.left"
-                        : "arrow.up.left.and.arrow.down.right"
-                )
             }
-            .buttonStyle(.plain)
 #endif
         }
     }
@@ -594,7 +588,7 @@ private struct PlayerContentMainView: View {
             revealControls()
         } label: {
             glassAdaptiveControlLabel(
-                title: "调整倍速",
+                title: playbackRateTitle(playerController.playbackRate),
                 systemImage: "gauge.with.dots.needle.50percent",
                 displayMode: displayMode
             )
@@ -1162,7 +1156,10 @@ private struct PlayerContentMainView: View {
             revealControls()
         } label: {
             glassAdaptiveControlLabel(
-                title: "音频轨",
+                title: selectedAudioTrackTitle(
+                    tracks: viewStore.availableAudioTracks,
+                    selectedAudioTrackID: viewStore.selectedAudioTrackID
+                ),
                 systemImage: "waveform",
                 displayMode: displayMode
             )
@@ -1213,7 +1210,11 @@ private struct PlayerContentMainView: View {
             revealControls()
         } label: {
             glassAdaptiveControlLabel(
-                title: "字幕轨",
+                title: subtitleMenuTitle(
+                    externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore),
+                    embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
+                    isSuppressed: viewStore.areSubtitlesSuppressed
+                ),
                 systemImage: "captions.bubble",
                 displayMode: displayMode
             )
