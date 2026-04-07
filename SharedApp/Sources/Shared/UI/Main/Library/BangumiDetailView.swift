@@ -208,7 +208,7 @@ private struct EpisodeCard: View {
                 HStack(spacing: 12) {
                     if let airDate = episode.airDate {
                         Label {
-                            Text(airDate, style: .date)
+                            Text(localizedBangumiDetailDate(airDate))
                         } icon: {
                             Image(systemName: "calendar")
                         }
@@ -269,6 +269,20 @@ private struct TagView: View {
             )
             .foregroundColor(.accentColor)
     }
+}
+
+private func localizedBangumiDetailDate(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    if let preferredLanguage = Locale.preferredLanguages.first, !preferredLanguage.isEmpty {
+        formatter.locale = Locale(identifier: preferredLanguage)
+    } else {
+        formatter.locale = .autoupdatingCurrent
+    }
+    formatter.calendar = .autoupdatingCurrent
+    formatter.timeZone = .autoupdatingCurrent
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .none
+    return formatter.string(from: date)
 }
 
 // MARK: - Helpers
