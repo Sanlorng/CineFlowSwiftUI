@@ -76,15 +76,17 @@ private struct PlayerContentMainView: View {
     @AppStorage("player.shortcut.seekStepMilliseconds") private var shortcutSeekStepMilliseconds = PlayerShortcutDefaults.seekStepMilliseconds
     @AppStorage("player.shortcut.holdToBoostRate") private var shortcutHoldToBoostRate = PlayerShortcutDefaults.holdToBoostRate
     @AppStorage("player.shortcut.volumeStepPercent") private var shortcutVolumeStepPercent = PlayerShortcutDefaults.volumeStepPercent
-    @AppStorage("player.shortcut.binding.toggleFullscreen") private var shortcutToggleFullscreenRawValue = PlayerShortcutAction.toggleFullscreen.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.togglePlayPause") private var shortcutTogglePlayPauseRawValue = PlayerShortcutAction.togglePlayPause.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.seekBackward") private var shortcutSeekBackwardRawValue = PlayerShortcutAction.seekBackward.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.seekForwardOrBoost") private var shortcutSeekForwardOrBoostRawValue = PlayerShortcutAction.seekForwardOrBoost.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.decreasePlaybackRate") private var shortcutDecreasePlaybackRateRawValue = PlayerShortcutAction.decreasePlaybackRate.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.increasePlaybackRate") private var shortcutIncreasePlaybackRateRawValue = PlayerShortcutAction.increasePlaybackRate.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.resetPlaybackRate") private var shortcutResetPlaybackRateRawValue = PlayerShortcutAction.resetPlaybackRate.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.volumeUp") private var shortcutVolumeUpRawValue = PlayerShortcutAction.volumeUp.defaultKey.rawValue
-    @AppStorage("player.shortcut.binding.volumeDown") private var shortcutVolumeDownRawValue = PlayerShortcutAction.volumeDown.defaultKey.rawValue
+    @AppStorage("player.shortcut.binding.toggleFullscreen") private var shortcutToggleFullscreenRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.toggleFullscreen.defaultBindings)
+    @AppStorage("player.shortcut.binding.togglePlayPause") private var shortcutTogglePlayPauseRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.togglePlayPause.defaultBindings)
+    @AppStorage("player.shortcut.binding.playPreviousEpisode") private var shortcutPlayPreviousEpisodeRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.playPreviousEpisode.defaultBindings)
+    @AppStorage("player.shortcut.binding.playNextEpisode") private var shortcutPlayNextEpisodeRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.playNextEpisode.defaultBindings)
+    @AppStorage("player.shortcut.binding.seekBackward") private var shortcutSeekBackwardRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.seekBackward.defaultBindings)
+    @AppStorage("player.shortcut.binding.seekForwardOrBoost") private var shortcutSeekForwardOrBoostRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.seekForwardOrBoost.defaultBindings)
+    @AppStorage("player.shortcut.binding.decreasePlaybackRate") private var shortcutDecreasePlaybackRateRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.decreasePlaybackRate.defaultBindings)
+    @AppStorage("player.shortcut.binding.increasePlaybackRate") private var shortcutIncreasePlaybackRateRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.increasePlaybackRate.defaultBindings)
+    @AppStorage("player.shortcut.binding.resetPlaybackRate") private var shortcutResetPlaybackRateRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.resetPlaybackRate.defaultBindings)
+    @AppStorage("player.shortcut.binding.volumeUp") private var shortcutVolumeUpRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.volumeUp.defaultBindings)
+    @AppStorage("player.shortcut.binding.volumeDown") private var shortcutVolumeDownRawValue = PlayerShortcutBindingCodec.encode(PlayerShortcutAction.volumeDown.defaultBindings)
     
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -800,7 +802,7 @@ private struct PlayerContentMainView: View {
                                 }
                             }
 
-                            Text("同一个按键只保留最后一次绑定。点击右侧当前按键后直接按键，按 Esc 取消。")
+                            Text("一个功能可以绑定多个按键；同一个按键只会归属最后一次绑定。点击“添加按键”后直接按键，按 Esc 取消。")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
 
@@ -927,7 +929,7 @@ private struct PlayerContentMainView: View {
                     Text(
                         pendingShortcutCaptureAction == action
                         ? "按键中…"
-                        : (shortcutBinding(for: action)?.displayTitle ?? "未绑定")
+                        : "添加按键"
                     )
                     .font(.caption.monospacedDigit())
                     .frame(minWidth: 72)
@@ -936,12 +938,19 @@ private struct PlayerContentMainView: View {
                 .controlSize(.small)
                 .tint(pendingShortcutCaptureAction == action ? Color.accentColor : Color.secondary)
 
-                HStack(spacing: 6) {
-                    if shortcutBinding(for: action) != nil {
-                        smallSettingButton("清空") {
-                            setShortcutBinding(nil, for: action)
-                            if pendingShortcutCaptureAction == action {
-                                pendingShortcutCaptureAction = nil
+                VStack(alignment: .trailing, spacing: 6) {
+                    if shortcutBindings(for: action).isEmpty {
+                        Text("未绑定")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(shortcutBindings(for: action), id: \.self) { binding in
+                            HStack(spacing: 6) {
+                                Text(binding.displayTitle)
+                                    .font(.caption.monospacedDigit())
+                                smallSettingButton("移除") {
+                                    removeShortcutBinding(binding, for: action)
+                                }
                             }
                         }
                     }
@@ -1382,12 +1391,16 @@ private struct PlayerContentMainView: View {
         min(max(shortcutVolumeStepPercent, 0), 100) / 100
     }
 
-    private func shortcutBinding(for action: PlayerShortcutAction) -> PlayerShortcutKey? {
+    private func shortcutBindings(for action: PlayerShortcutAction) -> [PlayerShortcutKey] {
         let rawValue = switch action {
         case .toggleFullscreen:
             shortcutToggleFullscreenRawValue
         case .togglePlayPause:
             shortcutTogglePlayPauseRawValue
+        case .playPreviousEpisode:
+            shortcutPlayPreviousEpisodeRawValue
+        case .playNextEpisode:
+            shortcutPlayNextEpisodeRawValue
         case .seekBackward:
             shortcutSeekBackwardRawValue
         case .seekForwardOrBoost:
@@ -1403,25 +1416,20 @@ private struct PlayerContentMainView: View {
         case .volumeDown:
             shortcutVolumeDownRawValue
         }
-        guard !rawValue.isEmpty else { return nil }
-        return PlayerShortcutKey(rawValue: rawValue)
+        return PlayerShortcutBindingCodec.decode(rawValue)
     }
 
-    private func setShortcutBinding(_ binding: PlayerShortcutKey?, for action: PlayerShortcutAction) {
-        if let binding {
-            for otherAction in PlayerShortcutAction.allCases where otherAction != action {
-                if shortcutBinding(for: otherAction) == binding {
-                    setShortcutBinding(nil, for: otherAction)
-                }
-            }
-        }
-
-        let rawValue = binding?.rawValue ?? ""
+    private func setShortcutBindings(_ bindings: [PlayerShortcutKey], for action: PlayerShortcutAction) {
+        let rawValue = PlayerShortcutBindingCodec.encode(bindings)
         switch action {
         case .toggleFullscreen:
             shortcutToggleFullscreenRawValue = rawValue
         case .togglePlayPause:
             shortcutTogglePlayPauseRawValue = rawValue
+        case .playPreviousEpisode:
+            shortcutPlayPreviousEpisodeRawValue = rawValue
+        case .playNextEpisode:
+            shortcutPlayNextEpisodeRawValue = rawValue
         case .seekBackward:
             shortcutSeekBackwardRawValue = rawValue
         case .seekForwardOrBoost:
@@ -1439,13 +1447,31 @@ private struct PlayerContentMainView: View {
         }
     }
 
+    private func addShortcutBinding(_ binding: PlayerShortcutKey, for action: PlayerShortcutAction) {
+        for otherAction in PlayerShortcutAction.allCases where otherAction != action {
+            let filtered = shortcutBindings(for: otherAction).filter { $0 != binding }
+            if filtered.count != shortcutBindings(for: otherAction).count {
+                setShortcutBindings(filtered, for: otherAction)
+            }
+        }
+
+        var updated = shortcutBindings(for: action)
+        updated.append(binding)
+        setShortcutBindings(updated, for: action)
+    }
+
+    private func removeShortcutBinding(_ binding: PlayerShortcutKey, for action: PlayerShortcutAction) {
+        let updated = shortcutBindings(for: action).filter { $0 != binding }
+        setShortcutBindings(updated, for: action)
+    }
+
     private func resetShortcutBindingToDefault(for action: PlayerShortcutAction) {
-        setShortcutBinding(action.defaultKey, for: action)
+        setShortcutBindings(action.defaultBindings, for: action)
     }
 
     private func resetShortcutSettingsToDefaults() {
         for action in PlayerShortcutAction.allCases {
-            setShortcutBinding(action.defaultKey, for: action)
+            setShortcutBindings(action.defaultBindings, for: action)
         }
         shortcutSeekStepMilliseconds = PlayerShortcutDefaults.seekStepMilliseconds
         shortcutHoldToBoostRate = PlayerShortcutDefaults.holdToBoostRate
@@ -1473,6 +1499,10 @@ private struct PlayerContentMainView: View {
             togglePlayerFullscreen()
         case .togglePlayPause:
             playerController.togglePlayPause()
+        case .playPreviousEpisode:
+            store.send(.playPrevious)
+        case .playNextEpisode:
+            store.send(.playNext)
         case .seekBackward:
             playerController.seekBy(-shortcutSeekStepSeconds)
         case .seekForwardOrBoost:
@@ -1525,7 +1555,7 @@ private struct PlayerContentMainView: View {
             return true
         }
         guard !hasUnsupportedShortcutModifiers(event),
-              shortcutBinding(for: .seekForwardOrBoost)?.matches(event) == true,
+              shortcutBindings(for: .seekForwardOrBoost).contains(where: { $0.matches(event) }),
               isForwardShortcutPressed || isTemporaryBoostShortcutActive else {
             return false
         }
@@ -1536,7 +1566,7 @@ private struct PlayerContentMainView: View {
 
     private func matchingShortcutAction(for event: NSEvent) -> PlayerShortcutAction? {
         PlayerShortcutAction.allCases.first { action in
-            shortcutBinding(for: action)?.matches(event) == true
+            shortcutBindings(for: action).contains(where: { $0.matches(event) })
         }
     }
 
@@ -1555,7 +1585,7 @@ private struct PlayerContentMainView: View {
         guard let binding = PlayerShortcutKey.from(event: event) else {
             return true
         }
-        setShortcutBinding(binding, for: action)
+        addShortcutBinding(binding, for: action)
         pendingShortcutCaptureAction = nil
         return true
     }
