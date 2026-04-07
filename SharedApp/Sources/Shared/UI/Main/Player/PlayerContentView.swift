@@ -62,6 +62,7 @@ private struct PlayerContentMainView: View {
     @State private var isTemporaryBoostShortcutActive = false
     @State private var forwardShortcutActivationTask: Task<Void, Never>?
     @State private var fullscreenShortcutHUD: PlayerShortcutHUDState?
+    @State private var suppressControlRevealOnNextFullscreenChange = false
     @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
     @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
@@ -325,7 +326,11 @@ private struct PlayerContentMainView: View {
                             dismissFullscreenShortcutHUD()
                             showCursorIfNeeded()
                         }
-                        revealControls()
+                        let shouldRevealControls = !suppressControlRevealOnNextFullscreenChange
+                        suppressControlRevealOnNextFullscreenChange = false
+                        if shouldRevealControls {
+                            revealControls()
+                        }
                     }
                 )
                 .frame(width: 0, height: 0)
@@ -1439,6 +1444,7 @@ private struct PlayerContentMainView: View {
 
         switch action {
         case .toggleFullscreen:
+            suppressControlRevealOnNextFullscreenChange = true
             observedWindow?.toggleFullScreen(nil)
         case .togglePlayPause:
             playerController.togglePlayPause()
@@ -1486,7 +1492,6 @@ private struct PlayerContentMainView: View {
                 systemImage: newVolume <= 0.001 ? "speaker.slash.fill" : "speaker.wave.1.fill"
             )
         }
-        revealControls()
         return true
     }
 
@@ -1501,7 +1506,6 @@ private struct PlayerContentMainView: View {
         }
 
         endForwardShortcutTracking()
-        revealControls()
         return true
     }
 
@@ -1542,7 +1546,6 @@ private struct PlayerContentMainView: View {
             guard !Task.isCancelled, isForwardShortcutPressed else { return }
             isTemporaryBoostShortcutActive = true
             playerController.setPlaybackRate(shortcutHoldToBoostRate)
-            revealControls()
         }
     }
 

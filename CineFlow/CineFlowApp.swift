@@ -20,6 +20,10 @@ struct CineFlowApp: App {
             .frame(minWidth: 400, minHeight: 400)
         }
         .windowStyle(.hiddenTitleBar)
+
+        Settings {
+            SharedSettingsView()
+        }
     }
 }
 
