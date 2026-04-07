@@ -582,7 +582,7 @@ private extension LibraryPresenter.State.BangumiItem {
     func matchesSearchTerms(_ terms: [String]) -> Bool {
         let haystacks = [
             title,
-            details,
+            onAirDate.map(localizedLibrarySearchDate),
             groupName,
             episodeProgress,
             animeId.map(String.init),
@@ -598,6 +598,20 @@ private extension LibraryPresenter.State.BangumiItem {
             haystacks.contains(where: { $0.contains(term) })
         }
     }
+}
+
+private func localizedLibrarySearchDate(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    if let preferredLanguage = Locale.preferredLanguages.first, !preferredLanguage.isEmpty {
+        formatter.locale = Locale(identifier: preferredLanguage)
+    } else {
+        formatter.locale = .autoupdatingCurrent
+    }
+    formatter.calendar = .autoupdatingCurrent
+    formatter.timeZone = .autoupdatingCurrent
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .none
+    return formatter.string(from: date)
 }
 
 struct RemoteMediaLibraryClient {
