@@ -566,7 +566,7 @@ private struct LibraryCard: View {
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 18)
             .stroke(
-                isHovering ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.1),
+                isHovering ? Color.white.opacity(0.22) : Color.secondary.opacity(0.1),
                 lineWidth: isHovering ? 1.2 : 1
             )
     }
