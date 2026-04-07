@@ -539,36 +539,23 @@ private struct PlayerContentMainView: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isSpeedPopoverPresented, arrowEdge: .bottom) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                            Button {
-                                playerController.setPlaybackRate(rate)
-                                isSpeedPopoverPresented = false
-                            } label: {
-                                selectionRowLabel(
-                                    title: playbackRateTitle(rate),
-                                    subtitle: rate == 1 ? "默认速度" : nil,
-                                    isSelected: abs(playerController.playbackRate - rate) < 0.001
-                                )
-                            }
-                            .id(rate)
-                            .buttonStyle(.plain)
-                        }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                    Button {
+                        playerController.setPlaybackRate(rate)
+                        isSpeedPopoverPresented = false
+                    } label: {
+                        selectionRowLabel(
+                            title: playbackRateTitle(rate),
+                            subtitle: rate == 1 ? "默认速度" : nil,
+                            isSelected: abs(playerController.playbackRate - rate) < 0.001
+                        )
                     }
-                }
-                .padding(12)
-                .frame(minWidth: 180, maxHeight: 220, alignment: .leading)
-                .onAppear {
-                    let selectedRate = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-                        .min(by: { abs(playerController.playbackRate - $0) < abs(playerController.playbackRate - $1) })
-                    guard let selectedRate else { return }
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(selectedRate, anchor: .center)
-                    }
+                    .buttonStyle(.plain)
                 }
             }
+            .padding(12)
+            .frame(minWidth: 180, alignment: .leading)
         }
     }
 
@@ -1795,29 +1782,60 @@ private func controlClusterBackground(opacity: Double) -> some View {
 @MainActor
 @ViewBuilder
 private func selectionRowLabel(title: String, subtitle: String?, isSelected: Bool) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 10) {
-        Image(systemName: "checkmark")
-            .font(.system(size: 11, weight: .semibold))
-            .frame(width: 14)
-            .opacity(isSelected ? 1 : 0)
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .fontWeight(isSelected ? .semibold : .medium)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+    SelectionRowLabelView(title: title, subtitle: subtitle, isSelected: isSelected)
+}
+
+private struct SelectionRowLabelView: View {
+    let title: String
+    let subtitle: String?
+    let isSelected: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 14)
+                .opacity(isSelected ? 1 : 0)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .fontWeight(isSelected ? .semibold : .medium)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(
+                    isSelected
+                    ? Color.accentColor.opacity(0.14)
+                    : Color.white.opacity(isHovering ? 0.08 : 0)
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    isSelected
+                    ? Color.accentColor.opacity(0.28)
+                    : Color.white.opacity(isHovering ? 0.12 : 0),
+                    lineWidth: 1
+                )
+        )
+#if os(macOS)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
             }
         }
-        Spacer(minLength: 0)
+#endif
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.horizontal, 10)
-    .padding(.vertical, 8)
-    .background(
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
-    )
 }
 
 @MainActor
