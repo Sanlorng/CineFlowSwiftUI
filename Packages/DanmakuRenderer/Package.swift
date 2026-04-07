@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "DanmakuRenderer",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v14),
         .iOS(.v16),
         .tvOS(.v16),
         .visionOS(.v1)
