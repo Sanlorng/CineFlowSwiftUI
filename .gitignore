@@ -5,6 +5,11 @@
 /Packages/*
 !/Packages/SubtitleRenderer
 !/Packages/SubtitleRenderer/**
+!/Packages/DanmakuRenderer
+!/Packages/DanmakuRenderer/**
+/Packages/DanmakuRenderer/.build
+/Packages/DanmakuRenderer/.build/**
+/Packages/DanmakuRenderer/.DS_Store
 /Packages/SubtitleRenderer/.build
 /Packages/SubtitleRenderer/.DS_Store
 /**/xcshareddata/

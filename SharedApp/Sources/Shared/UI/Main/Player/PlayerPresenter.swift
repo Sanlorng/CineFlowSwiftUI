@@ -8,6 +8,7 @@
 import Foundation
 import ComposableArchitecture
 import IdentifiedCollections
+import DanmakuRendererCore
 import RemoteMediaLibrary
 import SubtitleRendererCore
 
@@ -51,7 +52,7 @@ struct PlayerPresenter {
 
         struct LoadedDanmaku: Equatable, Sendable {
             let id = UUID()
-            let payload: DanmakuPayload
+            let document: DanmakuDocument
 
             static func == (lhs: LoadedDanmaku, rhs: LoadedDanmaku) -> Bool {
                 lhs.id == rhs.id
@@ -588,7 +589,7 @@ struct PlayerPresenter {
                         fileID,
                         TaskResult {
                             let xml = try await remoteClient.fetchDanmakuXML(baseURL, token, fileID)
-                            return .init(payload: try BilibiliDanmakuParser.parse(xml: xml))
+                            return .init(document: try BilibiliDanmakuParser.parse(xml: xml))
                         }
                     )
                 )

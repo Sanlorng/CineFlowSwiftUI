@@ -1,6 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import ComposableArchitecture
+import DanmakuRendererCanvas
+import DanmakuRendererCore
 import RemoteMediaLibrary
 import SubtitleRendererCore
 import SubtitleRendererLibass
@@ -293,9 +295,12 @@ private struct PlayerContentMainView: View {
                 .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
-                DanmakuRenderOverlay(
-                    loadedDanmaku: viewStore.activeDanmaku,
-                    controller: playerController,
+                DanmakuRendererOverlay(
+                    document: viewStore.activeDanmaku?.document,
+                    documentID: viewStore.activeDanmaku?.id,
+                    playbackTime: max(playerController.timeline.currentTime, 0),
+                    isPlaybackActive: isDanmakuPlaybackActive(playerController.playbackState),
+                    playbackRate: playerController.playbackRate,
                     settings: currentDanmakuSettings
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2145,6 +2150,15 @@ private func adjustedSubtitlePlaybackTime(
     subtitleTimeOffset: TimeInterval
 ) -> TimeInterval {
     max(playbackTime - subtitleTimeOffset, 0)
+}
+
+private func isDanmakuPlaybackActive(_ playbackState: PlayerPlaybackState) -> Bool {
+    switch playbackState {
+    case .playing, .buffering:
+        return true
+    case .preparing, .paused, .stopped, .completed, .idle, .error:
+        return false
+    }
 }
 
 @MainActor

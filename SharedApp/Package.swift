@@ -21,7 +21,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../Packages/SubtitleRenderer"),
-        .package(url: "https://github.com/sunsx9316/DanmakuRender-Swift.git", revision: "5ce51ff0a53a98b07913a7ebbc29c8f9fddb3b68"),
+        .package(path: "../Packages/DanmakuRenderer"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.1"),
         .package(url: "https://github.com/apple/swift-openapi-generator", from: "1.10.3"),
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.11.0"),
@@ -42,7 +42,8 @@ let package = Package(
                 .target(name: "SubtitleFFmpegBridge", condition: .when(platforms: [.iOS, .macOS, .tvOS])),
                 .product(name: "SubtitleRendererCore", package: "SubtitleRenderer"),
                 .product(name: "SubtitleRendererLibass", package: "SubtitleRenderer", condition: .when(platforms: [.macOS])),
-                .product(name: "DanmakuRender", package: "DanmakuRender-Swift"),
+                .product(name: "DanmakuRendererCore", package: "DanmakuRenderer"),
+                .product(name: "DanmakuRendererCanvas", package: "DanmakuRenderer"),
                 .product(name: "MPVKit", package: "MPVKit", condition: .when(platforms: [.iOS, .macOS, .tvOS])),
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ],
