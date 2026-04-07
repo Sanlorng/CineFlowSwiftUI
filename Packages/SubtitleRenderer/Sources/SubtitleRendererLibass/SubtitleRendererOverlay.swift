@@ -58,17 +58,31 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             let fontSize: Double
         }
 
+        private struct RenderSnapshot: Equatable {
+            let document: SubtitleDocument
+            let playbackTime: TimeInterval
+            let viewport: SubtitleViewport
+            let renderStyle: RenderStyle
+        }
+
         private var renderer: LibassRenderer?
         private var currentDocument: SubtitleDocument?
         private var currentViewport: SubtitleViewport?
         private var currentRenderStyle: RenderStyle?
         private var isReady = false
+        private var lastRenderedSnapshot: RenderSnapshot?
 
         func attach(to view: SubtitleOverlayView) {
             view.wantsLayer = true
             view.layer?.contentsGravity = .resize
             view.layer?.isOpaque = false
             view.layer?.backgroundColor = NSColor.clear.cgColor
+            view.layer?.actions = [
+                "contents": NSNull(),
+                "contentsScale": NSNull(),
+                "bounds": NSNull(),
+                "position": NSNull()
+            ]
         }
 
         func detach(from view: SubtitleOverlayView) {
@@ -78,6 +92,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             currentDocument = nil
             currentViewport = nil
             currentRenderStyle = nil
+            lastRenderedSnapshot = nil
         }
 
         func update(
@@ -135,9 +150,21 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
 #endif
                 }
 
+                let snapshot = RenderSnapshot(
+                    document: document,
+                    playbackTime: playbackTime,
+                    viewport: viewport,
+                    renderStyle: renderStyle
+                )
+                guard lastRenderedSnapshot != snapshot else { return }
+
                 let frame = try renderer?.renderFrame(at: playbackTime)
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
                 view.layer?.contents = frame?.image
                 view.layer?.contentsScale = viewport.scale
+                CATransaction.commit()
+                lastRenderedSnapshot = snapshot
 #if DEBUG
                 if frame == nil {
                     print("[SubtitleRendererOverlay] No frame at time \(playbackTime) for \(document.fileName ?? "unknown")")
@@ -161,6 +188,7 @@ public struct SubtitleRendererOverlay: NSViewRepresentable {
             currentDocument = nil
             currentViewport = nil
             currentRenderStyle = nil
+            lastRenderedSnapshot = nil
         }
 
         private func updateReadiness(

@@ -294,6 +294,9 @@ private struct PlayerContentMainView: View {
                 )
                 .frame(width: subtitleViewportSize.width, height: subtitleViewportSize.height)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
                 .allowsHitTesting(false)
                 DanmakuRendererOverlay(
                     document: viewStore.activeDanmaku?.document,
@@ -304,6 +307,9 @@ private struct PlayerContentMainView: View {
                     settings: currentDanmakuSettings
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
                 .allowsHitTesting(false)
                 if let fullscreenShortcutHUD, isFullscreen {
                     VStack {

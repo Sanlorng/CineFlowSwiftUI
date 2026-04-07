@@ -6,6 +6,7 @@ import AppKit
 import CoreText
 import CoreVideo
 import MetalKit
+import QuartzCore
 
 public struct DanmakuRendererOverlay: NSViewRepresentable {
     public let document: DanmakuDocument?
@@ -50,7 +51,7 @@ public struct DanmakuRendererOverlay: NSViewRepresentable {
 }
 
 public final class DanmakuOverlayView: NSView {
-    fileprivate struct Snapshot {
+    fileprivate struct Snapshot: Equatable {
         var document: DanmakuDocument?
         var documentID: UUID?
         var playbackTime: TimeInterval
@@ -70,6 +71,7 @@ public final class DanmakuOverlayView: NSView {
 
     private let metalView = DanmakuMetalView(frame: .zero)
     private let debugBadge = DanmakuDebugBadgeView(frame: .zero)
+    private var lastAppliedSnapshot = Snapshot.empty
 
     public override var isFlipped: Bool { true }
     public override var isOpaque: Bool { false }
@@ -90,6 +92,8 @@ public final class DanmakuOverlayView: NSView {
     }
 
     fileprivate func apply(snapshot: Snapshot) {
+        guard snapshot != lastAppliedSnapshot else { return }
+        lastAppliedSnapshot = snapshot
         metalView.apply(snapshot: snapshot)
     }
 
@@ -169,12 +173,21 @@ private final class DanmakuDebugBadgeView: NSView {
     }
 }
 
-private final class DanmakuMetalView: MTKView, MTKViewDelegate {
+private final class DanmakuMetalView: NSView {
     var onStatsChanged: ((String) -> Void)?
 
+    private let playbackTimeResyncThreshold: TimeInterval = 1.0 / 12.0
+    private let renderQueue = DispatchQueue(label: "CineFlow.DanmakuMetalRenderLoop", qos: .userInteractive)
+    private let displayLinkSemaphore = DispatchSemaphore(value: 1)
     private let renderer = DanmakuCanvasRenderer()
+    private let device: MTLDevice?
     private let compositor: DanmakuMetalCompositor?
+    private var metalLayer: CAMetalLayer?
+    nonisolated(unsafe) private var displayLink: CVDisplayLink?
     private var snapshot = DanmakuOverlayView.Snapshot.empty
+    private var currentViewport = DanmakuCanvasViewport(size: .zero, scale: 2)
+    private var isAttachedToWindow = false
+    private var isAnimating = false
     private var drawSampleStartedAt = CACurrentMediaTime()
     private var drawCount = 0
     private var measuredFPS = 0.0
@@ -182,15 +195,12 @@ private final class DanmakuMetalView: MTKView, MTKViewDelegate {
 
     override var isOpaque: Bool { false }
 
-    override init(frame frameRect: NSRect, device: MTLDevice?) {
-        let resolvedDevice = device ?? MTLCreateSystemDefaultDevice()
+    override init(frame frameRect: NSRect) {
+        let resolvedDevice = MTLCreateSystemDefaultDevice()
+        self.device = resolvedDevice
         self.compositor = resolvedDevice.flatMap(DanmakuMetalCompositor.init(device:))
-        super.init(frame: frameRect, device: resolvedDevice)
+        super.init(frame: frameRect)
         commonInit()
-    }
-
-    convenience init(frame frameRect: NSRect) {
-        self.init(frame: frameRect, device: nil)
     }
 
     @available(*, unavailable)
@@ -199,30 +209,138 @@ private final class DanmakuMetalView: MTKView, MTKViewDelegate {
     }
 
     private func commonInit() {
-        delegate = self
-        colorPixelFormat = .bgra8Unorm
-        clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-        framebufferOnly = true
-        enableSetNeedsDisplay = true
-        isPaused = true
         wantsLayer = true
         layerContentsRedrawPolicy = .never
+        metalLayer = makeMetalLayer()
+        layer = metalLayer
+        layer?.actions = [
+            "bounds": NSNull(),
+            "position": NSNull(),
+            "backgroundColor": NSNull()
+        ]
+        setupDisplayLink()
 
         renderer.onInvalidation = { [weak self] in
-            self?.handleRendererInvalidation()
+            self?.renderQueue.async {
+                self?.handleRendererInvalidationLocked()
+            }
         }
     }
 
     func apply(snapshot: DanmakuOverlayView.Snapshot) {
-        self.snapshot = snapshot
-        updateRenderer()
+        let surfaceState = currentSurfaceState()
+        renderQueue.async {
+            let shouldRefresh = self.shouldRefreshRenderer(for: snapshot)
+            self.snapshot = snapshot
+            self.apply(surfaceState: surfaceState)
+            guard shouldRefresh else {
+                self.updateAnimationStateLocked()
+                return
+            }
+            self.updateRendererLocked()
+        }
     }
 
     func updateViewportAndRefresh() {
-        updateRenderer()
+        let surfaceState = currentSurfaceState()
+        updateMetalLayerGeometry(with: surfaceState.viewport)
+        renderQueue.async {
+            self.apply(surfaceState: surfaceState)
+            self.updateRendererLocked()
+        }
     }
 
-    private func updateRenderer() {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateDisplayLinkDisplay()
+        updateViewportAndRefresh()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateDisplayLinkDisplay()
+        updateViewportAndRefresh()
+    }
+
+    override func layout() {
+        super.layout()
+        updateViewportAndRefresh()
+    }
+
+    deinit {
+        if let displayLink {
+            CVDisplayLinkStop(displayLink)
+        }
+    }
+
+    private func makeMetalLayer() -> CAMetalLayer {
+        let layer = CAMetalLayer()
+        layer.device = device
+        layer.pixelFormat = .bgra8Unorm
+        layer.framebufferOnly = true
+        layer.isOpaque = false
+        layer.backgroundColor = NSColor.clear.cgColor
+        return layer
+    }
+
+    private func setupDisplayLink() {
+        var displayLink: CVDisplayLink?
+        guard CVDisplayLinkCreateWithActiveCGDisplays(&displayLink) == kCVReturnSuccess,
+              let displayLink else {
+            return
+        }
+
+        CVDisplayLinkSetOutputCallback(
+            displayLink,
+            danmakuDisplayLinkOutputCallback,
+            Unmanaged.passUnretained(self).toOpaque()
+        )
+        self.displayLink = displayLink
+    }
+
+    private func currentSurfaceState() -> DanmakuSurfaceState {
+        DanmakuSurfaceState(
+            viewport: .init(
+                size: bounds.size,
+                scale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+            ),
+            isAttachedToWindow: window != nil,
+            targetFPS: {
+                if let screen = window?.screen, #available(macOS 12.0, *) {
+                    return Double(screen.maximumFramesPerSecond)
+                }
+                return 60
+            }()
+        )
+    }
+
+    private func updateMetalLayerGeometry(with viewport: DanmakuCanvasViewport) {
+        guard let metalLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        metalLayer.contentsScale = viewport.scale
+        metalLayer.drawableSize = CGSize(
+            width: max(viewport.size.width * viewport.scale, 1),
+            height: max(viewport.size.height * viewport.scale, 1)
+        )
+        CATransaction.commit()
+    }
+
+    private func updateDisplayLinkDisplay() {
+        guard let displayLink,
+              let screenNumber = window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return
+        }
+        CVDisplayLinkSetCurrentCGDisplay(displayLink, CGDirectDisplayID(screenNumber.uint32Value))
+    }
+
+    private func apply(surfaceState: DanmakuSurfaceState) {
+        currentViewport = surfaceState.viewport
+        isAttachedToWindow = surfaceState.isAttachedToWindow
+        targetFPS = surfaceState.targetFPS
+    }
+
+    private func updateRendererLocked() {
         renderer.update(
             document: snapshot.document,
             documentID: snapshot.documentID,
@@ -232,55 +350,97 @@ private final class DanmakuMetalView: MTKView, MTKViewDelegate {
             settings: snapshot.settings,
             viewport: currentViewport
         )
-        updatePresentationMode()
-        requestImmediateDrawIfNeeded()
+        updateAnimationStateLocked()
+        requestImmediateDrawIfNeededLocked()
     }
 
-    private var currentViewport: DanmakuCanvasViewport {
-        DanmakuCanvasViewport(
-            size: bounds.size,
-            scale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        )
+    private func shouldRefreshRenderer(for newSnapshot: DanmakuOverlayView.Snapshot) -> Bool {
+        // Let the internal playback clock free-run while playback is stable.
+        // Re-sync only when scene inputs change, playback state changes,
+        // or the external player time has drifted materially.
+        if newSnapshot.documentID != snapshot.documentID
+            || newSnapshot.document != snapshot.document
+            || newSnapshot.settings != snapshot.settings {
+            return true
+        }
+
+        if newSnapshot.isPlaybackActive != snapshot.isPlaybackActive
+            || abs(newSnapshot.playbackRate - snapshot.playbackRate) >= 0.0001 {
+            return true
+        }
+
+        if newSnapshot.isPlaybackActive == false {
+            return abs(newSnapshot.playbackTime - snapshot.playbackTime) >= 0.0001
+        }
+
+        let playbackDrift = abs(newSnapshot.playbackTime - renderer.presentationTime)
+        return playbackDrift >= playbackTimeResyncThreshold
     }
 
-    private func updatePresentationMode() {
-        if let screen = window?.screen, #available(macOS 12.0, *) {
-            targetFPS = Double(screen.maximumFramesPerSecond)
-            preferredFramesPerSecond = screen.maximumFramesPerSecond
+    private func updateAnimationStateLocked() {
+        let shouldAnimate = renderer.shouldAnimate && compositor != nil && isAttachedToWindow && currentViewport.isRenderable
+        guard shouldAnimate != isAnimating else { return }
+        isAnimating = shouldAnimate
+
+        guard let displayLink else { return }
+        if shouldAnimate {
+            CVDisplayLinkStart(displayLink)
         } else {
-            targetFPS = 60
-            preferredFramesPerSecond = 60
-        }
-
-        let animating = renderer.shouldAnimate && compositor != nil
-        enableSetNeedsDisplay = !animating
-        isPaused = !animating
-    }
-
-    private func requestImmediateDrawIfNeeded() {
-        guard window != nil else { return }
-        if isPaused {
-            draw()
+            CVDisplayLinkStop(displayLink)
         }
     }
 
-    private func handleRendererInvalidation() {
-        updatePresentationMode()
-        requestImmediateDrawIfNeeded()
+    private func requestImmediateDrawIfNeededLocked() {
+        guard isAttachedToWindow, isAnimating == false else { return }
+        drawFrameLocked()
     }
 
-    func draw(in view: MTKView) {
-        guard let compositor else { return }
-        let sprites = renderer.makeSprites(in: bounds)
-        compositor.draw(sprites: sprites, in: self)
-        recordDraw()
+    private func handleRendererInvalidationLocked() {
+        updateAnimationStateLocked()
+        requestImmediateDrawIfNeededLocked()
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        updateRenderer()
+    private func drawFrameLocked() {
+        guard let compositor,
+              isAttachedToWindow,
+              currentViewport.isRenderable,
+              let metalLayer,
+              let drawable = metalLayer.nextDrawable() else {
+            return
+        }
+
+        let sprites = renderer.makeSprites(
+            in: CGRect(origin: .zero, size: currentViewport.size)
+        )
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = drawable.texture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        descriptor.colorAttachments[0].clearColor = MTLClearColor(
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 0
+        )
+
+        compositor.draw(
+            sprites: sprites,
+            drawable: drawable,
+            renderPassDescriptor: descriptor,
+            viewportSize: currentViewport.size
+        )
+        recordDrawLocked()
     }
 
-    private func recordDraw() {
+    fileprivate func enqueueDisplayLinkDraw() {
+        guard displayLinkSemaphore.wait(timeout: .now()) == .success else { return }
+        renderQueue.async {
+            self.drawFrameLocked()
+            self.displayLinkSemaphore.signal()
+        }
+    }
+
+    private func recordDrawLocked() {
         let now = CACurrentMediaTime()
         drawCount += 1
         let elapsed = now - drawSampleStartedAt
@@ -294,8 +454,31 @@ private final class DanmakuMetalView: MTKView, MTKViewDelegate {
         }
         drawCount = 0
         drawSampleStartedAt = now
-        onStatsChanged?(String(format: "DMK %.1f / %.0f FPS", measuredFPS, targetFPS))
+        let text = String(format: "DMK %.1f / %.0f FPS", measuredFPS, targetFPS)
+        DispatchQueue.main.async { [weak self] in
+            self?.onStatsChanged?(text)
+        }
     }
+}
+
+private struct DanmakuSurfaceState {
+    let viewport: DanmakuCanvasViewport
+    let isAttachedToWindow: Bool
+    let targetFPS: Double
+}
+
+private func danmakuDisplayLinkOutputCallback(
+    _ displayLink: CVDisplayLink,
+    _ inNow: UnsafePointer<CVTimeStamp>,
+    _ inOutputTime: UnsafePointer<CVTimeStamp>,
+    _ flagsIn: CVOptionFlags,
+    _ flagsOut: UnsafeMutablePointer<CVOptionFlags>,
+    _ displayLinkContext: UnsafeMutableRawPointer?
+) -> CVReturn {
+    guard let displayLinkContext else { return kCVReturnSuccess }
+    let view = Unmanaged<DanmakuMetalView>.fromOpaque(displayLinkContext).takeUnretainedValue()
+    view.enqueueDisplayLinkDraw()
+    return kCVReturnSuccess
 }
 
 private struct DanmakuSprite {
@@ -306,63 +489,180 @@ private struct DanmakuSprite {
     let rotation: Float
 }
 
-private struct DanmakuMetalVertex {
-    var position: SIMD2<Float>
-    var texCoord: SIMD2<Float>
-    var alpha: Float
+private struct DanmakuResolvedSprite {
+    let pageIndex: Int
+    let uvMin: SIMD2<Float>
+    let uvMax: SIMD2<Float>
+    let frame: CGRect
+    let alpha: Float
+    let rotation: Float
 }
 
-private final class DanmakuTextureBox: NSObject {
-    let texture: MTLTexture
+private struct DanmakuMetalInstance {
+    var center: SIMD2<Float>
+    var halfSize: SIMD2<Float>
+    var uvMin: SIMD2<Float>
+    var uvMax: SIMD2<Float>
+    var rotation: SIMD2<Float>
+    var alpha: Float
+    var textureIndex: Float
+}
 
-    init(_ texture: MTLTexture) {
+private struct DanmakuAtlasEntry {
+    let pageIndex: Int
+    let uvMin: SIMD2<Float>
+    let uvMax: SIMD2<Float>
+}
+
+private final class DanmakuAtlasEntryBox: NSObject {
+    let value: DanmakuAtlasEntry
+
+    init(_ value: DanmakuAtlasEntry) {
+        self.value = value
+    }
+}
+
+private struct DanmakuAtlasPlacement {
+    let pageIndex: Int
+    let origin: MTLOrigin
+}
+
+private struct DanmakuDrawSegment {
+    let instances: [DanmakuMetalInstance]
+    let textures: [MTLTexture]
+}
+
+private final class DanmakuAtlasPage {
+    let index: Int
+    let texture: MTLTexture
+    let width: Int
+    let height: Int
+
+    private var nextX = 0
+    private var nextY = 0
+    private var rowHeight = 0
+
+    init(index: Int, texture: MTLTexture) {
+        self.index = index
         self.texture = texture
+        self.width = texture.width
+        self.height = texture.height
+    }
+
+    func allocate(contentWidth: Int, contentHeight: Int, padding: Int) -> DanmakuAtlasPlacement? {
+        let requiredWidth = contentWidth + padding * 2
+        let requiredHeight = contentHeight + padding * 2
+        guard requiredWidth <= width, requiredHeight <= height else { return nil }
+
+        if nextX + requiredWidth > width {
+            nextX = 0
+            nextY += rowHeight
+            rowHeight = 0
+        }
+
+        guard nextY + requiredHeight <= height else { return nil }
+
+        let placement = DanmakuAtlasPlacement(
+            pageIndex: index,
+            origin: MTLOrigin(x: nextX + padding, y: nextY + padding, z: 0)
+        )
+        nextX += requiredWidth
+        rowHeight = max(rowHeight, requiredHeight)
+        return placement
     }
 }
 
 private final class DanmakuMetalCompositor {
+    private let atlasTextureDimension = 2048
+    private let atlasPadding = 1
+    private let maxTextureSlotsPerDraw = 16
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let samplerState: MTLSamplerState
     private let textureLoader: MTKTextureLoader
-    private let textureCache = NSCache<NSString, DanmakuTextureBox>()
+    private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
+    private var atlasPages: [DanmakuAtlasPage] = []
 
     init?(device: MTLDevice) {
         self.device = device
         guard let commandQueue = device.makeCommandQueue() else { return nil }
         self.commandQueue = commandQueue
         self.textureLoader = MTKTextureLoader(device: device)
-        self.textureCache.countLimit = 4096
-        self.textureCache.totalCostLimit = 192 * 1024 * 1024
+        self.atlasCache.countLimit = 4096
+        self.atlasCache.totalCostLimit = 192 * 1024 * 1024
 
         let shaderSource = """
         #include <metal_stdlib>
         using namespace metal;
 
-        struct VertexIn {
-            float2 position;
-            float2 texCoord;
+        struct InstanceIn {
+            float2 center;
+            float2 halfSize;
+            float2 uvMin;
+            float2 uvMax;
+            float2 rotation;
             float alpha;
+            float textureIndex;
         };
 
         struct VertexOut {
             float4 position [[position]];
             float2 texCoord;
             float alpha;
+            float textureIndex;
         };
 
-        vertex VertexOut danmaku_vertex(const device VertexIn *vertices [[buffer(0)]], uint vertexID [[vertex_id]]) {
+        vertex VertexOut danmaku_vertex(
+            const device InstanceIn *instances [[buffer(0)]],
+            constant float2 &viewportSize [[buffer(1)]],
+            uint vertexID [[vertex_id]],
+            uint instanceID [[instance_id]]
+        ) {
+            const float2 localCorners[6] = {
+                float2(-1.0, -1.0),
+                float2( 1.0, -1.0),
+                float2(-1.0,  1.0),
+                float2(-1.0,  1.0),
+                float2( 1.0, -1.0),
+                float2( 1.0,  1.0)
+            };
+            const float2 texCorners[6] = {
+                float2(0.0, 0.0),
+                float2(1.0, 0.0),
+                float2(0.0, 1.0),
+                float2(0.0, 1.0),
+                float2(1.0, 0.0),
+                float2(1.0, 1.0)
+            };
+
             VertexOut out;
-            VertexIn in = vertices[vertexID];
-            out.position = float4(in.position, 0.0, 1.0);
-            out.texCoord = in.texCoord;
-            out.alpha = in.alpha;
+            InstanceIn instance = instances[instanceID];
+            float2 local = localCorners[vertexID] * instance.halfSize;
+            float2 rotated = float2(
+                local.x * instance.rotation.x - local.y * instance.rotation.y,
+                local.x * instance.rotation.y + local.y * instance.rotation.x
+            );
+            float2 world = instance.center + rotated;
+            float2 clip = float2(
+                (world.x / max(viewportSize.x, 1.0)) * 2.0 - 1.0,
+                1.0 - (world.y / max(viewportSize.y, 1.0)) * 2.0
+            );
+
+            out.position = float4(clip, 0.0, 1.0);
+            out.texCoord = mix(instance.uvMin, instance.uvMax, texCorners[vertexID]);
+            out.alpha = instance.alpha;
+            out.textureIndex = instance.textureIndex;
             return out;
         }
 
-        fragment float4 danmaku_fragment(VertexOut in [[stage_in]], texture2d<float> texture [[texture(0)]], sampler texSampler [[sampler(0)]]) {
-            float4 color = texture.sample(texSampler, in.texCoord);
+        fragment float4 danmaku_fragment(
+            VertexOut in [[stage_in]],
+            array<texture2d<float>, 16> textures [[texture(0)]],
+            sampler texSampler [[sampler(0)]]
+        ) {
+            uint textureIndex = uint(in.textureIndex + 0.5);
+            float4 color = textures[textureIndex].sample(texSampler, in.texCoord);
             return float4(color.rgb * in.alpha, color.a * in.alpha);
         }
         """
@@ -397,25 +697,46 @@ private final class DanmakuMetalCompositor {
         self.samplerState = samplerState
     }
 
-    @MainActor
-    func draw(sprites: [DanmakuSprite], in view: MTKView) {
-        guard let descriptor = view.currentRenderPassDescriptor,
-              let drawable = view.currentDrawable,
-              let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+    func draw(
+        sprites: [DanmakuSprite],
+        drawable: CAMetalDrawable,
+        renderPassDescriptor descriptor: MTLRenderPassDescriptor,
+        viewportSize: CGSize
+    ) {
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            return
+        }
+
+        let resolvedSprites = resolveSprites(sprites, commandBuffer: commandBuffer)
+        let drawSegments = makeDrawSegments(from: resolvedSprites)
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
             return
         }
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setFragmentSamplerState(samplerState, index: 0)
 
-        let viewportSize = view.bounds.size
-        for sprite in sprites {
-            guard let texture = texture(for: sprite) else { continue }
-            var vertices = makeVertices(for: sprite, viewportSize: viewportSize)
-            encoder.setVertexBytes(&vertices, length: MemoryLayout<DanmakuMetalVertex>.stride * vertices.count, index: 0)
-            encoder.setFragmentTexture(texture, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
+        var viewportSize = SIMD2<Float>(
+            Float(max(viewportSize.width, 1)),
+            Float(max(viewportSize.height, 1))
+        )
+        encoder.setVertexBytes(
+            &viewportSize,
+            length: MemoryLayout<SIMD2<Float>>.stride,
+            index: 1
+        )
+
+        for segment in drawSegments where segment.instances.isEmpty == false {
+            guard let instanceBuffer = makeInstanceBuffer(instances: segment.instances) else { continue }
+            encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
+            encoder.setFragmentTextures(segment.textures, range: 0..<segment.textures.count)
+            encoder.drawPrimitives(
+                type: .triangle,
+                vertexStart: 0,
+                vertexCount: 6,
+                instanceCount: segment.instances.count
+            )
         }
 
         encoder.endEncoding()
@@ -423,62 +744,223 @@ private final class DanmakuMetalCompositor {
         commandBuffer.commit()
     }
 
-    private func texture(for sprite: DanmakuSprite) -> MTLTexture? {
-        if let cached = textureCache.object(forKey: sprite.textureKey) {
-            return cached.texture
+    private func resolveSprites(
+        _ sprites: [DanmakuSprite],
+        commandBuffer: MTLCommandBuffer
+    ) -> [DanmakuResolvedSprite] {
+        var resolved: [DanmakuResolvedSprite] = []
+        resolved.reserveCapacity(sprites.count)
+
+        var blitEncoder: MTLBlitCommandEncoder?
+        for sprite in sprites {
+            guard let atlasEntry = atlasEntry(
+                for: sprite,
+                commandBuffer: commandBuffer,
+                blitEncoder: &blitEncoder
+            ) else {
+                continue
+            }
+
+            resolved.append(
+                DanmakuResolvedSprite(
+                    pageIndex: atlasEntry.pageIndex,
+                    uvMin: atlasEntry.uvMin,
+                    uvMax: atlasEntry.uvMax,
+                    frame: sprite.frame,
+                    alpha: sprite.alpha,
+                    rotation: sprite.rotation
+                )
+            )
+        }
+        blitEncoder?.endEncoding()
+        return resolved
+    }
+
+    private func makeDrawSegments(from sprites: [DanmakuResolvedSprite]) -> [DanmakuDrawSegment] {
+        var segments: [DanmakuDrawSegment] = []
+        var currentInstances: [DanmakuMetalInstance] = []
+        var currentTextures: [MTLTexture] = []
+        var currentTextureSlots: [Int: Int] = [:]
+
+        func flushSegment() {
+            guard currentInstances.isEmpty == false else { return }
+            segments.append(
+                DanmakuDrawSegment(
+                    instances: currentInstances,
+                    textures: currentTextures
+                )
+            )
+            currentInstances.removeAll(keepingCapacity: true)
+            currentTextures.removeAll(keepingCapacity: true)
+            currentTextureSlots.removeAll(keepingCapacity: true)
         }
 
+        currentInstances.reserveCapacity(sprites.count)
+        for sprite in sprites {
+            let slot: Int
+            if let existingSlot = currentTextureSlots[sprite.pageIndex] {
+                slot = existingSlot
+            } else {
+                if currentTextures.count >= maxTextureSlotsPerDraw {
+                    flushSegment()
+                }
+                slot = currentTextures.count
+                currentTextureSlots[sprite.pageIndex] = slot
+                currentTextures.append(atlasPages[sprite.pageIndex].texture)
+            }
+
+            currentInstances.append(
+                makeInstance(
+                    for: sprite,
+                    textureSlot: slot
+                )
+            )
+        }
+        flushSegment()
+        return segments
+    }
+
+    private func atlasEntry(
+        for sprite: DanmakuSprite,
+        commandBuffer: MTLCommandBuffer,
+        blitEncoder: inout MTLBlitCommandEncoder?
+    ) -> DanmakuAtlasEntry? {
+        if let cached = atlasCache.object(forKey: sprite.textureKey) {
+            return cached.value
+        }
+
+        guard let sourceTexture = makeSourceTexture(for: sprite),
+              let placement = allocateAtlasPlacement(
+                contentWidth: sourceTexture.width,
+                contentHeight: sourceTexture.height
+              ) else {
+            return nil
+        }
+
+        if blitEncoder == nil {
+            blitEncoder = commandBuffer.makeBlitCommandEncoder()
+        }
+        blitEncoder?.copy(
+            from: sourceTexture,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: sourceTexture.width, height: sourceTexture.height, depth: 1),
+            to: atlasPages[placement.pageIndex].texture,
+            destinationSlice: 0,
+            destinationLevel: 0,
+            destinationOrigin: placement.origin
+        )
+
+        let atlasPage = atlasPages[placement.pageIndex]
+        let halfTexelX = sourceTexture.width > 1 ? 0.5 / Float(atlasPage.width) : 0
+        let halfTexelY = sourceTexture.height > 1 ? 0.5 / Float(atlasPage.height) : 0
+        let uvMin = SIMD2<Float>(
+            Float(placement.origin.x) / Float(atlasPage.width) + halfTexelX,
+            Float(placement.origin.y) / Float(atlasPage.height) + halfTexelY
+        )
+        let uvMax = SIMD2<Float>(
+            Float(placement.origin.x + sourceTexture.width) / Float(atlasPage.width) - halfTexelX,
+            Float(placement.origin.y + sourceTexture.height) / Float(atlasPage.height) - halfTexelY
+        )
+
+        let entry = DanmakuAtlasEntry(
+            pageIndex: placement.pageIndex,
+            uvMin: uvMin,
+            uvMax: uvMax
+        )
+        atlasCache.setObject(
+            DanmakuAtlasEntryBox(entry),
+            forKey: sprite.textureKey,
+            cost: sourceTexture.width * sourceTexture.height * 4
+        )
+        return entry
+    }
+
+    private func makeSourceTexture(for sprite: DanmakuSprite) -> MTLTexture? {
         let options: [MTKTextureLoader.Option: Any] = [
             .SRGB: false,
             .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
             .textureStorageMode: NSNumber(value: MTLStorageMode.private.rawValue),
-            .origin: MTKTextureLoader.Origin.topLeft
+            .origin: MTKTextureLoader.Origin.bottomLeft
         ]
-        guard let texture = try? textureLoader.newTexture(cgImage: sprite.image, options: options) else {
+        return try? textureLoader.newTexture(cgImage: sprite.image, options: options)
+    }
+
+    private func allocateAtlasPlacement(
+        contentWidth: Int,
+        contentHeight: Int
+    ) -> DanmakuAtlasPlacement? {
+        for page in atlasPages {
+            if let placement = page.allocate(
+                contentWidth: contentWidth,
+                contentHeight: contentHeight,
+                padding: atlasPadding
+            ) {
+                return placement
+            }
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: atlasTextureDimension,
+            height: atlasTextureDimension,
+            mipmapped: false
+        )
+        descriptor.storageMode = .private
+        descriptor.usage = [.shaderRead]
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
             return nil
         }
-        textureCache.setObject(DanmakuTextureBox(texture), forKey: sprite.textureKey, cost: texture.width * texture.height * 4)
-        return texture
+
+        let page = DanmakuAtlasPage(
+            index: atlasPages.count,
+            texture: texture
+        )
+        atlasPages.append(page)
+        return page.allocate(
+            contentWidth: contentWidth,
+            contentHeight: contentHeight,
+            padding: atlasPadding
+        )
     }
 
-    private func makeVertices(for sprite: DanmakuSprite, viewportSize: CGSize) -> [DanmakuMetalVertex] {
-        let center = CGPoint(x: sprite.frame.midX, y: sprite.frame.midY)
-        let halfWidth = sprite.frame.width / 2
-        let halfHeight = sprite.frame.height / 2
-        let angle = CGFloat(sprite.rotation)
-        let cosTheta = CGFloat(cos(Double(angle)))
-        let sinTheta = CGFloat(sin(Double(angle)))
+    private func makeInstance(
+        for sprite: DanmakuResolvedSprite,
+        textureSlot: Int
+    ) -> DanmakuMetalInstance {
+        let angle = Double(sprite.rotation)
+        return DanmakuMetalInstance(
+            center: SIMD2<Float>(
+                Float(sprite.frame.midX),
+                Float(sprite.frame.midY)
+            ),
+            halfSize: SIMD2<Float>(
+                Float(sprite.frame.width * 0.5),
+                Float(sprite.frame.height * 0.5)
+            ),
+            uvMin: sprite.uvMin,
+            uvMax: sprite.uvMax,
+            rotation: SIMD2<Float>(
+                Float(cos(angle)),
+                Float(sin(angle))
+            ),
+            alpha: sprite.alpha,
+            textureIndex: Float(textureSlot)
+        )
+    }
 
-        let localPoints = [
-            CGPoint(x: -halfWidth, y: -halfHeight),
-            CGPoint(x: halfWidth, y: -halfHeight),
-            CGPoint(x: -halfWidth, y: halfHeight),
-            CGPoint(x: halfWidth, y: halfHeight)
-        ]
-
-        let transformed = localPoints.map { point -> SIMD2<Float> in
-            let rotatedX = point.x * cosTheta - point.y * sinTheta
-            let rotatedY = point.x * sinTheta + point.y * cosTheta
-            let worldX = center.x + rotatedX
-            let worldY = center.y + rotatedY
-            return clipSpace(point: CGPoint(x: worldX, y: worldY), viewportSize: viewportSize)
+    private func makeInstanceBuffer(
+        instances: [DanmakuMetalInstance]
+    ) -> MTLBuffer? {
+        instances.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return nil }
+            return device.makeBuffer(
+                bytes: baseAddress,
+                length: rawBuffer.count,
+                options: .storageModeShared
+            )
         }
-
-        let alpha = sprite.alpha
-        return [
-            DanmakuMetalVertex(position: transformed[0], texCoord: SIMD2<Float>(1, 0), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[1], texCoord: SIMD2<Float>(0, 0), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[2], texCoord: SIMD2<Float>(1, 1), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[2], texCoord: SIMD2<Float>(1, 1), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[1], texCoord: SIMD2<Float>(0, 0), alpha: alpha),
-            DanmakuMetalVertex(position: transformed[3], texCoord: SIMD2<Float>(0, 1), alpha: alpha),
-        ]
-    }
-
-    private func clipSpace(point: CGPoint, viewportSize: CGSize) -> SIMD2<Float> {
-        let x = Float((point.x / max(viewportSize.width, 1)) * 2 - 1)
-        let y = Float(1 - (point.y / max(viewportSize.height, 1)) * 2)
-        return SIMD2<Float>(x, y)
     }
 }
 
@@ -516,6 +998,10 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 
     var shouldAnimate: Bool {
         currentSettings.isVisible && preparedScene != nil && clock.isActive
+    }
+
+    var presentationTime: TimeInterval {
+        clock.currentTime
     }
 
     func update(
@@ -663,31 +1149,82 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 }
 
 private final class DanmakuPlaybackClock {
+    private let driftIgnoreThreshold: TimeInterval = 1.0 / 240.0
+    private let driftSnapThreshold: TimeInterval = 0.25
+    private let driftCorrectionFactor = 0.18
     private var anchorTime: TimeInterval = 0
     private var anchorHostTime: CFTimeInterval = CACurrentMediaTime()
     private(set) var rate: Double = 1
     private(set) var isActive = false
 
     var currentTime: TimeInterval {
-        guard isActive else { return anchorTime }
-        let elapsed = CACurrentMediaTime() - anchorHostTime
-        return max(anchorTime + elapsed * rate, 0)
+        currentTime(at: CACurrentMediaTime())
     }
 
     func sync(time: TimeInterval, isActive: Bool, rate: Double) {
         let normalizedTime = max(time, 0)
         let normalizedRate = max(rate, 0.25)
+        let hostTime = CACurrentMediaTime()
 
-        if self.isActive == isActive,
-           abs(self.rate - normalizedRate) < 0.0001,
-           abs(anchorTime - normalizedTime) < 0.12 {
+        if self.isActive != isActive || abs(self.rate - normalizedRate) >= 0.0001 {
+            snap(
+                to: normalizedTime,
+                hostTime: hostTime,
+                isActive: isActive,
+                rate: normalizedRate
+            )
             return
         }
 
-        anchorTime = normalizedTime
-        anchorHostTime = CACurrentMediaTime()
+        guard isActive else {
+            if abs(anchorTime - normalizedTime) <= driftIgnoreThreshold {
+                return
+            }
+            snap(
+                to: normalizedTime,
+                hostTime: hostTime,
+                isActive: false,
+                rate: normalizedRate
+            )
+            return
+        }
+
+        let predictedTime = currentTime(at: hostTime)
+        let drift = normalizedTime - predictedTime
+        if abs(drift) <= driftIgnoreThreshold {
+            return
+        }
+
+        if abs(drift) >= driftSnapThreshold {
+            snap(
+                to: normalizedTime,
+                hostTime: hostTime,
+                isActive: true,
+                rate: normalizedRate
+            )
+            return
+        }
+
+        anchorTime = max(predictedTime + drift * driftCorrectionFactor, 0)
+        anchorHostTime = hostTime
+    }
+
+    private func currentTime(at hostTime: CFTimeInterval) -> TimeInterval {
+        guard isActive else { return anchorTime }
+        let elapsed = hostTime - anchorHostTime
+        return max(anchorTime + elapsed * rate, 0)
+    }
+
+    private func snap(
+        to time: TimeInterval,
+        hostTime: CFTimeInterval,
+        isActive: Bool,
+        rate: Double
+    ) {
+        anchorTime = time
+        anchorHostTime = hostTime
         self.isActive = isActive
-        self.rate = normalizedRate
+        self.rate = rate
     }
 }
 
@@ -1473,6 +2010,7 @@ private final class DanmakuTextRasterCache: @unchecked Sendable {
             return nil
         }
 
+        context.clear(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
         context.scaleBy(x: scale, y: scale)
         context.setAllowsAntialiasing(true)
         context.setShouldAntialias(true)
