@@ -133,16 +133,6 @@ struct BangumiDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.12))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
-                        )
                     }
                 }
                 Spacer(minLength: 0)
