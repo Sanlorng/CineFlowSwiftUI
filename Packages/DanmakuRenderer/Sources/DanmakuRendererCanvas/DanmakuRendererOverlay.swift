@@ -4,7 +4,6 @@ import DanmakuRendererCore
 #if os(macOS)
 import AppKit
 import CoreText
-import CoreVideo
 import MetalKit
 import QuartzCore
 
@@ -183,7 +182,7 @@ private final class DanmakuMetalView: NSView {
     private let device: MTLDevice?
     private let compositor: DanmakuMetalCompositor?
     private var metalLayer: CAMetalLayer?
-    nonisolated(unsafe) private var displayLink: CVDisplayLink?
+    nonisolated(unsafe) private var displayLink: CADisplayLink?
     private var snapshot = DanmakuOverlayView.Snapshot.empty
     private var currentViewport = DanmakuCanvasViewport(size: .zero, scale: 2)
     private var isAttachedToWindow = false
@@ -251,13 +250,11 @@ private final class DanmakuMetalView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        updateDisplayLinkDisplay()
         updateViewportAndRefresh()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        updateDisplayLinkDisplay()
         updateViewportAndRefresh()
     }
 
@@ -268,7 +265,7 @@ private final class DanmakuMetalView: NSView {
 
     deinit {
         if let displayLink {
-            CVDisplayLinkStop(displayLink)
+            displayLink.invalidate()
         }
     }
 
@@ -283,17 +280,12 @@ private final class DanmakuMetalView: NSView {
     }
 
     private func setupDisplayLink() {
-        var displayLink: CVDisplayLink?
-        guard CVDisplayLinkCreateWithActiveCGDisplays(&displayLink) == kCVReturnSuccess,
-              let displayLink else {
-            return
-        }
-
-        CVDisplayLinkSetOutputCallback(
-            displayLink,
-            danmakuDisplayLinkOutputCallback,
-            Unmanaged.passUnretained(self).toOpaque()
+        let displayLink = displayLink(
+            target: self,
+            selector: #selector(handleDisplayLinkTick(_:))
         )
+        displayLink.add(to: .main, forMode: .common)
+        displayLink.isPaused = true
         self.displayLink = displayLink
     }
 
@@ -323,14 +315,6 @@ private final class DanmakuMetalView: NSView {
             height: max(viewport.size.height * viewport.scale, 1)
         )
         CATransaction.commit()
-    }
-
-    private func updateDisplayLinkDisplay() {
-        guard let displayLink,
-              let screenNumber = window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
-            return
-        }
-        CVDisplayLinkSetCurrentCGDisplay(displayLink, CGDirectDisplayID(screenNumber.uint32Value))
     }
 
     private func apply(surfaceState: DanmakuSurfaceState) {
@@ -380,13 +364,7 @@ private final class DanmakuMetalView: NSView {
         let shouldAnimate = renderer.shouldAnimate && compositor != nil && isAttachedToWindow && currentViewport.isRenderable
         guard shouldAnimate != isAnimating else { return }
         isAnimating = shouldAnimate
-
-        guard let displayLink else { return }
-        if shouldAnimate {
-            CVDisplayLinkStart(displayLink)
-        } else {
-            CVDisplayLinkStop(displayLink)
-        }
+        configureDisplayLink(shouldAnimate: shouldAnimate, targetFPS: targetFPS)
     }
 
     private func requestImmediateDrawIfNeededLocked() {
@@ -441,6 +419,26 @@ private final class DanmakuMetalView: NSView {
         }
     }
 
+    private func configureDisplayLink(shouldAnimate: Bool, targetFPS: Double) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let displayLink = self.displayLink else { return }
+            if #available(macOS 14.0, *) {
+                let preferredFPS = Float(max(targetFPS, 30))
+                displayLink.preferredFrameRateRange = CAFrameRateRange(
+                    minimum: 30,
+                    maximum: preferredFPS,
+                    preferred: preferredFPS
+                )
+            }
+            displayLink.isPaused = !shouldAnimate
+        }
+    }
+
+    @objc
+    private func handleDisplayLinkTick(_ displayLink: CADisplayLink) {
+        enqueueDisplayLinkDraw()
+    }
+
     private func recordDrawLocked() {
         let now = CACurrentMediaTime()
         drawCount += 1
@@ -466,20 +464,6 @@ private struct DanmakuSurfaceState {
     let viewport: DanmakuCanvasViewport
     let isAttachedToWindow: Bool
     let targetFPS: Double
-}
-
-private func danmakuDisplayLinkOutputCallback(
-    _ displayLink: CVDisplayLink,
-    _ inNow: UnsafePointer<CVTimeStamp>,
-    _ inOutputTime: UnsafePointer<CVTimeStamp>,
-    _ flagsIn: CVOptionFlags,
-    _ flagsOut: UnsafeMutablePointer<CVOptionFlags>,
-    _ displayLinkContext: UnsafeMutableRawPointer?
-) -> CVReturn {
-    guard let displayLinkContext else { return kCVReturnSuccess }
-    let view = Unmanaged<DanmakuMetalView>.fromOpaque(displayLinkContext).takeUnretainedValue()
-    view.enqueueDisplayLinkDraw()
-    return kCVReturnSuccess
 }
 
 private struct DanmakuSprite {
