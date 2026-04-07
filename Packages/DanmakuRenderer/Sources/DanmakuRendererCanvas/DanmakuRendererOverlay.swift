@@ -490,15 +490,6 @@ private struct DanmakuSprite {
     let rotation: Float
 }
 
-private struct DanmakuResolvedSprite {
-    let pageIndex: Int
-    let uvMin: SIMD2<Float>
-    let uvMax: SIMD2<Float>
-    let frame: CGRect
-    let alpha: Float
-    let rotation: Float
-}
-
 private struct DanmakuMetalInstance {
     var center: SIMD2<Float>
     var halfSize: SIMD2<Float>
@@ -526,11 +517,6 @@ private final class DanmakuAtlasEntryBox: NSObject {
 private struct DanmakuAtlasPlacement {
     let pageIndex: Int
     let origin: MTLOrigin
-}
-
-private struct DanmakuDrawSegment {
-    let instances: [DanmakuMetalInstance]
-    let textures: [MTLTexture]
 }
 
 private final class DanmakuInstanceBufferAllocator {
@@ -679,6 +665,9 @@ private final class DanmakuMetalCompositor {
     private let instanceBufferPool: DanmakuInstanceBufferPool
     private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
     private var atlasPages: [DanmakuAtlasPage] = []
+    private var currentInstancesScratch: [DanmakuMetalInstance] = []
+    private var currentTexturesScratch: [MTLTexture] = []
+    private var currentTextureSlotsScratch: [Int: Int] = [:]
 
     init?(device: MTLDevice) {
         self.device = device
@@ -812,12 +801,11 @@ private final class DanmakuMetalCompositor {
         }
         instanceAllocator.reset()
 
-        let resolvedSprites = resolveSprites(
+        prepareAtlasEntries(
             sprites,
             prewarmAssets: prewarmAssets,
             commandBuffer: commandBuffer
         )
-        let drawSegments = makeDrawSegments(from: resolvedSprites)
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
             instanceBufferPool.return(instanceAllocator)
@@ -837,17 +825,11 @@ private final class DanmakuMetalCompositor {
             index: 1
         )
 
-        for segment in drawSegments where segment.instances.isEmpty == false {
-            guard let instanceAllocation = instanceAllocator.allocate(from: segment.instances) else { continue }
-            encoder.setVertexBuffer(instanceAllocation.buffer, offset: instanceAllocation.offset, index: 0)
-            encoder.setFragmentTextures(segment.textures, range: 0..<segment.textures.count)
-            encoder.drawPrimitives(
-                type: .triangle,
-                vertexStart: 0,
-                vertexCount: 6,
-                instanceCount: segment.instances.count
-            )
-        }
+        encodeSprites(
+            sprites,
+            with: encoder,
+            instanceAllocator: instanceAllocator
+        )
 
         encoder.endEncoding()
         commandBuffer.present(drawable)
@@ -857,14 +839,11 @@ private final class DanmakuMetalCompositor {
         commandBuffer.commit()
     }
 
-    private func resolveSprites(
+    private func prepareAtlasEntries(
         _ sprites: [DanmakuSprite],
         prewarmAssets: [DanmakuRasterImage],
         commandBuffer: MTLCommandBuffer
-    ) -> [DanmakuResolvedSprite] {
-        var resolved: [DanmakuResolvedSprite] = []
-        resolved.reserveCapacity(sprites.count)
-
+    ) {
         var blitEncoder: MTLBlitCommandEncoder?
         for asset in prewarmAssets {
             _ = atlasEntry(
@@ -875,72 +854,75 @@ private final class DanmakuMetalCompositor {
             )
         }
         for sprite in sprites {
-            guard let atlasEntry = atlasEntry(
+            _ = atlasEntry(
                 textureKey: sprite.textureKey,
                 image: sprite.image,
                 commandBuffer: commandBuffer,
                 blitEncoder: &blitEncoder
-            ) else {
-                continue
-            }
-
-            resolved.append(
-                DanmakuResolvedSprite(
-                    pageIndex: atlasEntry.pageIndex,
-                    uvMin: atlasEntry.uvMin,
-                    uvMax: atlasEntry.uvMax,
-                    frame: sprite.frame,
-                    alpha: sprite.alpha,
-                    rotation: sprite.rotation
-                )
             )
         }
         blitEncoder?.endEncoding()
-        return resolved
     }
 
-    private func makeDrawSegments(from sprites: [DanmakuResolvedSprite]) -> [DanmakuDrawSegment] {
-        var segments: [DanmakuDrawSegment] = []
-        var currentInstances: [DanmakuMetalInstance] = []
-        var currentTextures: [MTLTexture] = []
-        var currentTextureSlots: [Int: Int] = [:]
+    private func encodeSprites(
+        _ sprites: [DanmakuSprite],
+        with encoder: MTLRenderCommandEncoder,
+        instanceAllocator: DanmakuInstanceBufferAllocator
+    ) {
+        currentInstancesScratch.removeAll(keepingCapacity: true)
+        currentTexturesScratch.removeAll(keepingCapacity: true)
+        currentTextureSlotsScratch.removeAll(keepingCapacity: true)
+        currentInstancesScratch.reserveCapacity(sprites.count)
 
-        func flushSegment() {
-            guard currentInstances.isEmpty == false else { return }
-            segments.append(
-                DanmakuDrawSegment(
-                    instances: currentInstances,
-                    textures: currentTextures
-                )
-            )
-            currentInstances.removeAll(keepingCapacity: true)
-            currentTextures.removeAll(keepingCapacity: true)
-            currentTextureSlots.removeAll(keepingCapacity: true)
-        }
-
-        currentInstances.reserveCapacity(sprites.count)
         for sprite in sprites {
+            guard let atlasEntry = cachedAtlasEntry(for: sprite.textureKey) else { continue }
             let slot: Int
-            if let existingSlot = currentTextureSlots[sprite.pageIndex] {
+            if let existingSlot = currentTextureSlotsScratch[atlasEntry.pageIndex] {
                 slot = existingSlot
             } else {
-                if currentTextures.count >= maxTextureSlotsPerDraw {
-                    flushSegment()
+                if currentTexturesScratch.count >= maxTextureSlotsPerDraw {
+                    flushCurrentSegment(
+                        with: encoder,
+                        instanceAllocator: instanceAllocator
+                    )
                 }
-                slot = currentTextures.count
-                currentTextureSlots[sprite.pageIndex] = slot
-                currentTextures.append(atlasPages[sprite.pageIndex].texture)
+                slot = currentTexturesScratch.count
+                currentTextureSlotsScratch[atlasEntry.pageIndex] = slot
+                currentTexturesScratch.append(atlasPages[atlasEntry.pageIndex].texture)
             }
 
-            currentInstances.append(
+            currentInstancesScratch.append(
                 makeInstance(
                     for: sprite,
+                    atlasEntry: atlasEntry,
                     textureSlot: slot
                 )
             )
         }
-        flushSegment()
-        return segments
+        flushCurrentSegment(with: encoder, instanceAllocator: instanceAllocator)
+    }
+
+    private func flushCurrentSegment(
+        with encoder: MTLRenderCommandEncoder,
+        instanceAllocator: DanmakuInstanceBufferAllocator
+    ) {
+        guard currentInstancesScratch.isEmpty == false,
+              let instanceAllocation = instanceAllocator.allocate(from: currentInstancesScratch) else {
+            return
+        }
+
+        encoder.setVertexBuffer(instanceAllocation.buffer, offset: instanceAllocation.offset, index: 0)
+        encoder.setFragmentTextures(currentTexturesScratch, range: 0..<currentTexturesScratch.count)
+        encoder.drawPrimitives(
+            type: .triangle,
+            vertexStart: 0,
+            vertexCount: 6,
+            instanceCount: currentInstancesScratch.count
+        )
+
+        currentInstancesScratch.removeAll(keepingCapacity: true)
+        currentTexturesScratch.removeAll(keepingCapacity: true)
+        currentTextureSlotsScratch.removeAll(keepingCapacity: true)
     }
 
     private func atlasEntry(
@@ -1001,6 +983,10 @@ private final class DanmakuMetalCompositor {
         return entry
     }
 
+    private func cachedAtlasEntry(for textureKey: NSString) -> DanmakuAtlasEntry? {
+        atlasCache.object(forKey: textureKey)?.value
+    }
+
     private func makeSourceTexture(image: CGImage) -> MTLTexture? {
         let options: [MTKTextureLoader.Option: Any] = [
             .SRGB: false,
@@ -1050,7 +1036,8 @@ private final class DanmakuMetalCompositor {
     }
 
     private func makeInstance(
-        for sprite: DanmakuResolvedSprite,
+        for sprite: DanmakuSprite,
+        atlasEntry: DanmakuAtlasEntry,
         textureSlot: Int
     ) -> DanmakuMetalInstance {
         let angle = Double(sprite.rotation)
@@ -1063,8 +1050,8 @@ private final class DanmakuMetalCompositor {
                 Float(sprite.frame.width * 0.5),
                 Float(sprite.frame.height * 0.5)
             ),
-            uvMin: sprite.uvMin,
-            uvMax: sprite.uvMax,
+            uvMin: atlasEntry.uvMin,
+            uvMax: atlasEntry.uvMax,
             rotation: SIMD2<Float>(
                 Float(cos(angle)),
                 Float(sin(angle))
@@ -1411,8 +1398,16 @@ private final class DanmakuPlaybackScheduler {
             nextIndex += 1
         }
 
-        activeIndices.removeAll { index in
-            scene.entries[index].endTime <= time
+        var writeIndex = 0
+        for readIndex in activeIndices.indices {
+            let entryIndex = activeIndices[readIndex]
+            if scene.entries[entryIndex].endTime > time {
+                activeIndices[writeIndex] = entryIndex
+                writeIndex += 1
+            }
+        }
+        if writeIndex < activeIndices.count {
+            activeIndices.removeSubrange(writeIndex..<activeIndices.count)
         }
 
         lastTime = time
@@ -1502,6 +1497,7 @@ private struct DanmakuMotionTrajectory: Sendable {
     var duration: TimeInterval
     var curve: DanmakuMotionCurve
     private var segmentLengths: [CGFloat]
+    private var cumulativeLengths: [CGFloat]
     private var totalLength: CGFloat
 
     init(
@@ -1515,7 +1511,15 @@ private struct DanmakuMotionTrajectory: Sendable {
         self.duration = duration
         self.curve = curve
         self.segmentLengths = zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
-        self.totalLength = max(segmentLengths.reduce(0, +), 0.0001)
+        var cumulativeLengths: [CGFloat] = [0]
+        cumulativeLengths.reserveCapacity(segmentLengths.count + 1)
+        var runningLength: CGFloat = 0
+        for segmentLength in segmentLengths {
+            runningLength += segmentLength
+            cumulativeLengths.append(runningLength)
+        }
+        self.cumulativeLengths = cumulativeLengths
+        self.totalLength = max(runningLength, 0.0001)
     }
 
     func point(at elapsed: TimeInterval) -> CGPoint {
@@ -1533,22 +1537,32 @@ private struct DanmakuMotionTrajectory: Sendable {
         let curvedProgress = curve.value(at: motionProgress)
         let targetLength = totalLength * curvedProgress
 
-        var consumed: CGFloat = 0
-        for (index, segmentLength) in segmentLengths.enumerated() {
-            let nextConsumed = consumed + segmentLength
-            if targetLength <= nextConsumed || index == segmentLengths.count - 1 {
-                let localProgress = segmentLength > 0 ? (targetLength - consumed) / segmentLength : 0
-                let start = points[index]
-                let end = points[index + 1]
-                return CGPoint(
-                    x: start.x + (end.x - start.x) * localProgress,
-                    y: start.y + (end.y - start.y) * localProgress
-                )
-            }
-            consumed = nextConsumed
-        }
+        let segmentIndex = segmentIndex(for: targetLength)
+        let segmentLength = segmentLengths[segmentIndex]
+        let consumed = cumulativeLengths[segmentIndex]
+        let localProgress = segmentLength > 0 ? (targetLength - consumed) / segmentLength : 0
+        let start = points[segmentIndex]
+        let end = points[segmentIndex + 1]
+        return CGPoint(
+            x: start.x + (end.x - start.x) * localProgress,
+            y: start.y + (end.y - start.y) * localProgress
+        )
+    }
 
-        return points.last ?? .zero
+    private func segmentIndex(for targetLength: CGFloat) -> Int {
+        guard segmentLengths.count > 1 else { return 0 }
+
+        var lower = 0
+        var upper = segmentLengths.count - 1
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cumulativeLengths[middle + 1] < targetLength {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
     }
 }
 
