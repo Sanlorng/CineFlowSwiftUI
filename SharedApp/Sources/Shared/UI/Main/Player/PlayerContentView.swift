@@ -135,7 +135,8 @@ private struct PlayerContentMainView: View {
                     subtitleFontFamily: effectiveSubtitleFontFamily,
                     allowAutoPlay: shouldAllowAutoPlay(
                         viewStore: viewStore,
-                        isSubtitleRendererReady: isSubtitleRendererReady
+                        isSubtitleRendererReady: isSubtitleRendererReady,
+                        playbackState: playerController.playbackState
                     )
                 )
                 let customSubtitleDocument = makeCustomSubtitleDocument(
@@ -2161,8 +2162,12 @@ private func effectiveEmbeddedSubtitleTrackID(
 @MainActor
 private func shouldAllowAutoPlay(
     viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
-    isSubtitleRendererReady: Bool
+    isSubtitleRendererReady: Bool,
+    playbackState: PlayerPlaybackState
 ) -> Bool {
+    if playbackState == .paused {
+        return false
+    }
     if viewStore.areSubtitlesSuppressed {
         return true
     }
