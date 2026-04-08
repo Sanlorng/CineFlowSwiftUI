@@ -172,44 +172,66 @@ private final class DanmakuDebugBadgeView: NSView {
     }
 }
 
-private final class DanmakuRenderThread: NSObject, @unchecked Sendable {
+private final class DanmakuThreadOperationBox: NSObject {
+    let operation: () -> Void
+
+    init(_ operation: @escaping () -> Void) {
+        self.operation = operation
+    }
+}
+
+private final class DanmakuOperationThread: NSObject {
     private let readySemaphore = DispatchSemaphore(value: 0)
     private let shutdownSemaphore = DispatchSemaphore(value: 0)
     private let threadName: String
+    private let qualityOfService: QualityOfService
     private lazy var thread: Thread = {
         let thread = Thread(target: self, selector: #selector(threadMainEntryPoint), object: nil)
         thread.name = threadName
-        thread.qualityOfService = .userInteractive
+        thread.qualityOfService = qualityOfService
         return thread
     }()
     private var runLoop: CFRunLoop?
 
-    init(name: String) {
+    init(name: String, qualityOfService: QualityOfService) {
         self.threadName = name
+        self.qualityOfService = qualityOfService
         super.init()
     }
 
-    func async(_ operation: @escaping @Sendable () -> Void) {
+    func async(_ operation: @escaping () -> Void) {
         startIfNeeded()
-        guard let runLoop else { return }
-        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue, operation)
-        CFRunLoopWakeUp(runLoop)
+        let operationBox = DanmakuThreadOperationBox(operation)
+        perform(
+            #selector(executeOperation(_:)),
+            on: thread,
+            with: operationBox,
+            waitUntilDone: false,
+            modes: [RunLoop.Mode.default.rawValue]
+        )
     }
 
-    func sync(_ operation: @escaping @Sendable () -> Void) {
-        let semaphore = DispatchSemaphore(value: 0)
-        async {
-            operation()
-            semaphore.signal()
-        }
-        semaphore.wait()
+    func sync(_ operation: @escaping () -> Void) {
+        startIfNeeded()
+        let operationBox = DanmakuThreadOperationBox(operation)
+        perform(
+            #selector(executeOperation(_:)),
+            on: thread,
+            with: operationBox,
+            waitUntilDone: true,
+            modes: [RunLoop.Mode.default.rawValue]
+        )
     }
 
     func shutdown() {
         guard thread.isExecuting else { return }
-        sync {
-            CFRunLoopStop(CFRunLoopGetCurrent())
-        }
+        perform(
+            #selector(stopRunLoop),
+            on: thread,
+            with: nil,
+            waitUntilDone: false,
+            modes: [RunLoop.Mode.default.rawValue]
+        )
         shutdownSemaphore.wait()
     }
 
@@ -238,14 +260,25 @@ private final class DanmakuRenderThread: NSObject, @unchecked Sendable {
     @objc private func threadMainEntryPoint() {
         threadMain()
     }
+
+    @objc private func executeOperation(_ operationBox: DanmakuThreadOperationBox) {
+        operationBox.operation()
+    }
+
+    @objc private func stopRunLoop() {
+        CFRunLoopStop(CFRunLoopGetCurrent())
+    }
 }
 
-private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sendable {
+private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelegate {
     var onStatsChanged: ((String) -> Void)?
 
     private let playbackTimeResyncThreshold: TimeInterval = 1.0 / 12.0
     private let preferredFrameLatency: Float = 2
-    private let renderThread = DanmakuRenderThread(name: "CineFlow.DanmakuMetalRender")
+    private let renderThread = DanmakuOperationThread(
+        name: "CineFlow.DanmakuMetalRender",
+        qualityOfService: .userInteractive
+    )
     private weak var metalLayer: CAMetalLayer?
     private let compositor: DanmakuMetalCompositor?
     private lazy var renderer: DanmakuCanvasRenderer = {
@@ -485,9 +518,17 @@ private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelega
         drawCount = 0
         drawSampleStartedAt = now
         let text = String(format: "DMK %.1f / %.0f FPS", measuredFPS, targetFPS)
-        DispatchQueue.main.async { [weak self] in
-            self?.onStatsChanged?(text)
-        }
+        perform(
+            #selector(deliverStatsUpdate(_:)),
+            on: Thread.main,
+            with: text as NSString,
+            waitUntilDone: false,
+            modes: [RunLoop.Mode.common.rawValue]
+        )
+    }
+
+    @objc private func deliverStatsUpdate(_ text: NSString) {
+        onStatsChanged?(text as String)
     }
 }
 
@@ -653,7 +694,7 @@ private struct DanmakuAtlasPlacement {
     let origin: MTLOrigin
 }
 
-private final class DanmakuInstanceBufferAllocator: @unchecked Sendable {
+private final class DanmakuInstanceBufferAllocator {
     private let alignment = 256
     private let device: MTLDevice
     private(set) var buffer: MTLBuffer
@@ -710,7 +751,7 @@ private final class DanmakuInstanceBufferAllocator: @unchecked Sendable {
     }
 }
 
-private final class DanmakuInstanceBufferPool: @unchecked Sendable {
+private final class DanmakuInstanceBufferPool {
     private let availabilitySemaphore: DispatchSemaphore
     private let lock = NSLock()
     private var availableAllocators: [DanmakuInstanceBufferAllocator]
@@ -784,6 +825,23 @@ private final class DanmakuAtlasPage {
         nextX += requiredWidth
         rowHeight = max(rowHeight, requiredHeight)
         return placement
+    }
+}
+
+private final class DanmakuAllocatorReturnToken: NSObject {
+    private let instanceBufferPool: DanmakuInstanceBufferPool
+    private let allocator: DanmakuInstanceBufferAllocator
+
+    init(
+        instanceBufferPool: DanmakuInstanceBufferPool,
+        allocator: DanmakuInstanceBufferAllocator
+    ) {
+        self.instanceBufferPool = instanceBufferPool
+        self.allocator = allocator
+    }
+
+    func finish() {
+        instanceBufferPool.return(allocator)
     }
 }
 
@@ -966,10 +1024,18 @@ private final class DanmakuMetalCompositor {
         )
 
         encoder.endEncoding()
-        let instanceBufferPool = self.instanceBufferPool
+        let completionTokenBits = UInt(bitPattern: Unmanaged.passRetained(
+            DanmakuAllocatorReturnToken(
+                instanceBufferPool: instanceBufferPool,
+                allocator: instanceAllocator
+            )
+        ).toOpaque())
         commandBuffer.present(drawable)
         commandBuffer.addCompletedHandler { _ in
-            instanceBufferPool.return(instanceAllocator)
+            let completionToken = Unmanaged<DanmakuAllocatorReturnToken>
+                .fromOpaque(UnsafeMutableRawPointer(bitPattern: completionTokenBits)!)
+                .takeRetainedValue()
+            completionToken.finish()
         }
         commandBuffer.commit()
     }
@@ -1217,14 +1283,17 @@ private struct DanmakuSceneDescriptor: Equatable, Sendable {
     var trackSpacing: Double
 }
 
-private final class DanmakuCanvasRenderer: @unchecked Sendable {
+private final class DanmakuCanvasRenderer {
     var onInvalidation: (() -> Void)?
 
-    private let scheduleOnRenderThread: (@escaping @Sendable () -> Void) -> Void
+    private let scheduleOnRenderThread: (@escaping () -> Void) -> Void
     private let textCache = DanmakuTextRasterCache()
     private let scheduler = DanmakuPlaybackScheduler()
     private let clock = DanmakuPlaybackClock()
-    private let preparationQueue = DispatchQueue(label: "CineFlow.DanmakuSceneBuilder", qos: .userInitiated)
+    private let preparationThread = DanmakuOperationThread(
+        name: "CineFlow.DanmakuSceneBuilder",
+        qualityOfService: .userInitiated
+    )
 
     private var preparedScene: DanmakuPreparedScene?
     private var sceneDescriptor: DanmakuSceneDescriptor?
@@ -1235,8 +1304,12 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
     private var spriteScratch: [DanmakuSprite] = []
     private var prewarmScratch: [DanmakuRasterImage] = []
 
-    init(scheduleOnRenderThread: @escaping (@escaping @Sendable () -> Void) -> Void) {
+    init(scheduleOnRenderThread: @escaping (@escaping () -> Void) -> Void) {
         self.scheduleOnRenderThread = scheduleOnRenderThread
+    }
+
+    deinit {
+        preparationThread.shutdown()
     }
 
     var shouldAnimate: Bool {
@@ -1291,7 +1364,7 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
         let generation = preparationGeneration
         let textCache = self.textCache
 
-        preparationQueue.async {
+        preparationThread.async {
             let scene = DanmakuSceneBuilder.build(
                 document: document,
                 descriptor: descriptor,
@@ -2242,7 +2315,7 @@ private struct DanmakuTextMetrics: Sendable {
     var drawOrigin: CGPoint
 }
 
-private final class DanmakuTextRasterCache: @unchecked Sendable {
+private final class DanmakuTextRasterCache {
     private let metricsCache = NSCache<NSString, DanmakuTextMetricsBox>()
     private let imageCache = NSCache<NSString, DanmakuImageBox>()
 
