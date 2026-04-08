@@ -1150,7 +1150,8 @@ private final class DanmakuMetalCompositor {
         guard let sourceTexture = makeSourceTexture(image: image),
               let placement = allocateAtlasPlacement(
                 contentWidth: sourceTexture.width,
-                contentHeight: sourceTexture.height
+                contentHeight: sourceTexture.height,
+                pixelFormat: sourceTexture.pixelFormat
               ) else {
             return nil
         }
@@ -1211,9 +1212,11 @@ private final class DanmakuMetalCompositor {
 
     private func allocateAtlasPlacement(
         contentWidth: Int,
-        contentHeight: Int
+        contentHeight: Int,
+        pixelFormat: MTLPixelFormat
     ) -> DanmakuAtlasPlacement? {
         for page in atlasPages {
+            guard page.texture.pixelFormat == pixelFormat else { continue }
             if let placement = page.allocate(
                 contentWidth: contentWidth,
                 contentHeight: contentHeight,
@@ -1224,7 +1227,7 @@ private final class DanmakuMetalCompositor {
         }
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm,
+            pixelFormat: pixelFormat,
             width: atlasTextureDimension,
             height: atlasTextureDimension,
             mipmapped: false
