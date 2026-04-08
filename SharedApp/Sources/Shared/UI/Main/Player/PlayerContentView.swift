@@ -50,6 +50,7 @@ private struct PlayerContentMainView: View {
     @State private var isFullscreen = false
     @State private var usesFullscreenLayout = false
     @State private var isCursorHidden = false
+    @State private var hasPendingAutoPlayRequest = true
     @State private var lastPointerLocation: CGPoint?
     @State private var lastPointerMovementAt: ContinuousClock.Instant?
     @State private var isSubtitleRendererReady = false
@@ -138,6 +139,7 @@ private struct PlayerContentMainView: View {
                     subtitleFontFamily: effectiveSubtitleFontFamily,
                     allowAutoPlay: shouldAllowAutoPlay(
                         viewStore: viewStore,
+                        hasPendingAutoPlayRequest: hasPendingAutoPlayRequest,
                         isDanmakuVisible: isDanmakuVisible,
                         isSubtitleRendererReady: isSubtitleRendererReady,
                         playbackState: playerController.playbackState
@@ -254,6 +256,7 @@ private struct PlayerContentMainView: View {
                         case .error(let message):
                             viewStore.send(.setPlaybackError(message ?? "播放失败。"))
                         case .playing:
+                            hasPendingAutoPlayRequest = false
                             if let fileID = viewStore.currentFileID {
                                 viewStore.send(.playbackStarted(fileID))
                             }
@@ -384,12 +387,14 @@ private struct PlayerContentMainView: View {
         }
 #endif
         .onAppear {
+            hasPendingAutoPlayRequest = true
             viewStore.send(.onAppear)
             viewStore.send(.setPlaybackError(nil))
             revealControls()
         }
         .onChange(of: viewStore.currentItem?.stream) { _, newStream in
             guard newStream != nil else { return }
+            hasPendingAutoPlayRequest = true
             playerController.reset()
             cancelForwardShortcutTracking()
             dismissFullscreenShortcutHUD()
@@ -1767,6 +1772,7 @@ private struct PlayerContentMainView: View {
             revealControls()
             return
         }
+        hasPendingAutoPlayRequest = false
         playerController.togglePlayPause()
     }
 
@@ -2276,11 +2282,13 @@ private func effectiveEmbeddedSubtitleTrackID(
 @MainActor
 private func shouldAllowAutoPlay(
     viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+    hasPendingAutoPlayRequest: Bool,
     isDanmakuVisible: Bool,
     isSubtitleRendererReady: Bool,
     playbackState: PlayerPlaybackState
 ) -> Bool {
-    if playbackState == .paused {
+    if playbackState == .paused,
+       !hasPendingAutoPlayRequest {
         return false
     }
     if shouldBlockPlaybackStartUntilDanmakuLoads(
