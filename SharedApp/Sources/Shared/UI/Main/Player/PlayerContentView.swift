@@ -138,6 +138,7 @@ private struct PlayerContentMainView: View {
                     subtitleFontFamily: effectiveSubtitleFontFamily,
                     allowAutoPlay: shouldAllowAutoPlay(
                         viewStore: viewStore,
+                        isDanmakuVisible: isDanmakuVisible,
                         isSubtitleRendererReady: isSubtitleRendererReady,
                         playbackState: playerController.playbackState
                     )
@@ -188,7 +189,7 @@ private struct PlayerContentMainView: View {
 #if os(macOS)
         .overlay {
             PlayerKeyboardEventMonitor(
-                onKeyDown: handlePlayerKeyDown(_:),
+                onKeyDown: { handlePlayerKeyDown($0, viewStore: viewStore) },
                 onKeyUp: handlePlayerKeyUp(_:),
                 canHandleEvent: {
                     observedWindow != nil
@@ -233,6 +234,11 @@ private struct PlayerContentMainView: View {
     ) -> some View {
         GeometryReader { geometry in
             let subtitleViewportSize = subtitleOverlayViewportSize(in: geometry.size)
+            let blocksPlaybackStartForDanmaku = shouldBlockPlaybackStartUntilDanmakuLoads(
+                viewStore: viewStore,
+                isDanmakuVisible: isDanmakuVisible,
+                playbackState: playerController.playbackState
+            )
             ZStack(alignment: .bottom) {
                 PlayerView(
                     backend: .defaultDistributable,
@@ -312,16 +318,21 @@ private struct PlayerContentMainView: View {
                     transaction.animation = nil
                 }
                 .allowsHitTesting(false)
-                if let fullscreenShortcutHUD, isFullscreen {
-                    VStack {
-                        fullscreenShortcutHUDView(fullscreenShortcutHUD)
-                            .padding(.top, 28)
-                        Spacer(minLength: 0)
+                VStack(spacing: 12) {
+                    if blocksPlaybackStartForDanmaku {
+                        danmakuLoadingPopup()
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(false)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    if let fullscreenShortcutHUD, isFullscreen {
+                        fullscreenShortcutHUDView(fullscreenShortcutHUD)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    Spacer(minLength: 0)
                 }
+                .padding(.top, usesFullscreenLayout ? 28 : 20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+                .animation(.spring(response: 0.24, dampingFraction: 0.88), value: blocksPlaybackStartForDanmaku)
                 playbackControlBar(viewStore: viewStore)
                     .opacity(isControlBarVisible ? 1 : 0)
                     .offset(y: isControlBarVisible ? 0 : 28)
@@ -560,13 +571,21 @@ private struct PlayerContentMainView: View {
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
         displayMode: PlaybackControlDisplayMode
     ) -> some View {
+        let blocksPlaybackStartForDanmaku = shouldBlockPlaybackStartUntilDanmakuLoads(
+            viewStore: viewStore,
+            isDanmakuVisible: isDanmakuVisible,
+            playbackState: playerController.playbackState
+        )
         HStack(spacing: 10) {
             controlButtonCluster(opacity: 0.18) {
                 glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
                     viewStore.send(.playPrevious)
                 }
-                glassIconButton(playerController.isPlaying ? "pause.fill" : "play.fill") {
-                    playerController.togglePlayPause()
+                glassIconButton(
+                    playerController.isPlaying ? "pause.fill" : "play.fill",
+                    isDisabled: blocksPlaybackStartForDanmaku
+                ) {
+                    togglePlaybackIfReady(viewStore: viewStore)
                 }
                 glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
                     viewStore.send(.playNext)
@@ -1487,7 +1506,10 @@ private struct PlayerContentMainView: View {
     }
 
 #if os(macOS)
-    private func handlePlayerKeyDown(_ event: NSEvent) -> Bool {
+    private func handlePlayerKeyDown(
+        _ event: NSEvent,
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) -> Bool {
         if let pendingShortcutCaptureAction {
             return captureShortcutIfNeeded(event, action: pendingShortcutCaptureAction)
         }
@@ -1505,7 +1527,7 @@ private struct PlayerContentMainView: View {
         case .toggleFullscreen:
             togglePlayerFullscreen()
         case .togglePlayPause:
-            playerController.togglePlayPause()
+            togglePlaybackIfReady(viewStore: viewStore)
         case .playPreviousEpisode:
             store.send(.playPrevious)
         case .playNextEpisode:
@@ -1734,6 +1756,20 @@ private struct PlayerContentMainView: View {
         fullscreenShortcutHUD = nil
     }
 
+    private func togglePlaybackIfReady(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        guard !shouldBlockPlaybackStartUntilDanmakuLoads(
+            viewStore: viewStore,
+            isDanmakuVisible: isDanmakuVisible,
+            playbackState: playerController.playbackState
+        ) else {
+            revealControls()
+            return
+        }
+        playerController.togglePlayPause()
+    }
+
     @ViewBuilder
     private func fullscreenShortcutHUDView(_ hud: PlayerShortcutHUDState) -> some View {
         HStack(spacing: 10) {
@@ -1766,6 +1802,62 @@ private struct PlayerContentMainView: View {
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.22), radius: 24, y: 10)
+    }
+
+    @ViewBuilder
+    private func danmakuLoadingPopup() -> some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(Color.orange.opacity(0.2))
+                Image(systemName: "text.bubble.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 42, height: 42)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("弹幕装载中")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.97))
+                Text("正在同步当前视频弹幕，装载完成后自动开始播放")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            ProgressView()
+                .controlSize(.regular)
+                .tint(.white.opacity(0.95))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: 360, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.orange.opacity(0.18),
+                                    Color.white.opacity(0.04)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.26), radius: 26, y: 12)
+        .padding(.horizontal, 16)
     }
 
     private func handlePlaybackCompletion(
@@ -2184,10 +2276,18 @@ private func effectiveEmbeddedSubtitleTrackID(
 @MainActor
 private func shouldAllowAutoPlay(
     viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+    isDanmakuVisible: Bool,
     isSubtitleRendererReady: Bool,
     playbackState: PlayerPlaybackState
 ) -> Bool {
     if playbackState == .paused {
+        return false
+    }
+    if shouldBlockPlaybackStartUntilDanmakuLoads(
+        viewStore: viewStore,
+        isDanmakuVisible: isDanmakuVisible,
+        playbackState: playbackState
+    ) {
         return false
     }
     if viewStore.areSubtitlesSuppressed {
@@ -2214,6 +2314,26 @@ private func shouldAllowAutoPlay(
         return false
     }
     return true
+}
+
+@MainActor
+private func shouldBlockPlaybackStartUntilDanmakuLoads(
+    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
+    isDanmakuVisible: Bool,
+    playbackState: PlayerPlaybackState
+) -> Bool {
+    guard isDanmakuVisible,
+          viewStore.isLoadingDanmaku,
+          viewStore.activeDanmaku == nil else {
+        return false
+    }
+
+    switch playbackState {
+    case .playing, .buffering:
+        return false
+    case .preparing, .paused, .stopped, .completed, .idle, .error:
+        return true
+    }
 }
 
 private func selectedAudioTrackTitle(
