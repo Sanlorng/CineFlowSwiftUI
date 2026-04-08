@@ -857,9 +857,6 @@ private final class DanmakuMetalCompositor {
     private let instanceBufferPool: DanmakuInstanceBufferPool
     private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
     private var atlasPages: [DanmakuAtlasPage] = []
-    private var currentInstancesScratch: [DanmakuMetalInstance] = []
-    private var currentTexturesScratch: [MTLTexture] = []
-    private var currentTextureSlotsScratch: [Int: Int] = [:]
 
     init?(device: MTLDevice) {
         self.device = device
@@ -1070,9 +1067,9 @@ private final class DanmakuMetalCompositor {
         with encoder: MTLRenderCommandEncoder,
         instanceAllocator: DanmakuInstanceBufferAllocator
     ) {
-        currentInstancesScratch.removeAll(keepingCapacity: true)
-        currentTexturesScratch.removeAll(keepingCapacity: true)
-        currentTextureSlotsScratch.removeAll(keepingCapacity: true)
+        var currentInstancesScratch: [DanmakuMetalInstance] = []
+        var currentTexturesScratch: [MTLTexture] = []
+        var currentTextureSlotsScratch: [Int: Int] = [:]
         currentInstancesScratch.reserveCapacity(sprites.count)
 
         for sprite in sprites {
@@ -1084,7 +1081,10 @@ private final class DanmakuMetalCompositor {
                 if currentTexturesScratch.count >= maxTextureSlotsPerDraw {
                     flushCurrentSegment(
                         with: encoder,
-                        instanceAllocator: instanceAllocator
+                        instanceAllocator: instanceAllocator,
+                        instances: &currentInstancesScratch,
+                        textures: &currentTexturesScratch,
+                        textureSlots: &currentTextureSlotsScratch
                     )
                 }
                 slot = currentTexturesScratch.count
@@ -1100,30 +1100,41 @@ private final class DanmakuMetalCompositor {
                 )
             )
         }
-        flushCurrentSegment(with: encoder, instanceAllocator: instanceAllocator)
+        flushCurrentSegment(
+            with: encoder,
+            instanceAllocator: instanceAllocator,
+            instances: &currentInstancesScratch,
+            textures: &currentTexturesScratch,
+            textureSlots: &currentTextureSlotsScratch
+        )
     }
 
     private func flushCurrentSegment(
         with encoder: MTLRenderCommandEncoder,
-        instanceAllocator: DanmakuInstanceBufferAllocator
+        instanceAllocator: DanmakuInstanceBufferAllocator,
+        instances: inout [DanmakuMetalInstance],
+        textures: inout [MTLTexture],
+        textureSlots: inout [Int: Int]
     ) {
-        guard currentInstancesScratch.isEmpty == false,
-              let instanceAllocation = instanceAllocator.allocate(from: currentInstancesScratch) else {
+        let instanceCount = instances.count
+        guard instanceCount > 0,
+              textures.isEmpty == false,
+              let instanceAllocation = instanceAllocator.allocate(from: instances) else {
             return
         }
 
         encoder.setVertexBuffer(instanceAllocation.buffer, offset: instanceAllocation.offset, index: 0)
-        encoder.setFragmentTextures(currentTexturesScratch, range: 0..<currentTexturesScratch.count)
+        encoder.setFragmentTextures(textures, range: 0..<textures.count)
         encoder.drawPrimitives(
             type: .triangle,
             vertexStart: 0,
             vertexCount: 6,
-            instanceCount: currentInstancesScratch.count
+            instanceCount: instanceCount
         )
 
-        currentInstancesScratch.removeAll(keepingCapacity: true)
-        currentTexturesScratch.removeAll(keepingCapacity: true)
-        currentTextureSlotsScratch.removeAll(keepingCapacity: true)
+        instances.removeAll(keepingCapacity: true)
+        textures.removeAll(keepingCapacity: true)
+        textureSlots.removeAll(keepingCapacity: true)
     }
 
     private func atlasEntry(
