@@ -1301,6 +1301,7 @@ private final class DanmakuCanvasRenderer {
     var onInvalidation: (() -> Void)?
 
     private let scheduleOnRenderThread: (@escaping () -> Void) -> Void
+    private let lock = NSLock()
     private let textCache = DanmakuTextRasterCache()
     private let scheduler = DanmakuPlaybackScheduler()
     private let clock = DanmakuPlaybackClock()
@@ -1313,10 +1314,6 @@ private final class DanmakuCanvasRenderer {
     private var sceneDescriptor: DanmakuSceneDescriptor?
     private var preparationGeneration = 0
     private var currentSettings = DanmakuRenderSettings()
-    private var visibleEntriesScratch: [DanmakuPreparedComment] = []
-    private var spriteBuckets: [[DanmakuSprite]] = [[], [], []]
-    private var spriteScratch: [DanmakuSprite] = []
-    private var prewarmScratch: [DanmakuRasterImage] = []
 
     init(scheduleOnRenderThread: @escaping (@escaping () -> Void) -> Void) {
         self.scheduleOnRenderThread = scheduleOnRenderThread
@@ -1327,15 +1324,21 @@ private final class DanmakuCanvasRenderer {
     }
 
     var shouldAnimate: Bool {
-        currentSettings.isVisible && preparedScene != nil && clock.isActive
+        lock.lock()
+        defer { lock.unlock() }
+        return currentSettings.isVisible && preparedScene != nil && clock.isActive
     }
 
     var presentationTime: TimeInterval {
-        clock.currentTime
+        lock.lock()
+        defer { lock.unlock() }
+        return clock.currentTime
     }
 
     func presentationTime(forHostTime hostTime: CFTimeInterval) -> TimeInterval {
-        clock.currentTime(atHostTime: hostTime)
+        lock.lock()
+        defer { lock.unlock() }
+        return clock.currentTime(atHostTime: hostTime)
     }
 
     func update(
@@ -1347,6 +1350,8 @@ private final class DanmakuCanvasRenderer {
         settings: DanmakuRenderSettings,
         viewport: DanmakuCanvasViewport
     ) {
+        lock.lock()
+        defer { lock.unlock() }
         currentSettings = settings
         clock.sync(
             time: max(playbackTime, 0),
@@ -1386,10 +1391,17 @@ private final class DanmakuCanvasRenderer {
             )
             self.scheduleOnRenderThread { [weak self] in
                 guard let self else { return }
-                guard self.preparationGeneration == generation, self.sceneDescriptor == descriptor else { return }
-                self.preparedScene = scene
-                self.scheduler.reset(scene: scene, time: self.clock.currentTime)
-                self.onInvalidation?()
+                var shouldInvalidate = false
+                self.lock.lock()
+                if self.preparationGeneration == generation, self.sceneDescriptor == descriptor {
+                    self.preparedScene = scene
+                    self.scheduler.reset(scene: scene, time: self.clock.currentTime)
+                    shouldInvalidate = true
+                }
+                self.lock.unlock()
+                if shouldInvalidate {
+                    self.onInvalidation?()
+                }
             }
         }
     }
@@ -1401,13 +1413,19 @@ private final class DanmakuCanvasRenderer {
         maximumPrewarmCount: Int = 24,
         _ body: ([DanmakuRasterImage], [DanmakuSprite]) -> Void
     ) {
+        lock.lock()
         guard currentSettings.isVisible,
               let preparedScene,
               bounds.isEmpty == false else {
+            lock.unlock()
             body([], [])
             return
         }
 
+        var visibleEntriesScratch: [DanmakuPreparedComment] = []
+        var spriteBuckets: [[DanmakuSprite]] = [[], [], []]
+        var spriteScratch: [DanmakuSprite] = []
+        var prewarmScratch: [DanmakuRasterImage] = []
         let currentTime = presentationTime ?? clock.currentTime
         scheduler.populateVisibleEntries(
             at: currentTime,
@@ -1461,7 +1479,10 @@ private final class DanmakuCanvasRenderer {
             spriteScratch.append(contentsOf: bucket)
         }
 
-        body(prewarmScratch, spriteScratch)
+        let resolvedPrewarmScratch = prewarmScratch
+        let resolvedSpriteScratch = spriteScratch
+        lock.unlock()
+        body(resolvedPrewarmScratch, resolvedSpriteScratch)
     }
 
     func draw(in context: CGContext, bounds: CGRect) {
@@ -1489,6 +1510,8 @@ private final class DanmakuCanvasRenderer {
     }
 
     func invalidate() {
+        lock.lock()
+        defer { lock.unlock() }
         preparationGeneration += 1
         sceneDescriptor = nil
         preparedScene = nil
@@ -1854,6 +1877,8 @@ private enum DanmakuPlacement: Sendable {
 }
 
 private struct DanmakuSceneBuilder {
+    private static let referenceScrollViewportWidth: CGFloat = 1280
+
     static func build(
         document: DanmakuDocument,
         descriptor: DanmakuSceneDescriptor,
@@ -1888,7 +1913,12 @@ private struct DanmakuSceneBuilder {
                 fontFamily: fontFamily,
                 usesStroke: usesStroke
             )
-            let duration = max(comment.visibilityWindow / speed, 0.2)
+            let duration = scrollDuration(
+                for: comment,
+                speed: speed,
+                viewportWidth: descriptor.viewportSize.width,
+                commentWidth: metrics.size.width
+            )
             let laneSpan = max(1, Int(ceil((metrics.size.height + trackSpacing) / max(laneStride, 1))))
             let alpha = alphaRange(for: comment)
             let rotation = rotationRange(for: comment)
@@ -2277,6 +2307,29 @@ private struct DanmakuSceneBuilder {
             return min(max(rawValue / 255, 0), 1)
         }
         return min(max(rawValue, 0), 1)
+    }
+
+    private static func scrollDuration(
+        for comment: DanmakuComment,
+        speed: Double,
+        viewportWidth: CGFloat,
+        commentWidth: CGFloat
+    ) -> TimeInterval {
+        let baseDuration = max(comment.visibilityWindow / speed, 0.2)
+        guard isScrollMode(comment.mode) else { return baseDuration }
+
+        let referenceDistance = max(referenceScrollViewportWidth + commentWidth, 1)
+        let travelDistance = max(viewportWidth + commentWidth, 1)
+        return baseDuration * TimeInterval(travelDistance / referenceDistance)
+    }
+
+    private static func isScrollMode(_ mode: DanmakuCommentMode) -> Bool {
+        switch mode {
+        case .scroll, .scrollAlt, .scrollBottom, .reverseScroll:
+            return true
+        case .bottom, .top, .advanced, .code, .scripted:
+            return false
+        }
     }
 
     private static func sanitize(_ text: String) -> String {
