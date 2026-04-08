@@ -79,6 +79,7 @@ public final class DanmakuOverlayView: NSView {
         super.init(frame: frameRect)
         addSubview(metalView)
         addSubview(debugBadge)
+        debugBadge.isHidden = true
         metalView.onStatsChanged = { [weak self] text in
             self?.debugBadge.text = text
             self?.needsLayout = true
@@ -93,6 +94,9 @@ public final class DanmakuOverlayView: NSView {
     fileprivate func apply(snapshot: Snapshot) {
         guard snapshot != lastAppliedSnapshot else { return }
         lastAppliedSnapshot = snapshot
+        debugBadge.isHidden = !snapshot.settings.showsPerformanceHUD
+        metalView.showsStatsHUD = snapshot.settings.showsPerformanceHUD
+        needsLayout = true
         metalView.apply(snapshot: snapshot)
     }
 
@@ -100,6 +104,7 @@ public final class DanmakuOverlayView: NSView {
         super.layout()
         metalView.frame = bounds
 
+        guard debugBadge.isHidden == false else { return }
         let badgeSize = debugBadge.intrinsicContentSize
         debugBadge.frame = CGRect(
             x: max(bounds.width - badgeSize.width - 14, 0),
@@ -535,7 +540,12 @@ private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelega
 private final class DanmakuMetalView: NSView {
     var onStatsChanged: ((String) -> Void)? {
         didSet {
-            renderDriver.onStatsChanged = onStatsChanged
+            updateStatsHUDState()
+        }
+    }
+    var showsStatsHUD = false {
+        didSet {
+            updateStatsHUDState()
         }
     }
 
@@ -574,7 +584,7 @@ private final class DanmakuMetalView: NSView {
             "position": NSNull(),
             "backgroundColor": NSNull()
         ]
-        renderDriver.onStatsChanged = onStatsChanged
+        updateStatsHUDState()
     }
 
     func apply(snapshot: DanmakuOverlayView.Snapshot) {
@@ -642,6 +652,10 @@ private final class DanmakuMetalView: NSView {
         layer.presentsWithTransaction = false
         layer.backgroundColor = NSColor.clear.cgColor
         return layer
+    }
+
+    private func updateStatsHUDState() {
+        renderDriver.onStatsChanged = showsStatsHUD ? onStatsChanged : nil
     }
 }
 

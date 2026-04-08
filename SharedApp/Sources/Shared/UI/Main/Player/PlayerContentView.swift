@@ -68,6 +68,7 @@ private struct PlayerContentMainView: View {
     @State private var fullscreenShortcutHUD: PlayerShortcutHUDState?
     @State private var pendingManagedFullscreenTarget: Bool?
     @AppStorage("player.danmaku.visible") private var isDanmakuVisible = true
+    @AppStorage("player.danmaku.debugHUD") private var showsDanmakuPerformanceHUD = false
     @AppStorage("player.danmaku.fontScale") private var danmakuFontScale = 1.5
     @AppStorage("player.danmaku.opacity") private var danmakuOpacity = 0.9
     @AppStorage("player.danmaku.speed") private var danmakuSpeed = 1.0
@@ -1370,6 +1371,7 @@ private struct PlayerContentMainView: View {
     private var currentDanmakuSettings: DanmakuRenderSettings {
         .init(
             isVisible: isDanmakuVisible,
+            showsPerformanceHUD: showsDanmakuPerformanceHUD,
             fontScale: danmakuFontScale,
             opacity: danmakuOpacity,
             speed: danmakuSpeed
