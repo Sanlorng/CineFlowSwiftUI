@@ -284,6 +284,11 @@ private struct PlayerContentMainView: View {
                         lastReportedSubtitleWindowPlaybackSecond = second
                         viewStore.send(.playbackTimeUpdated(fileID, playbackTime))
                     }
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        handlePlayerStageTap(viewStore: viewStore)
+                    }
                 SubtitleRendererOverlay(
                     document: customSubtitleDocument,
                     playbackTime: adjustedSubtitlePlaybackTime(
@@ -1773,6 +1778,13 @@ private struct PlayerContentMainView: View {
         }
         autoPlayArmedItemID = nil
         playerController.togglePlayPause()
+    }
+
+    private func handlePlayerStageTap(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        revealControls()
+        togglePlaybackIfReady(viewStore: viewStore)
     }
 
     private func armAutoPlay(for itemID: PlayerPresenter.State.PlaylistItem.ID?) {
