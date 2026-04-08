@@ -256,7 +256,6 @@ private struct PlayerContentMainView: View {
                         case .error(let message):
                             viewStore.send(.setPlaybackError(message ?? "播放失败。"))
                         case .playing:
-                            hasPendingAutoPlayRequest = false
                             if let fileID = viewStore.currentFileID {
                                 viewStore.send(.playbackStarted(fileID))
                             }
@@ -584,7 +583,7 @@ private struct PlayerContentMainView: View {
         HStack(spacing: 10) {
             controlButtonCluster(opacity: 0.18) {
                 glassIconButton("backward.end.fill", isDisabled: viewStore.currentIndex == 0) {
-                    viewStore.send(.playPrevious)
+                    playPreviousEpisode(viewStore: viewStore)
                 }
                 glassIconButton(
                     playerController.isPlaying ? "pause.fill" : "play.fill",
@@ -593,7 +592,7 @@ private struct PlayerContentMainView: View {
                     togglePlaybackIfReady(viewStore: viewStore)
                 }
                 glassIconButton("forward.end.fill", isDisabled: viewStore.currentIndex + 1 >= viewStore.playlist.count) {
-                    viewStore.send(.playNext)
+                    playNextEpisode(viewStore: viewStore)
                 }
             }
 
@@ -1016,7 +1015,7 @@ private struct PlayerContentMainView: View {
                         LazyVStack(alignment: .leading, spacing: 6) {
                             ForEach(displayedEpisodeItems(viewStore: viewStore)) { item in
                                 Button {
-                                    viewStore.send(.playItem(item.id))
+                                    playEpisode(item.id, viewStore: viewStore)
                                     isEpisodePopoverPresented = false
                                 } label: {
                                     selectionRowLabel(
@@ -1072,7 +1071,7 @@ private struct PlayerContentMainView: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(displayedEpisodeItems(viewStore: viewStore)) { item in
                             Button {
-                                viewStore.send(.playItem(item.id))
+                                playEpisode(item.id, viewStore: viewStore)
                             } label: {
                                 episodeBrowserRow(
                                     item: item,
@@ -1534,9 +1533,9 @@ private struct PlayerContentMainView: View {
         case .togglePlayPause:
             togglePlaybackIfReady(viewStore: viewStore)
         case .playPreviousEpisode:
-            store.send(.playPrevious)
+            playPreviousEpisode(viewStore: viewStore)
         case .playNextEpisode:
-            store.send(.playNext)
+            playNextEpisode(viewStore: viewStore)
         case .seekBackward:
             playerController.seekBy(-shortcutSeekStepSeconds)
         case .seekForwardOrBoost:
@@ -1776,6 +1775,32 @@ private struct PlayerContentMainView: View {
         playerController.togglePlayPause()
     }
 
+    private func prepareUpcomingItemForAutoPlay() {
+        hasPendingAutoPlayRequest = true
+    }
+
+    private func playPreviousEpisode(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        prepareUpcomingItemForAutoPlay()
+        viewStore.send(.playPrevious)
+    }
+
+    private func playNextEpisode(
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        prepareUpcomingItemForAutoPlay()
+        viewStore.send(.playNext)
+    }
+
+    private func playEpisode(
+        _ itemID: PlayerPresenter.State.PlaylistItem.ID,
+        viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
+    ) {
+        prepareUpcomingItemForAutoPlay()
+        viewStore.send(.playItem(itemID))
+    }
+
     @ViewBuilder
     private func fullscreenShortcutHUDView(_ hud: PlayerShortcutHUDState) -> some View {
         HStack(spacing: 10) {
@@ -1875,16 +1900,16 @@ private struct PlayerContentMainView: View {
             playerController.setPaused(false)
         case .sequential:
             guard viewStore.currentIndex + 1 < viewStore.playlist.count else { return }
-            viewStore.send(.playNext)
+            playNextEpisode(viewStore: viewStore)
         case .listRepeat:
             if viewStore.currentIndex + 1 < viewStore.playlist.count {
-                viewStore.send(.playNext)
+                playNextEpisode(viewStore: viewStore)
             } else if let firstItem = viewStore.playlist.first {
                 if firstItem.id == viewStore.currentItem?.id {
                     playerController.seekTo(0)
                     playerController.setPaused(false)
                 } else {
-                    viewStore.send(.playItem(firstItem.id))
+                    playEpisode(firstItem.id, viewStore: viewStore)
                 }
             }
         }
@@ -2097,7 +2122,7 @@ private struct PlayerContentMainView: View {
             HStack(spacing: 12) {
                 ForEach(viewStore.playlist) { item in
                     Button {
-                        viewStore.send(.playItem(item.id))
+                        playEpisode(item.id, viewStore: viewStore)
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(currentTitle(for: item.episode))
@@ -2287,8 +2312,7 @@ private func shouldAllowAutoPlay(
     isSubtitleRendererReady: Bool,
     playbackState: PlayerPlaybackState
 ) -> Bool {
-    if playbackState == .paused,
-       !hasPendingAutoPlayRequest {
+    if !hasPendingAutoPlayRequest {
         return false
     }
     if shouldBlockPlaybackStartUntilDanmakuLoads(
