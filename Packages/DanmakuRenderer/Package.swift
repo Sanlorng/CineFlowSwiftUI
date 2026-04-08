@@ -36,5 +36,11 @@ let package = Package(
                 "DanmakuRendererCore"
             ]
         ),
+        .testTarget(
+            name: "DanmakuRendererCanvasTests",
+            dependencies: [
+                "DanmakuRendererCanvas"
+            ]
+        ),
     ]
 )

@@ -4,7 +4,6 @@ import DanmakuRendererCore
 #if os(macOS)
 import AppKit
 import CoreText
-import CoreVideo
 import MetalKit
 import QuartzCore
 
@@ -173,62 +172,118 @@ private final class DanmakuDebugBadgeView: NSView {
     }
 }
 
-private final class DanmakuMetalView: NSView {
+private final class DanmakuRenderThread: NSObject, @unchecked Sendable {
+    private let readySemaphore = DispatchSemaphore(value: 0)
+    private let shutdownSemaphore = DispatchSemaphore(value: 0)
+    private let threadName: String
+    private lazy var thread: Thread = {
+        let thread = Thread(target: self, selector: #selector(threadMainEntryPoint), object: nil)
+        thread.name = threadName
+        thread.qualityOfService = .userInteractive
+        return thread
+    }()
+    private var runLoop: CFRunLoop?
+
+    init(name: String) {
+        self.threadName = name
+        super.init()
+    }
+
+    func async(_ operation: @escaping @Sendable () -> Void) {
+        startIfNeeded()
+        guard let runLoop else { return }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue, operation)
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    func sync(_ operation: @escaping @Sendable () -> Void) {
+        let semaphore = DispatchSemaphore(value: 0)
+        async {
+            operation()
+            semaphore.signal()
+        }
+        semaphore.wait()
+    }
+
+    func shutdown() {
+        guard thread.isExecuting else { return }
+        sync {
+            CFRunLoopStop(CFRunLoopGetCurrent())
+        }
+        shutdownSemaphore.wait()
+    }
+
+    private func startIfNeeded() {
+        guard thread.isExecuting == false, thread.isFinished == false else { return }
+        thread.start()
+        readySemaphore.wait()
+    }
+
+    private func threadMain() {
+        autoreleasepool {
+            let timer = Timer(
+                timeInterval: 3600,
+                repeats: true
+            ) { _ in }
+            RunLoop.current.add(timer, forMode: .default)
+            runLoop = CFRunLoopGetCurrent()
+            readySemaphore.signal()
+            CFRunLoopRun()
+            timer.invalidate()
+            runLoop = nil
+            shutdownSemaphore.signal()
+        }
+    }
+
+    @objc private func threadMainEntryPoint() {
+        threadMain()
+    }
+}
+
+private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sendable {
     var onStatsChanged: ((String) -> Void)?
 
     private let playbackTimeResyncThreshold: TimeInterval = 1.0 / 12.0
-    private let renderQueue = DispatchQueue(label: "CineFlow.DanmakuMetalRenderLoop", qos: .userInteractive)
-    private let displayLinkSemaphore = DispatchSemaphore(value: 1)
-    private let renderer: DanmakuCanvasRenderer
-    private let device: MTLDevice?
+    private let preferredFrameLatency: Float = 2
+    private let renderThread = DanmakuRenderThread(name: "CineFlow.DanmakuMetalRender")
+    private weak var metalLayer: CAMetalLayer?
     private let compositor: DanmakuMetalCompositor?
-    private var metalLayer: CAMetalLayer?
-    nonisolated(unsafe) private var displayLink: CVDisplayLink?
+    private lazy var renderer: DanmakuCanvasRenderer = {
+        let renderer = DanmakuCanvasRenderer(
+            scheduleOnRenderThread: { [weak self] operation in
+                self?.renderThread.async(operation)
+            }
+        )
+        renderer.onInvalidation = { [weak self] in
+            self?.handleRendererInvalidationLocked()
+        }
+        return renderer
+    }()
+
+    private var displayLink: CAMetalDisplayLink?
     private var snapshot = DanmakuOverlayView.Snapshot.empty
     private var currentViewport = DanmakuCanvasViewport(size: .zero, scale: 2)
     private var isAttachedToWindow = false
     private var isAnimating = false
+    private var hasPendingDisplayLinkDraw = false
     private var drawSampleStartedAt = CACurrentMediaTime()
     private var drawCount = 0
     private var measuredFPS = 0.0
     private var targetFPS = 60.0
 
-    override var isOpaque: Bool { false }
-
-    override init(frame frameRect: NSRect) {
-        let resolvedDevice = MTLCreateSystemDefaultDevice()
-        self.renderer = DanmakuCanvasRenderer(callbackQueue: renderQueue)
-        self.device = resolvedDevice
-        self.compositor = resolvedDevice.flatMap(DanmakuMetalCompositor.init(device:))
-        super.init(frame: frameRect)
-        commonInit()
-    }
-
-    @available(*, unavailable)
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func commonInit() {
-        wantsLayer = true
-        layerContentsRedrawPolicy = .never
-        metalLayer = makeMetalLayer()
-        layer = metalLayer
-        layer?.actions = [
-            "bounds": NSNull(),
-            "position": NSNull(),
-            "backgroundColor": NSNull()
-        ]
-        setupDisplayLink()
-
-        renderer.onInvalidation = { [weak self] in
-            self?.handleRendererInvalidationLocked()
+    init(device: MTLDevice?, metalLayer: CAMetalLayer) {
+        self.metalLayer = metalLayer
+        self.compositor = device.flatMap(DanmakuMetalCompositor.init(device:))
+        super.init()
+        _ = renderer
+        renderThread.sync { [weak self] in
+            self?.setupDisplayLinkLocked()
         }
     }
 
-    func apply(snapshot: DanmakuOverlayView.Snapshot) {
-        let surfaceState = currentSurfaceState()
-        renderQueue.async {
+    func apply(snapshot: DanmakuOverlayView.Snapshot, surfaceState: DanmakuSurfaceState) {
+        renderThread.async { [weak self] in
+            guard let self else { return }
             let shouldRefresh = self.shouldRefreshRenderer(for: snapshot)
             self.snapshot = snapshot
             self.apply(surfaceState: surfaceState)
@@ -240,103 +295,41 @@ private final class DanmakuMetalView: NSView {
         }
     }
 
-    func updateViewportAndRefresh() {
-        let surfaceState = currentSurfaceState()
-        updateMetalLayerGeometry(with: surfaceState.viewport)
-        renderQueue.async {
+    func refresh(surfaceState: DanmakuSurfaceState) {
+        renderThread.async { [weak self] in
+            guard let self else { return }
             self.apply(surfaceState: surfaceState)
             self.updateRendererLocked()
         }
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        updateDisplayLinkDisplay()
-        updateViewportAndRefresh()
-    }
-
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        updateDisplayLinkDisplay()
-        updateViewportAndRefresh()
-    }
-
-    override func layout() {
-        super.layout()
-        updateViewportAndRefresh()
-    }
-
-    deinit {
-        if let displayLink {
-            CVDisplayLinkStop(displayLink)
+    func stop() {
+        renderThread.sync { [weak self] in
+            self?.displayLink?.invalidate()
+            self?.displayLink = nil
         }
+        renderThread.shutdown()
     }
 
-    private func makeMetalLayer() -> CAMetalLayer {
-        let layer = CAMetalLayer()
-        layer.device = device
-        layer.pixelFormat = .bgra8Unorm
-        layer.framebufferOnly = true
-        layer.isOpaque = false
-        layer.backgroundColor = NSColor.clear.cgColor
-        return layer
-    }
-
-    private func setupDisplayLink() {
-        var displayLink: CVDisplayLink?
-        guard CVDisplayLinkCreateWithActiveCGDisplays(&displayLink) == kCVReturnSuccess,
-              let displayLink else {
-            return
-        }
-
-        CVDisplayLinkSetOutputCallback(
-            displayLink,
-            danmakuDisplayLinkOutputCallback,
-            Unmanaged.passUnretained(self).toOpaque()
-        )
+    private func setupDisplayLinkLocked() {
+        guard let metalLayer else { return }
+        let displayLink = CAMetalDisplayLink(metalLayer: metalLayer)
+        displayLink.delegate = self
+        displayLink.preferredFrameLatency = preferredFrameLatency
+        displayLink.preferredFrameRateRange = preferredDisplayLinkFrameRateRange(for: targetFPS)
+        displayLink.isPaused = true
+        displayLink.add(to: .current, forMode: .default)
         self.displayLink = displayLink
     }
 
-    private func currentSurfaceState() -> DanmakuSurfaceState {
-        DanmakuSurfaceState(
-            viewport: .init(
-                size: bounds.size,
-                scale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-            ),
-            isAttachedToWindow: window != nil,
-            targetFPS: {
-                if let screen = window?.screen, #available(macOS 12.0, *) {
-                    return Double(screen.maximumFramesPerSecond)
-                }
-                return 60
-            }()
-        )
-    }
-
-    private func updateMetalLayerGeometry(with viewport: DanmakuCanvasViewport) {
-        guard let metalLayer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        metalLayer.contentsScale = viewport.scale
-        metalLayer.drawableSize = CGSize(
-            width: max(viewport.size.width * viewport.scale, 1),
-            height: max(viewport.size.height * viewport.scale, 1)
-        )
-        CATransaction.commit()
-    }
-
-    private func updateDisplayLinkDisplay() {
-        guard let displayLink,
-              let screenNumber = window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
-            return
-        }
-        CVDisplayLinkSetCurrentCGDisplay(displayLink, CGDirectDisplayID(screenNumber.uint32Value))
-    }
-
     private func apply(surfaceState: DanmakuSurfaceState) {
+        let didChangeTargetFPS = abs(targetFPS - surfaceState.targetFPS) >= 0.5
         currentViewport = surfaceState.viewport
         isAttachedToWindow = surfaceState.isAttachedToWindow
         targetFPS = surfaceState.targetFPS
+        if didChangeTargetFPS {
+            syncDisplayLinkConfigurationLocked()
+        }
     }
 
     private func updateRendererLocked() {
@@ -354,9 +347,6 @@ private final class DanmakuMetalView: NSView {
     }
 
     private func shouldRefreshRenderer(for newSnapshot: DanmakuOverlayView.Snapshot) -> Bool {
-        // Let the internal playback clock free-run while playback is stable.
-        // Re-sync only when scene inputs change, playback state changes,
-        // or the external player time has drifted materially.
         if newSnapshot.documentID != snapshot.documentID
             || newSnapshot.document != snapshot.document
             || newSnapshot.settings != snapshot.settings {
@@ -380,18 +370,19 @@ private final class DanmakuMetalView: NSView {
         let shouldAnimate = renderer.shouldAnimate && compositor != nil && isAttachedToWindow && currentViewport.isRenderable
         guard shouldAnimate != isAnimating else { return }
         isAnimating = shouldAnimate
-
-        guard let displayLink else { return }
-        if shouldAnimate {
-            CVDisplayLinkStart(displayLink)
-        } else {
-            CVDisplayLinkStop(displayLink)
-        }
+        syncDisplayLinkConfigurationLocked()
     }
 
     private func requestImmediateDrawIfNeededLocked() {
-        guard isAttachedToWindow, isAnimating == false else { return }
-        drawFrameLocked()
+        guard isAttachedToWindow,
+              currentViewport.isRenderable,
+              compositor != nil,
+              isAnimating == false,
+              hasPendingDisplayLinkDraw == false else {
+            return
+        }
+        hasPendingDisplayLinkDraw = true
+        syncDisplayLinkConfigurationLocked()
     }
 
     private func handleRendererInvalidationLocked() {
@@ -399,12 +390,39 @@ private final class DanmakuMetalView: NSView {
         requestImmediateDrawIfNeededLocked()
     }
 
-    private func drawFrameLocked() {
+    func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        let frame = DanmakuDisplayLinkFrame(
+            drawable: update.drawable,
+            targetTimestamp: update.targetTimestamp,
+            targetPresentationTimestamp: update.targetPresentationTimestamp
+        )
+        drawFrameLocked(frame: frame)
+    }
+
+    private func drawFrameLocked(frame: DanmakuDisplayLinkFrame) {
+        guard isAnimating || hasPendingDisplayLinkDraw else {
+            syncDisplayLinkConfigurationLocked()
+            return
+        }
+        defer {
+            if isAnimating == false, hasPendingDisplayLinkDraw {
+                hasPendingDisplayLinkDraw = false
+                syncDisplayLinkConfigurationLocked()
+            }
+        }
+        drawFrameLocked(
+            drawable: frame.drawable,
+            targetPresentationTimestamp: frame.targetPresentationTimestamp
+        )
+    }
+
+    private func drawFrameLocked(
+        drawable: CAMetalDrawable,
+        targetPresentationTimestamp: CFTimeInterval?
+    ) {
         guard let compositor,
               isAttachedToWindow,
-              currentViewport.isRenderable,
-              let metalLayer,
-              let drawable = metalLayer.nextDrawable() else {
+              currentViewport.isRenderable else {
             return
         }
 
@@ -419,8 +437,11 @@ private final class DanmakuMetalView: NSView {
             alpha: 0
         )
 
+        let hostTime = targetPresentationTimestamp ?? CACurrentMediaTime()
+        let presentationTime = renderer.presentationTime(forHostTime: hostTime)
         renderer.withFrameAssets(
-            in: CGRect(origin: .zero, size: currentViewport.size)
+            in: CGRect(origin: .zero, size: currentViewport.size),
+            presentationTime: presentationTime
         ) { prewarmAssets, sprites in
             compositor.draw(
                 sprites: sprites,
@@ -433,12 +454,20 @@ private final class DanmakuMetalView: NSView {
         recordDrawLocked()
     }
 
-    fileprivate func enqueueDisplayLinkDraw() {
-        guard displayLinkSemaphore.wait(timeout: .now()) == .success else { return }
-        renderQueue.async {
-            self.drawFrameLocked()
-            self.displayLinkSemaphore.signal()
-        }
+    private func syncDisplayLinkConfigurationLocked() {
+        let shouldRequestCallbacks = isAnimating || hasPendingDisplayLinkDraw
+        displayLink?.preferredFrameLatency = preferredFrameLatency
+        displayLink?.preferredFrameRateRange = preferredDisplayLinkFrameRateRange(for: targetFPS)
+        displayLink?.isPaused = shouldRequestCallbacks == false
+    }
+
+    private func preferredDisplayLinkFrameRateRange(for targetFPS: Double) -> CAFrameRateRange {
+        let preferredFPS = Float(max(targetFPS, 1))
+        return CAFrameRateRange(
+            minimum: min(preferredFPS, 30),
+            maximum: preferredFPS,
+            preferred: preferredFPS
+        )
     }
 
     private func recordDrawLocked() {
@@ -462,24 +491,129 @@ private final class DanmakuMetalView: NSView {
     }
 }
 
+private final class DanmakuMetalView: NSView {
+    var onStatsChanged: ((String) -> Void)? {
+        didSet {
+            renderDriver.onStatsChanged = onStatsChanged
+        }
+    }
+
+    private let device: MTLDevice?
+    private let metalLayer: CAMetalLayer
+    private lazy var renderDriver = DanmakuMetalRenderDriver(
+        device: device,
+        metalLayer: metalLayer
+    )
+
+    override var isOpaque: Bool { false }
+
+    override init(frame frameRect: NSRect) {
+        let resolvedDevice = MTLCreateSystemDefaultDevice()
+        self.device = resolvedDevice
+        self.metalLayer = DanmakuMetalView.makeMetalLayer(device: resolvedDevice)
+        super.init(frame: frameRect)
+        commonInit()
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @MainActor deinit {
+        renderDriver.stop()
+    }
+
+    private func commonInit() {
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        layer = metalLayer
+        layer?.actions = [
+            "bounds": NSNull(),
+            "position": NSNull(),
+            "backgroundColor": NSNull()
+        ]
+        renderDriver.onStatsChanged = onStatsChanged
+    }
+
+    func apply(snapshot: DanmakuOverlayView.Snapshot) {
+        renderDriver.apply(
+            snapshot: snapshot,
+            surfaceState: currentSurfaceState()
+        )
+    }
+
+    func updateViewportAndRefresh() {
+        let surfaceState = currentSurfaceState()
+        updateMetalLayerGeometry(with: surfaceState.viewport)
+        renderDriver.refresh(surfaceState: surfaceState)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateViewportAndRefresh()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateViewportAndRefresh()
+    }
+
+    override func layout() {
+        super.layout()
+        updateViewportAndRefresh()
+    }
+
+    private func currentSurfaceState() -> DanmakuSurfaceState {
+        DanmakuSurfaceState(
+            viewport: .init(
+                size: bounds.size,
+                scale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+            ),
+            isAttachedToWindow: window != nil,
+            targetFPS: {
+                if let screen = window?.screen, #available(macOS 12.0, *) {
+                    return min(Double(screen.maximumFramesPerSecond), 60)
+                }
+                return 60
+            }()
+        )
+    }
+
+    private func updateMetalLayerGeometry(with viewport: DanmakuCanvasViewport) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        metalLayer.contentsScale = viewport.scale
+        metalLayer.drawableSize = CGSize(
+            width: max(viewport.size.width * viewport.scale, 1),
+            height: max(viewport.size.height * viewport.scale, 1)
+        )
+        CATransaction.commit()
+    }
+
+    private static func makeMetalLayer(device: MTLDevice?) -> CAMetalLayer {
+        let layer = CAMetalLayer()
+        layer.device = device
+        layer.pixelFormat = .bgra8Unorm
+        layer.framebufferOnly = true
+        layer.isOpaque = false
+        layer.maximumDrawableCount = 3
+        layer.presentsWithTransaction = false
+        layer.backgroundColor = NSColor.clear.cgColor
+        return layer
+    }
+}
+
 private struct DanmakuSurfaceState {
     let viewport: DanmakuCanvasViewport
     let isAttachedToWindow: Bool
     let targetFPS: Double
 }
 
-private func danmakuDisplayLinkOutputCallback(
-    _ displayLink: CVDisplayLink,
-    _ inNow: UnsafePointer<CVTimeStamp>,
-    _ inOutputTime: UnsafePointer<CVTimeStamp>,
-    _ flagsIn: CVOptionFlags,
-    _ flagsOut: UnsafeMutablePointer<CVOptionFlags>,
-    _ displayLinkContext: UnsafeMutableRawPointer?
-) -> CVReturn {
-    guard let displayLinkContext else { return kCVReturnSuccess }
-    let view = Unmanaged<DanmakuMetalView>.fromOpaque(displayLinkContext).takeUnretainedValue()
-    view.enqueueDisplayLinkDraw()
-    return kCVReturnSuccess
+private struct DanmakuDisplayLinkFrame {
+    let drawable: CAMetalDrawable
+    let targetTimestamp: CFTimeInterval
+    let targetPresentationTimestamp: CFTimeInterval
 }
 
 private struct DanmakuSprite {
@@ -519,7 +653,7 @@ private struct DanmakuAtlasPlacement {
     let origin: MTLOrigin
 }
 
-private final class DanmakuInstanceBufferAllocator {
+private final class DanmakuInstanceBufferAllocator: @unchecked Sendable {
     private let alignment = 256
     private let device: MTLDevice
     private(set) var buffer: MTLBuffer
@@ -576,7 +710,7 @@ private final class DanmakuInstanceBufferAllocator {
     }
 }
 
-private final class DanmakuInstanceBufferPool {
+private final class DanmakuInstanceBufferPool: @unchecked Sendable {
     private let availabilitySemaphore: DispatchSemaphore
     private let lock = NSLock()
     private var availableAllocators: [DanmakuInstanceBufferAllocator]
@@ -832,9 +966,10 @@ private final class DanmakuMetalCompositor {
         )
 
         encoder.endEncoding()
+        let instanceBufferPool = self.instanceBufferPool
         commandBuffer.present(drawable)
-        commandBuffer.addCompletedHandler { [weak self] _ in
-            self?.instanceBufferPool.return(instanceAllocator)
+        commandBuffer.addCompletedHandler { _ in
+            instanceBufferPool.return(instanceAllocator)
         }
         commandBuffer.commit()
     }
@@ -1085,7 +1220,7 @@ private struct DanmakuSceneDescriptor: Equatable, Sendable {
 private final class DanmakuCanvasRenderer: @unchecked Sendable {
     var onInvalidation: (() -> Void)?
 
-    private let callbackQueue: DispatchQueue
+    private let scheduleOnRenderThread: (@escaping @Sendable () -> Void) -> Void
     private let textCache = DanmakuTextRasterCache()
     private let scheduler = DanmakuPlaybackScheduler()
     private let clock = DanmakuPlaybackClock()
@@ -1100,8 +1235,8 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
     private var spriteScratch: [DanmakuSprite] = []
     private var prewarmScratch: [DanmakuRasterImage] = []
 
-    init(callbackQueue: DispatchQueue) {
-        self.callbackQueue = callbackQueue
+    init(scheduleOnRenderThread: @escaping (@escaping @Sendable () -> Void) -> Void) {
+        self.scheduleOnRenderThread = scheduleOnRenderThread
     }
 
     var shouldAnimate: Bool {
@@ -1110,6 +1245,10 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 
     var presentationTime: TimeInterval {
         clock.currentTime
+    }
+
+    func presentationTime(forHostTime hostTime: CFTimeInterval) -> TimeInterval {
+        clock.currentTime(atHostTime: hostTime)
     }
 
     func update(
@@ -1158,7 +1297,7 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
                 descriptor: descriptor,
                 textCache: textCache
             )
-            self.callbackQueue.async { [weak self] in
+            self.scheduleOnRenderThread { [weak self] in
                 guard let self else { return }
                 guard self.preparationGeneration == generation, self.sceneDescriptor == descriptor else { return }
                 self.preparedScene = scene
@@ -1170,6 +1309,7 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
 
     func withFrameAssets(
         in bounds: CGRect,
+        presentationTime: TimeInterval? = nil,
         prewarmLookahead: TimeInterval = 2,
         maximumPrewarmCount: Int = 24,
         _ body: ([DanmakuRasterImage], [DanmakuSprite]) -> Void
@@ -1181,7 +1321,7 @@ private final class DanmakuCanvasRenderer: @unchecked Sendable {
             return
         }
 
-        let currentTime = clock.currentTime
+        let currentTime = presentationTime ?? clock.currentTime
         scheduler.populateVisibleEntries(
             at: currentTime,
             sceneEntries: preparedScene.entries,
@@ -1292,7 +1432,7 @@ private final class DanmakuPlaybackClock {
     private(set) var isActive = false
 
     var currentTime: TimeInterval {
-        currentTime(at: CACurrentMediaTime())
+        currentTime(atHostTime: CACurrentMediaTime())
     }
 
     func sync(time: TimeInterval, isActive: Bool, rate: Double) {
@@ -1323,7 +1463,7 @@ private final class DanmakuPlaybackClock {
             return
         }
 
-        let predictedTime = currentTime(at: hostTime)
+        let predictedTime = currentTime(atHostTime: hostTime)
         let drift = normalizedTime - predictedTime
         if abs(drift) <= driftIgnoreThreshold {
             return
@@ -1343,7 +1483,7 @@ private final class DanmakuPlaybackClock {
         anchorHostTime = hostTime
     }
 
-    private func currentTime(at hostTime: CFTimeInterval) -> TimeInterval {
+    func currentTime(atHostTime hostTime: CFTimeInterval) -> TimeInterval {
         guard isActive else { return anchorTime }
         let elapsed = hostTime - anchorHostTime
         return max(anchorTime + elapsed * rate, 0)
