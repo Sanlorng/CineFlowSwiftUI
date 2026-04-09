@@ -11,15 +11,21 @@ import OpenAPIURLSession
 
 typealias DandanClient = DandanApi.Client
 
+func makeRawDandanClient() throws -> DandanClient {
+    DandanClient(
+        serverURL: try Servers.Server1.url(),
+        transport: SignatureMiddleware(
+            appId: Secrets.dandanAppId,
+            appSecret: Secrets.dandanAppSecret,
+            next: URLSessionTransport()
+        )
+    )
+}
+
 extension DandanClient: DependencyKey {
     public static let liveValue: Self = {
         do {
-            return Self(
-                serverURL: try Servers.Server1.url(),
-                transport: SignatureMiddleware(
-                    appId: Secrets.dandanAppId, appSecret: Secrets.dandanAppSecret, next: URLSessionTransport()
-                )
-            )
+            return try makeRawDandanClient()
         } catch {
             fatalError("Failed to create DandanClient: \(error)")
         }
@@ -101,6 +107,30 @@ extension Operations.SearchSearchAnime.Output: SuccessExtractable {
 }
 
 extension Operations.SearchSearchAnime.Output: UndocumentedCase {
+    var statusCode: Int {
+        guard case .undocumented(let statusCode, _) = self else { return -1 }
+        return statusCode
+    }
+}
+
+extension Operations.BangumiGetBangumiDetails.Output.Ok: SuccessfulResponse {}
+
+extension Operations.BangumiGetBangumiDetails.Output.Ok.Body: SuccessResponseBody {
+    public var model: Components.Schemas.BangumiDetailsResponse? {
+        return try? self.json
+    }
+}
+
+extension Operations.BangumiGetBangumiDetails.Output: SuccessExtractable {
+    public var successModel: Components.Schemas.BangumiDetailsResponse? {
+        guard case .ok(let response) = self else {
+            return nil
+        }
+        return response.body.model
+    }
+}
+
+extension Operations.BangumiGetBangumiDetails.Output: UndocumentedCase {
     var statusCode: Int {
         guard case .undocumented(let statusCode, _) = self else { return -1 }
         return statusCode
