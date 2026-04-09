@@ -113,11 +113,13 @@ struct LibraryContentView: View {
     private func librarySearchField(
         _ viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>
     ) -> some View {
-        AdaptiveLibraryToolbarSearchField(
+        AdaptiveToolbarSearchField(
             query: Binding(
                 get: { viewStore.searchQuery },
                 set: { viewStore.send(.setSearchQuery($0)) }
-            )
+            ),
+            placeholder: "搜索番剧",
+            helpText: "搜索番剧"
         )
     }
     
@@ -273,134 +275,6 @@ struct LibraryContentView: View {
     }
 }
 
-private struct AdaptiveLibraryToolbarSearchField: View {
-    @Binding var query: String
-    @State private var isPopoverPresented = false
-    @Environment(\.appearsActive) private var appearsActive
-    @FocusState private var isInlineFieldFocused: Bool
-    @FocusState private var isPopoverFieldFocused: Bool
-
-    private let collapsedButtonSize: CGFloat = 32
-    private let minimumExpandedWidth: CGFloat = 144
-    private let idealExpandedWidth: CGFloat = 160
-    private let maximumExpandedWidth: CGFloat = 240
-    private let popoverExpandedWidth: CGFloat = 220
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            searchField(
-                focused: $isInlineFieldFocused,
-                isFocused: isInlineFieldFocused && appearsActive
-            )
-                .frame(
-                    minWidth: minimumExpandedWidth,
-                    idealWidth: idealExpandedWidth,
-                    maxWidth: maximumExpandedWidth
-                )
-
-            collapsedSearchButton
-        }
-    }
-
-    private var collapsedSearchButton: some View {
-        Button {
-            isPopoverPresented = true
-        } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(searchAccentColor)
-                .frame(width: collapsedButtonSize, height: collapsedButtonSize)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.clear)
-                        .glassEffect()
-                }
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(searchBorderColor, lineWidth: 0.6)
-                }
-        }
-        .buttonStyle(.plain)
-        .help("搜索番剧")
-        .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
-            searchField(
-                focused: $isPopoverFieldFocused,
-                isFocused: isPopoverFieldFocused && appearsActive
-            )
-                .frame(width: popoverExpandedWidth)
-                .onAppear {
-                    isPopoverFieldFocused = true
-                }
-        }
-    }
-
-    @ViewBuilder
-    private func searchField(
-        focused focusBinding: FocusState<Bool>.Binding,
-        isFocused: Bool
-    ) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(searchPromptAndIconColor)
-
-            TextField(
-                "搜索番剧",
-                text: $query,
-                prompt: Text("搜索番剧").foregroundColor(searchPromptAndIconColor)
-            )
-            .textFieldStyle(.plain)
-            .foregroundColor(searchTextColor)
-            .focused(focusBinding)
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                    focusBinding.wrappedValue = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(searchPromptAndIconColor)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .frame(height: collapsedButtonSize)
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(
-                    isFocused ? Color.accentColor.opacity(0.42) : .clear,
-                    lineWidth: isFocused ? 1 : 0
-                )
-        }
-        .contentShape(Capsule(style: .continuous))
-        .onTapGesture {
-            focusBinding.wrappedValue = true
-        }
-    }
-
-    private var searchBorderColor: Color {
-        if isInlineFieldFocused || isPopoverFieldFocused {
-            return .accentColor.opacity(0.28)
-        }
-        return .white.opacity(query.isEmpty ? 0.14 : 0.22)
-    }
-
-    private var searchAccentColor: Color {
-        appearsActive ? (query.isEmpty ? .primary : .accentColor) : searchPromptAndIconColor
-    }
-
-    private var searchPromptAndIconColor: Color {
-        appearsActive ? .secondary : Color.secondary.opacity(0.7)
-    }
-
-    private var searchTextColor: Color {
-        appearsActive ? .primary : .secondary
-    }
-}
-
 private struct LibraryGrid: View {
     @ObservedObject var viewStore: ViewStore<LibraryPresenter.State, LibraryPresenter.Action>
     @State private var selectedGroup: String?
@@ -523,36 +397,20 @@ private struct LibraryCard: View {
     let item: LibraryPresenter.State.BangumiItem
     let width: CGFloat
     let onTap: () -> Void
-    @State private var isHovering = false
-
-    private let cardPadding: CGFloat = 12
-    private let coverCornerRadius: CGFloat = 14
-    private let coverAspectRatio: CGFloat = 2 / 3
     
     var body: some View {
         Button(action: onTap) {
             cardContent
         }
         .buttonStyle(.plain)
-        .scaleEffect(isHovering ? 1.014 : 1)
-        .offset(y: isHovering ? -4 : 0)
-        .shadow(
-            color: Color.black.opacity(isHovering ? 0.16 : 0.05),
-            radius: isHovering ? 22 : 10,
-            x: 0,
-            y: isHovering ? 12 : 4
-        )
-        .zIndex(isHovering ? 1 : 0)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .animation(.spring(response: 0.24, dampingFraction: 0.84), value: isHovering)
     }
     
     private var cardContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            coverContainer
-            
+        BangumiPosterCard(
+            title: item.title,
+            imageURL: item.coverURL,
+            width: width
+        ) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.title)
                     .font(.headline)
@@ -571,109 +429,7 @@ private struct LibraryCard: View {
                         .lineLimit(1)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(cardPadding)
-        .frame(width: width, alignment: .topLeading)
-        .background(cardBackground)
-        .overlay(cardBorder)
-    }
-
-    private var coverContainer: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: coverCornerRadius)
-                .fill(Color.secondary.opacity(0.08))
-            coverView
-        }
-        .frame(width: coverWidth)
-        .aspectRatio(coverAspectRatio, contentMode: .fit)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .clipShape(RoundedRectangle(cornerRadius: coverCornerRadius))
-        .contentShape(RoundedRectangle(cornerRadius: coverCornerRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: coverCornerRadius)
-                .stroke(Color.white.opacity(isHovering ? 0.14 : 0), lineWidth: 1)
-        }
-    }
-    
-    @ViewBuilder
-    private var coverView: some View {
-        if let url = item.coverURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .scaleEffect(isHovering ? 1.035 : 1)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                        .clipped()
-                case .failure:
-                    placeholder
-                case .empty:
-                    ZStack {
-                        placeholder
-                        ProgressView()
-                    }
-                @unknown default:
-                    placeholder
-                }
-            }
-        } else {
-            placeholder
-        }
-    }
-    
-    private var placeholder: some View {
-        ZStack {
-            LinearGradient(
-                colors: [Color.accentColor.opacity(0.35), Color.accentColor.opacity(0.15)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            if let initial = item.title.first {
-                Text(String(initial))
-                    .font(.system(size: 44, weight: .bold))
-                    .foregroundColor(.white.opacity(0.85))
-            } else {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 32, weight: .medium))
-                    .foregroundColor(.white.opacity(0.85))
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var coverWidth: CGFloat {
-        max(width - (cardPadding * 2), 0)
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 18)
-            .fill(
-                LinearGradient(
-                    colors: isHovering
-                        ? [
-                            Color.white.opacity(0.18),
-                            Color.secondary.opacity(0.12)
-                        ]
-                        : [
-                            Color.secondary.opacity(0.08),
-                            Color.secondary.opacity(0.06)
-                        ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-    }
-
-    private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 18)
-            .stroke(
-                isHovering ? Color.white.opacity(0.22) : Color.secondary.opacity(0.1),
-                lineWidth: isHovering ? 1.2 : 1
-            )
     }
 }
 

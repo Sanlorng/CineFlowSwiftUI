@@ -32,7 +32,12 @@ struct SignatureMiddleware: ClientTransport {
         
         // 1. 获取动态参数
         let timestamp = String(Int(Date().timeIntervalSince1970))
-        let path = request.path?.lowercased() ?? ""// 根据要求，路径使用小写
+        let rawPath = request.path ?? ""
+        let path = rawPath
+            .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init)?
+            .lowercased() ?? ""
 
         // 2. 计算签名
         let signature = calculateSignature(

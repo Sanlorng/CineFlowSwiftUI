@@ -58,3 +58,51 @@ extension Operations.HomepageGetHomepage.Output: UndocumentedCase {
         return statusCode
     }
 }
+
+extension Operations.BangumiGetSeasonBangumiOfAnime.Output.Ok: SuccessfulResponse {}
+
+extension Operations.BangumiGetSeasonBangumiOfAnime.Output.Ok.Body: SuccessResponseBody {
+    public var model: Components.Schemas.BangumiListResponse? {
+        return try? self.json
+    }
+}
+
+extension Operations.BangumiGetSeasonBangumiOfAnime.Output: SuccessExtractable {
+    public var successModel: Components.Schemas.BangumiListResponse? {
+        guard case .ok(let response) = self else {
+            return nil
+        }
+        return response.body.model
+    }
+}
+
+extension Operations.BangumiGetSeasonBangumiOfAnime.Output: UndocumentedCase {
+    var statusCode: Int {
+        guard case .undocumented(let statusCode, _) = self else { return -1 }
+        return statusCode
+    }
+}
+
+extension Operations.SearchSearchAnime.Output.Ok: SuccessfulResponse {}
+
+extension Operations.SearchSearchAnime.Output.Ok.Body: SuccessResponseBody {
+    public var model: Components.Schemas.SearchAnimeResponse? {
+        return try? self.json
+    }
+}
+
+extension Operations.SearchSearchAnime.Output: SuccessExtractable {
+    public var successModel: Components.Schemas.SearchAnimeResponse? {
+        guard case .ok(let response) = self else {
+            return nil
+        }
+        return response.body.model
+    }
+}
+
+extension Operations.SearchSearchAnime.Output: UndocumentedCase {
+    var statusCode: Int {
+        guard case .undocumented(let statusCode, _) = self else { return -1 }
+        return statusCode
+    }
+}
