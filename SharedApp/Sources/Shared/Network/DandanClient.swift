@@ -14,6 +14,9 @@ typealias DandanClient = DandanApi.Client
 func makeRawDandanClient() throws -> DandanClient {
     DandanClient(
         serverURL: try Servers.Server1.url(),
+        configuration: .init(
+            dateTranscoder: LenientRFC3339Transcoder()
+        ),
         transport: SignatureMiddleware(
             appId: Secrets.dandanAppId,
             appSecret: Secrets.dandanAppSecret,
