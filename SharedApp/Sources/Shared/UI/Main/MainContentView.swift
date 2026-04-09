@@ -15,26 +15,36 @@ struct MainContentView: View {
     @State private var playerStore: StoreOf<PlayerPresenter>?
     
     var body: some View {
-        WithViewStore(libraryStore, observe: \.requestedPlayerState) { viewStore in
-            TabView(selection: $selectedTab) {
-                Tab("Home", systemImage: "house", value: .Home) {
-                    HomeContentView(store: homeStore)
+        WithViewStore(homeStore, observe: \.requestedPlayerState) { homeViewStore in
+            WithViewStore(libraryStore, observe: \.requestedPlayerState) { libraryViewStore in
+                TabView(selection: $selectedTab) {
+                    Tab("Home", systemImage: "house", value: .Home) {
+                        HomeContentView(store: homeStore)
+                    }
+                    Tab("Library", systemImage: "rectangle.stack", value: .Library) {
+                        LibraryContentView(store: libraryStore)
+                    }
+                    Tab("Player", systemImage: "play.rectangle.on.rectangle", value: .Player) {
+                        PlayerContentView(store: playerStore)
+                    }
                 }
-                Tab("Library", systemImage: "rectangle.stack", value: .Library) {
-                    LibraryContentView(store: libraryStore)
+                .tabViewStyle(.automatic)
+                .onChange(of: homeViewStore.state) { _, requestedPlayerState in
+                    guard let requestedPlayerState else { return }
+                    playerStore = Store(initialState: requestedPlayerState) {
+                        PlayerPresenter()
+                    }
+                    selectedTab = .Player
+                    homeViewStore.send(.playbackRequestHandled)
                 }
-                Tab("Player", systemImage: "play.rectangle.on.rectangle", value: .Player) {
-                    PlayerContentView(store: playerStore)
+                .onChange(of: libraryViewStore.state) { _, requestedPlayerState in
+                    guard let requestedPlayerState else { return }
+                    playerStore = Store(initialState: requestedPlayerState) {
+                        PlayerPresenter()
+                    }
+                    selectedTab = .Player
+                    libraryViewStore.send(.playbackRequestHandled)
                 }
-            }
-            .tabViewStyle(.automatic)
-            .onChange(of: viewStore.state) { _, requestedPlayerState in
-                guard let requestedPlayerState else { return }
-                playerStore = Store(initialState: requestedPlayerState) {
-                    PlayerPresenter()
-                }
-                selectedTab = .Player
-                viewStore.send(.playbackRequestHandled)
             }
         }
     }

@@ -19,46 +19,58 @@ struct HomeContentView: View {
     ]
 
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    bannerSection(viewStore)
-                    quickStatusSection(viewStore)
+        NavigationStackStore(
+            store.scope(state: \.path, action: \.path)
+        ) {
+            WithViewStore(store, observe: { $0 }) { viewStore in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        bannerSection(viewStore)
+                        quickStatusSection(viewStore)
 
-                    if shouldShowSearchSection(viewStore) {
-                        homeSearchSection(viewStore)
+                        if shouldShowSearchSection(viewStore) {
+                            homeSearchSection(viewStore)
+                        }
+
+                        seasonScheduleSection(viewStore)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 20)
+                }
+                .navigationTitle("首页")
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        AdaptiveToolbarSearchField(
+                            query: Binding(
+                                get: { viewStore.homeSearchQuery },
+                                set: { viewStore.send(.setHomeSearchQuery($0)) }
+                            ),
+                            placeholder: "搜索番剧",
+                            helpText: "使用弹弹 API 搜索番剧"
+                        )
                     }
 
-                    seasonScheduleSection(viewStore)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
-            }
-            .navigationTitle("首页")
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    AdaptiveToolbarSearchField(
-                        query: Binding(
-                            get: { viewStore.homeSearchQuery },
-                            set: { viewStore.send(.setHomeSearchQuery($0)) }
-                        ),
-                        placeholder: "搜索番剧",
-                        helpText: "使用弹弹 API 搜索番剧"
-                    )
-                }
-
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        viewStore.send(.refresh)
-                    } label: {
-                        Label("刷新首页", systemImage: "arrow.clockwise")
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            viewStore.send(.refresh)
+                        } label: {
+                            Label("刷新首页", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(viewStore.isLoadingHomepage || viewStore.isLoadingSeason)
                     }
-                    .disabled(viewStore.isLoadingHomepage || viewStore.isLoadingSeason)
+                }
+                .onAppear {
+                    viewStore.send(.onAppear)
                 }
             }
-            .onAppear {
-                viewStore.send(.onAppear)
-            }
+        } destination: { destination in
+            IfLetStore(
+                destination.scope(
+                    state: /HomePresenter.Path.State.bangumiDetail,
+                    action: { .bangumiDetail($0) }
+                ),
+                then: HomeBangumiDetailView.init(store:)
+            )
         }
     }
 
@@ -119,21 +131,31 @@ struct HomeContentView: View {
 
     @ViewBuilder
     private func quickStatusCards(_ viewStore: ViewStore<HomePresenter.State, HomePresenter.Action>) -> some View {
+        let emptyStateText = quickStatusEmptyStateText(viewStore.quickStatusErrorMessage)
+
         Group {
             quickStatusCard(
                 title: "未看番剧",
-                subtitle: "首页 API 支持返回未看番剧，但当前 API key 不具备用户相关权限。",
+                subtitle: "来自默认远程媒体库的最近更新，只显示仍有未看集数的条目。",
                 icon: "clock.badge.exclamationmark",
                 accent: Color.orange,
-                items: viewStore.unwatchedItems
+                items: viewStore.unwatchedItems,
+                emptyStateText: emptyStateText ?? "暂无未看更新",
+                onItemTap: { item in
+                    viewStore.send(.showBangumiDetail(item.detailSummary))
+                }
             )
 
             quickStatusCard(
                 title: "继续播放",
-                subtitle: "后续会接本地数据库和最终播放器抽象，这里暂时不接数据。",
+                subtitle: "来自默认远程媒体库的最近播放记录，点击后按 Library 相同逻辑进入播放。",
                 icon: "play.circle",
                 accent: Color.blue,
-                items: []
+                items: viewStore.continueWatchingItems,
+                emptyStateText: emptyStateText ?? "暂无最近播放",
+                onItemTap: { item in
+                    viewStore.send(.showBangumiDetail(item.detailSummary))
+                }
             )
         }
     }
@@ -159,7 +181,12 @@ struct HomeContentView: View {
             } else {
                 LazyVGrid(columns: scheduleColumns, spacing: 16) {
                     ForEach(viewStore.homeSearchResults) { item in
-                        SearchResultCard(item: item)
+                        Button {
+                            viewStore.send(.showBangumiDetail(item.detailSummary))
+                        } label: {
+                            SearchResultCard(item: item)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -223,7 +250,12 @@ struct HomeContentView: View {
             } else {
                 LazyVGrid(columns: scheduleColumns, spacing: 16) {
                     ForEach(viewStore.filteredSeasonItems) { item in
-                        SeasonBangumiCard(item: item)
+                        Button {
+                            viewStore.send(.showBangumiDetail(item.detailSummary))
+                        } label: {
+                            SeasonBangumiCard(item: item)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -265,7 +297,9 @@ struct HomeContentView: View {
         subtitle: String,
         icon: String,
         accent: Color,
-        items: [HomePresenter.State.BangumiItem]
+        items: [HomePresenter.State.QuickStatusItem],
+        emptyStateText: String,
+        onItemTap: @escaping (HomePresenter.State.QuickStatusItem) -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
@@ -289,7 +323,7 @@ struct HomeContentView: View {
             }
 
             if items.isEmpty {
-                Text("暂不可用")
+                Text(emptyStateText)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
@@ -301,19 +335,8 @@ struct HomeContentView: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(items.prefix(3)) { item in
-                        HStack(spacing: 10) {
-                            HomePosterThumbnail(url: item.imageURL, title: item.title)
-                                .frame(width: 42, height: 60)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title)
-                                    .font(.subheadline.weight(.medium))
-                                    .lineLimit(1)
-                                Text(item.searchKeyword ?? "有未观看更新")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 0)
+                        QuickStatusRow(item: item) {
+                            onItemTap(item)
                         }
                     }
                 }
@@ -559,14 +582,23 @@ struct HomeContentView: View {
         return "\(viewStore.selectedScheduleDay.title) 暂无番剧。"
     }
 
+    private func quickStatusEmptyStateText(_ errorMessage: String?) -> String? {
+        if let errorMessage, !errorMessage.isEmpty {
+            return errorMessage
+        }
+        return nil
+    }
+
     private var panelBackground: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
             .fill(.ultraThinMaterial)
+            .allowsHitTesting(false)
     }
 
     private var panelBorder: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
             .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            .allowsHitTesting(false)
     }
 }
 
@@ -609,6 +641,57 @@ private struct HomePosterThumbnail: View {
             Text(String(title.prefix(1)))
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(.white.opacity(0.85))
+        }
+    }
+}
+
+private struct QuickStatusRow: View {
+    let item: HomePresenter.State.QuickStatusItem
+    let onTap: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                HomePosterThumbnail(url: item.imageURL, title: item.title)
+                    .frame(width: 42, height: 60)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+
+                    Text(item.secondaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isHovering ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
+                    .opacity(isHovering ? 1 : 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isHovering ? Color.white.opacity(0.14) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isHovering ? Color.white.opacity(0.16) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .scaleEffect(isHovering ? 1.01 : 1)
+            .animation(.easeInOut(duration: 0.16), value: isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
         }
     }
 }

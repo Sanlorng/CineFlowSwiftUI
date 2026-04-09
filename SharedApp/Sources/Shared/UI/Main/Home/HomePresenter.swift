@@ -9,6 +9,10 @@ import Foundation
 import ComposableArchitecture
 import DandanApi
 import DependenciesMacro
+import RemoteMediaLibrary
+
+private typealias DandanSchemas = DandanApi.Components.Schemas
+private typealias RemoteLibrarySchemas = RemoteMediaLibrary.Components.Schemas
 
 @Reducer
 struct HomePresenter {
@@ -44,6 +48,30 @@ struct HomePresenter {
 
             var id: String {
                 bangumiId ?? "anime-\(animeId)"
+            }
+        }
+
+        struct QuickStatusItem: Equatable, Identifiable {
+            let animeId: Int
+            let title: String
+            let imageURL: URL?
+            let secondaryText: String
+            let rating: Double?
+
+            var id: String {
+                "quick-\(animeId)"
+            }
+
+            var detailSummary: HomeBangumiDetailPresenter.State.Summary {
+                .init(
+                    animeId: animeId,
+                    bangumiId: nil,
+                    title: title,
+                    imageURL: imageURL,
+                    typeDescription: nil,
+                    rating: rating,
+                    isFavorited: false
+                )
             }
         }
 
@@ -95,7 +123,8 @@ struct HomePresenter {
         }
 
         var banners: [Banner] = []
-        var unwatchedItems: [BangumiItem] = []
+        var unwatchedItems: [QuickStatusItem] = []
+        var continueWatchingItems: [QuickStatusItem] = []
         var seasons: [Season] = []
         var selectedSeasonID: Season.ID?
         var seasonItems: [BangumiItem] = []
@@ -103,6 +132,8 @@ struct HomePresenter {
         var seasonFilterQuery = ""
         var homeSearchQuery = ""
         var homeSearchResults: [SearchResult] = []
+        var path = StackState<Path.State>()
+        var requestedPlayerState: PlayerPresenter.State?
 
         var isLoadingHomepage = false
         var isLoadingSeason = false
@@ -112,6 +143,7 @@ struct HomePresenter {
         var homepageErrorMessage: String?
         var seasonErrorMessage: String?
         var searchErrorMessage: String?
+        var quickStatusErrorMessage: String?
 
         var selectedSeason: Season? {
             guard let selectedSeasonID else { return nil }
@@ -154,62 +186,152 @@ struct HomePresenter {
 
     enum Action {
         case onAppear
+        case loadCached
         case refresh
-        case homepageResponse(TaskResult<HomepagePayload>)
+        case homepageResponse(DandanCacheMode, TaskResult<HomepagePayload>)
         case selectedSeasonChanged(State.Season.ID)
         case selectedScheduleDayChanged(State.ScheduleDay)
         case setSeasonFilterQuery(String)
-        case loadSeason(State.Season)
+        case loadSeason(State.Season, DandanCacheMode)
         case seasonResponse(TaskResult<[State.BangumiItem]>)
         case setHomeSearchQuery(String)
         case performSearch(String)
         case searchResponse(String, TaskResult<[State.SearchResult]>)
+        case remoteHighlightsResponse(TaskResult<RemoteHighlightsPayload>)
+        case showBangumiDetail(HomeBangumiDetailPresenter.State.Summary)
+        case playbackRequestHandled
+        case path(StackAction<Path.State, Path.Action>)
     }
 
-    @Dependency(\.dandanClient) var dandanClient
+    @Dependency(\.dandanCachedService) var dandanService
     @Dependency(\.continuousClock) var clock
+    @Dependency(\.remoteLibraryConfigurationOperation) var configurationOperation
+    @Dependency(\.remoteMediaLibraryClient) var remoteClient
 
     private enum CancelID {
         case homepage
         case season
         case search
+        case remoteHighlights
+    }
+
+    @Reducer
+    struct Path {
+        enum State: Equatable {
+            case bangumiDetail(HomeBangumiDetailPresenter.State)
+        }
+
+        enum Action {
+            case bangumiDetail(HomeBangumiDetailPresenter.Action)
+        }
+
+        var body: some ReducerOf<Self> {
+            Scope(state: /State.bangumiDetail, action: /Action.bangumiDetail) {
+                HomeBangumiDetailPresenter()
+            }
+        }
     }
 
     struct HomepagePayload {
         let banners: [State.Banner]
-        let unwatchedItems: [State.BangumiItem]
         let seasons: [State.Season]
+    }
+
+    struct RemoteHighlightsPayload {
+        let unwatchedItems: [State.QuickStatusItem]
+        let continueWatchingItems: [State.QuickStatusItem]
     }
 
     var body: some ReducerOf<Self> {
         Reduce { (state: inout State, action: Action) -> Effect<Action> in
             switch action {
+            case let .showBangumiDetail(summary):
+                state.path.append(.bangumiDetail(.init(summary: summary)))
+                return .none
+
+            case let .path(.element(id: _, action: .bangumiDetail(.delegate(.startPlayback(playerState))))):
+                state.requestedPlayerState = playerState
+                return .none
+
+            case .path:
+                return .none
+
+            case .playbackRequestHandled:
+                state.requestedPlayerState = nil
+                return .none
+
             case .onAppear:
                 guard !state.hasLoadedOnce else { return .none }
-                return .send(.refresh)
+                return .send(.loadCached)
+
+            case .loadCached:
+                state.isLoadingHomepage = true
+                state.homepageErrorMessage = nil
+                state.quickStatusErrorMessage = nil
+                return .merge(
+                    .run { [dandanService] send in
+                        await send(
+                            .homepageResponse(
+                                .standard,
+                                await TaskResult {
+                                    let response = try await dandanService.homepage(.standard)
+                                    return mapHomepagePayload(response)
+                                }
+                            )
+                        )
+                    }
+                    .cancellable(id: CancelID.homepage, cancelInFlight: true),
+                    .run { [configurationOperation, remoteClient] send in
+                        await send(
+                            .remoteHighlightsResponse(
+                                await TaskResult {
+                                    try await fetchRemoteHighlights(
+                                        configurationOperation: configurationOperation,
+                                        remoteClient: remoteClient
+                                    )
+                                }
+                            )
+                        )
+                    }
+                    .cancellable(id: CancelID.remoteHighlights, cancelInFlight: true)
+                )
 
             case .refresh:
                 state.isLoadingHomepage = true
                 state.homepageErrorMessage = nil
-                return .run { send in
-                    await send(
-                        .homepageResponse(
-                            await TaskResult {
-                                let response = try await dandanClient.fetch {
-                                    try await dandanClient.homepageGetHomepage()
+                state.quickStatusErrorMessage = nil
+                return .merge(
+                    .run { [dandanService] send in
+                        await send(
+                            .homepageResponse(
+                                .forceRefresh,
+                                await TaskResult {
+                                    let response = try await dandanService.homepage(.forceRefresh)
+                                    return mapHomepagePayload(response)
                                 }
-                                return mapHomepagePayload(response)
-                            }
+                            )
                         )
-                    )
-                }
-                .cancellable(id: CancelID.homepage, cancelInFlight: true)
+                    }
+                    .cancellable(id: CancelID.homepage, cancelInFlight: true),
+                    .run { [configurationOperation, remoteClient] send in
+                        await send(
+                            .remoteHighlightsResponse(
+                                await TaskResult {
+                                    try await fetchRemoteHighlights(
+                                        configurationOperation: configurationOperation,
+                                        remoteClient: remoteClient
+                                    )
+                                }
+                            )
+                        )
+                    }
+                    .cancellable(id: CancelID.remoteHighlights, cancelInFlight: true)
+                )
 
-            case let .homepageResponse(.success(payload)):
+            case let .homepageResponse(mode, .success(payload)):
                 state.isLoadingHomepage = false
                 state.hasLoadedOnce = true
                 state.banners = payload.banners
-                state.unwatchedItems = payload.unwatchedItems
                 state.seasons = payload.seasons
                 state.homepageErrorMessage = nil
 
@@ -223,11 +345,23 @@ struct HomePresenter {
                     state.seasonItems = []
                     return .none
                 }
-                return .send(.loadSeason(season))
+                return .send(.loadSeason(season, mode))
 
-            case let .homepageResponse(.failure(error)):
+            case let .homepageResponse(_, .failure(error)):
                 state.isLoadingHomepage = false
                 state.homepageErrorMessage = error.localizedDescription
+                return .none
+
+            case let .remoteHighlightsResponse(.success(payload)):
+                state.unwatchedItems = payload.unwatchedItems
+                state.continueWatchingItems = payload.continueWatchingItems
+                state.quickStatusErrorMessage = nil
+                return .none
+
+            case let .remoteHighlightsResponse(.failure(error)):
+                state.unwatchedItems = []
+                state.continueWatchingItems = []
+                state.quickStatusErrorMessage = error.localizedDescription
                 return .none
 
             case let .selectedSeasonChanged(id):
@@ -235,7 +369,7 @@ struct HomePresenter {
                     return .none
                 }
                 state.selectedSeasonID = id
-                return .send(.loadSeason(season))
+                return .send(.loadSeason(season, .standard))
 
             case let .selectedScheduleDayChanged(day):
                 state.selectedScheduleDay = day
@@ -245,21 +379,14 @@ struct HomePresenter {
                 state.seasonFilterQuery = query
                 return .none
 
-            case let .loadSeason(season):
+            case let .loadSeason(season, mode):
                 state.isLoadingSeason = true
                 state.seasonErrorMessage = nil
-                return .run { send in
+                return .run { [dandanService] send in
                     await send(
                         .seasonResponse(
                             await TaskResult {
-                                let response = try await dandanClient.fetch {
-                                    try await dandanClient.bangumiGetSeasonBangumiOfAnime(
-                                        .init(
-                                            path: .init(year: Int32(season.year), month: Int32(season.month)),
-                                            query: .init(filterAdultContent: false)
-                                        )
-                                    )
-                                }
+                                let response = try await dandanService.seasonBangumi(season.year, season.month, mode)
                                 return mapBangumiItems(response.value2.bangumiList)
                             }
                         )
@@ -299,16 +426,12 @@ struct HomePresenter {
 
             case let .performSearch(query):
                 guard !query.isEmpty else { return .none }
-                return .run { send in
+                return .run { [dandanService] send in
                     await send(
                         .searchResponse(
                             query,
                             await TaskResult {
-                                let response = try await dandanClient.fetch {
-                                    try await dandanClient.searchSearchAnime(
-                                        .init(query: .init(keyword: query, _type: nil))
-                                    )
-                                }
+                                let response = try await dandanService.searchAnime(query, .standard)
                                 return mapSearchResults(response.value2.animes)
                             }
                         )
@@ -331,18 +454,20 @@ struct HomePresenter {
                 return .none
             }
         }
+        .forEach(\.path, action: /Action.path) {
+            Path()
+        }
     }
 }
 
-private func mapHomepagePayload(_ response: Components.Schemas.HomepageResponseV2) -> HomePresenter.HomepagePayload {
+private func mapHomepagePayload(_ response: DandanSchemas.HomepageResponseV2) -> HomePresenter.HomepagePayload {
     .init(
         banners: mapBanners(response.value2.banners),
-        unwatchedItems: mapBangumiItems(response.value2.bangumiQueueIntroList),
         seasons: mapSeasons(response.value2.bangumiSeasons)
     )
 }
 
-private func mapBanners(_ banners: [Components.Schemas.BannerPageItem]?) -> [HomePresenter.State.Banner] {
+private func mapBanners(_ banners: [DandanSchemas.BannerPageItem]?) -> [HomePresenter.State.Banner] {
     (banners ?? []).compactMap { item -> HomePresenter.State.Banner? in
         guard let id = item.id else { return nil }
         return .init(
@@ -355,7 +480,7 @@ private func mapBanners(_ banners: [Components.Schemas.BannerPageItem]?) -> [Hom
     }
 }
 
-private func mapSeasons(_ seasons: [Components.Schemas.BangumiSeason]?) -> [HomePresenter.State.Season] {
+private func mapSeasons(_ seasons: [DandanSchemas.BangumiSeason]?) -> [HomePresenter.State.Season] {
     (seasons ?? [])
         .compactMap { season -> HomePresenter.State.Season? in
             guard let year = season.year, let month = season.month else { return nil }
@@ -375,7 +500,7 @@ private func mapSeasons(_ seasons: [Components.Schemas.BangumiSeason]?) -> [Home
         }
 }
 
-private func mapBangumiItems(_ items: [Components.Schemas.BangumiIntro]?) -> [HomePresenter.State.BangumiItem] {
+private func mapBangumiItems(_ items: [DandanSchemas.BangumiIntro]?) -> [HomePresenter.State.BangumiItem] {
     var mapped: [HomePresenter.State.BangumiItem] = []
     for item in items ?? [] {
         guard let animeId = item.animeId else { continue }
@@ -397,7 +522,7 @@ private func mapBangumiItems(_ items: [Components.Schemas.BangumiIntro]?) -> [Ho
     return mapped
 }
 
-private func mapBangumiItems(_ items: [Components.Schemas.BangumiQueueIntroV2]?) -> [HomePresenter.State.BangumiItem] {
+private func mapBangumiItems(_ items: [DandanSchemas.BangumiQueueIntroV2]?) -> [HomePresenter.State.BangumiItem] {
     (items ?? []).compactMap { item -> HomePresenter.State.BangumiItem? in
         guard let animeId = item.animeId else { return nil }
         return .init(
@@ -414,7 +539,7 @@ private func mapBangumiItems(_ items: [Components.Schemas.BangumiQueueIntroV2]?)
     }
 }
 
-private func mapSearchResults(_ items: [Components.Schemas.SearchAnimeDetails]?) -> [HomePresenter.State.SearchResult] {
+private func mapSearchResults(_ items: [DandanSchemas.SearchAnimeDetails]?) -> [HomePresenter.State.SearchResult] {
     (items ?? []).compactMap { item -> HomePresenter.State.SearchResult? in
         guard let animeId = item.animeId else { return nil }
         return .init(
@@ -482,4 +607,102 @@ private func normalizedSearchTerms(from query: String) -> [String] {
             $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .autoupdatingCurrent)
         }
         .filter { !$0.isEmpty }
+}
+
+private func fetchRemoteHighlights(
+    configurationOperation: RemoteLibraryConfigurationOperation,
+    remoteClient: RemoteMediaLibraryClient
+) async throws -> HomePresenter.RemoteHighlightsPayload {
+    let configurationRecord = try await MainActor.run {
+        try configurationOperation.fetchDefault()
+    }
+    guard let configurationRecord,
+          let baseURL = URL(string: configurationRecord.url) else {
+        return .init(unwatchedItems: [], continueWatchingItems: [])
+    }
+
+    let token = configurationRecord.apiKey
+    async let continueWatchingResponse = remoteClient.fetchBangumiList(baseURL, token, .lastPlay)
+    async let recentlyUpdatedResponse = remoteClient.fetchBangumiList(baseURL, token, .lastUpdate)
+
+    let continueWatching = try await continueWatchingResponse
+    let recentlyUpdated = try await recentlyUpdatedResponse
+
+    return .init(
+        unwatchedItems: mapQuickStatusItems(
+            recentlyUpdated.filter { $0.allEpisodesWatched != true },
+            baseURL: baseURL,
+            fallbackText: "最近更新"
+        ),
+        continueWatchingItems: mapQuickStatusItems(
+            continueWatching,
+            baseURL: baseURL,
+            fallbackText: "最近播放"
+        )
+    )
+}
+
+private func mapQuickStatusItems(
+    _ items: [RemoteLibrarySchemas.LibraryBangumiSummary],
+    baseURL: URL,
+    fallbackText: String
+) -> [HomePresenter.State.QuickStatusItem] {
+    items.compactMap { item in
+        guard let animeId = item.animeId else { return nil }
+        return .init(
+            animeId: Int(animeId),
+            title: item.title ?? "未知动画",
+            imageURL: makeRemoteCoverURL(baseURL: baseURL, path: item.cover),
+            secondaryText: quickStatusSecondaryText(item, fallbackText: fallbackText),
+            rating: item.rating.map(Double.init)
+        )
+    }
+}
+
+private func quickStatusSecondaryText(
+    _ item: RemoteLibrarySchemas.LibraryBangumiSummary,
+    fallbackText: String
+) -> String {
+    if let watched = item.episodeWatched,
+       let total = item.episodeTotal,
+       total > 0 {
+        return "进度 \(watched)/\(total)"
+    }
+    return fallbackText
+}
+
+private func makeRemoteCoverURL(baseURL: URL, path: String?) -> URL? {
+    guard let path, !path.isEmpty else { return nil }
+    if let url = URL(string: path), url.scheme != nil {
+        return url
+    }
+    return URL(string: path, relativeTo: baseURL)?.absoluteURL
+}
+
+extension HomePresenter.State.BangumiItem {
+    var detailSummary: HomeBangumiDetailPresenter.State.Summary {
+        .init(
+            animeId: animeId,
+            bangumiId: bangumiId,
+            title: title,
+            imageURL: imageURL,
+            typeDescription: nil,
+            rating: rating,
+            isFavorited: isFavorited
+        )
+    }
+}
+
+extension HomePresenter.State.SearchResult {
+    var detailSummary: HomeBangumiDetailPresenter.State.Summary {
+        .init(
+            animeId: animeId,
+            bangumiId: bangumiId,
+            title: title,
+            imageURL: imageURL,
+            typeDescription: typeDescription,
+            rating: rating,
+            isFavorited: isFavorited
+        )
+    }
 }
