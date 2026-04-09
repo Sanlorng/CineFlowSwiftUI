@@ -50,7 +50,6 @@ private struct PlayerContentMainView: View {
     @State private var isFullscreen = false
     @State private var usesFullscreenLayout = false
     @State private var isCursorHidden = false
-    @State private var autoPlayArmedItemID: PlayerPresenter.State.PlaylistItem.ID?
     @State private var lastPointerLocation: CGPoint?
     @State private var lastPointerMovementAt: ContinuousClock.Instant?
     @State private var isSubtitleRendererReady = false
@@ -139,7 +138,6 @@ private struct PlayerContentMainView: View {
                     subtitleFontFamily: effectiveSubtitleFontFamily,
                     allowAutoPlay: shouldAllowAutoPlay(
                         viewStore: viewStore,
-                        autoPlayArmedItemID: autoPlayArmedItemID,
                         isDanmakuVisible: isDanmakuVisible,
                         isSubtitleRendererReady: isSubtitleRendererReady,
                         playbackState: playerController.playbackState
@@ -391,14 +389,12 @@ private struct PlayerContentMainView: View {
         }
 #endif
         .onAppear {
-            armAutoPlay(for: viewStore.currentItem?.id)
             viewStore.send(.onAppear)
             viewStore.send(.setPlaybackError(nil))
             revealControls()
         }
         .onChange(of: viewStore.currentItem?.stream) { _, newStream in
             guard newStream != nil else { return }
-            armAutoPlay(for: viewStore.currentItem?.id)
             playerController.reset()
             cancelForwardShortcutTracking()
             dismissFullscreenShortcutHUD()
@@ -1776,7 +1772,7 @@ private struct PlayerContentMainView: View {
             revealControls()
             return
         }
-        autoPlayArmedItemID = nil
+        viewStore.send(.setCurrentEntryAutoPlay(false))
         playerController.togglePlayPause()
     }
 
@@ -1787,23 +1783,15 @@ private struct PlayerContentMainView: View {
         togglePlaybackIfReady(viewStore: viewStore)
     }
 
-    private func armAutoPlay(for itemID: PlayerPresenter.State.PlaylistItem.ID?) {
-        autoPlayArmedItemID = itemID
-    }
-
     private func playPreviousEpisode(
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
     ) {
-        let targetIndex = viewStore.currentIndex - 1
-        armAutoPlay(for: viewStore.playlist.indices.contains(targetIndex) ? viewStore.playlist[targetIndex].id : nil)
         viewStore.send(.playPrevious)
     }
 
     private func playNextEpisode(
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
     ) {
-        let targetIndex = viewStore.currentIndex + 1
-        armAutoPlay(for: viewStore.playlist.indices.contains(targetIndex) ? viewStore.playlist[targetIndex].id : nil)
         viewStore.send(.playNext)
     }
 
@@ -1811,7 +1799,6 @@ private struct PlayerContentMainView: View {
         _ itemID: PlayerPresenter.State.PlaylistItem.ID,
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
     ) {
-        armAutoPlay(for: itemID)
         viewStore.send(.playItem(itemID))
     }
 
@@ -2321,12 +2308,11 @@ private func effectiveEmbeddedSubtitleTrackID(
 @MainActor
 private func shouldAllowAutoPlay(
     viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
-    autoPlayArmedItemID: PlayerPresenter.State.PlaylistItem.ID?,
     isDanmakuVisible: Bool,
     isSubtitleRendererReady: Bool,
     playbackState: PlayerPlaybackState
 ) -> Bool {
-    guard autoPlayArmedItemID == viewStore.currentItem?.id else {
+    guard viewStore.shouldAutoPlayCurrentEntry else {
         return false
     }
     if shouldBlockPlaybackStartUntilDanmakuLoads(

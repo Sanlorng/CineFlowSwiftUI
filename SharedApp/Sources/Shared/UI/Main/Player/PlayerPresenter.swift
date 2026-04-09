@@ -93,6 +93,7 @@ struct PlayerPresenter {
         var currentPlaybackTime: TimeInterval = 0
         var loadedEmbeddedSubtitleWindow: ClosedRange<TimeInterval>?
         var inFlightEmbeddedSubtitleWindowRequest: EmbeddedSubtitleWindowRequest?
+        var shouldAutoPlayCurrentEntry = true
         
         init(
             configuration: LibraryPresenter.State.Configuration,
@@ -151,6 +152,7 @@ struct PlayerPresenter {
         case fileSelected(Components.Schemas.LibraryBangumiMatchedFile)
         case streamContextResolved(Components.Schemas.LibraryBangumiMatchedFile, RemoteMediaLibraryClient.StreamContext)
         case setPlaybackError(String?)
+        case setCurrentEntryAutoPlay(Bool)
         case delegate(DelegateAction)
     }
     
@@ -167,6 +169,7 @@ struct PlayerPresenter {
                     return .none
                 }
                 state.currentIndex = index
+                state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
                 
@@ -174,6 +177,7 @@ struct PlayerPresenter {
                 guard !state.playlist.isEmpty else { return .none }
                 guard state.currentIndex + 1 < state.playlist.count else { return .none }
                 state.currentIndex += 1
+                state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
                 
@@ -181,13 +185,18 @@ struct PlayerPresenter {
                 guard !state.playlist.isEmpty else { return .none }
                 guard state.currentIndex > 0 else { return .none }
                 state.currentIndex -= 1
+                state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
                 
             case let .updateCurrentIndex(index):
                 guard state.playlist.indices.contains(index) else { return .none }
-                if state.currentIndex == index { return .none }
+                if state.currentIndex == index {
+                    state.shouldAutoPlayCurrentEntry = true
+                    return .none
+                }
                 state.currentIndex = index
+                state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
 
@@ -497,6 +506,7 @@ struct PlayerPresenter {
                 }
                 state.playlist[state.currentIndex].file = file
                 state.playlist[state.currentIndex].stream = stream
+                state.shouldAutoPlayCurrentEntry = true
                 state.fileSelection = nil
                 state.playbackError = nil
                 state.selectedSubtitle = nil
@@ -509,6 +519,10 @@ struct PlayerPresenter {
 
             case let .setPlaybackError(message):
                 state.playbackError = message
+                return .none
+
+            case let .setCurrentEntryAutoPlay(enabled):
+                state.shouldAutoPlayCurrentEntry = enabled
                 return .none
                 
             case .delegate:
