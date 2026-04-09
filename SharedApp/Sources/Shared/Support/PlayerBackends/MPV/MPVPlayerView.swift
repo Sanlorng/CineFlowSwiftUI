@@ -357,6 +357,8 @@ final class MPVContainerViewController: PlatformViewController {
         _ = mpv_set_option_string(handle, "vo", "gpu-next")
         _ = mpv_set_option_string(handle, "gpu-api", "vulkan")
         _ = mpv_set_option_string(handle, "gpu-context", "moltenvk")
+        _ = mpv_set_option_string(handle, "video-sync", "display-resample")
+        _ = mpv_set_option_string(handle, "vulkan-swap-mode", "fifo")
         _ = mpv_set_option_string(handle, "video-rotate", "no")
     }
 

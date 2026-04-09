@@ -252,6 +252,8 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         openGLContext?.makeCurrentContext()
+        var swapInterval: GLint = 1
+        openGLContext?.setValues(&swapInterval, for: .swapInterval)
     }
 
     func setupMpv() {
@@ -271,6 +273,8 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         _ = mpv_set_option_string(handle, "sub-visibility", "no")
         _ = mpv_set_option_string(handle, "hwdec", "auto-safe")
         _ = mpv_set_option_string(handle, "vo", "libmpv")
+        _ = mpv_set_option_string(handle, "video-sync", "display-resample")
+        _ = mpv_set_option_string(handle, "opengl-swapinterval", "1")
         _ = mpv_set_option_string(handle, "ytdl", "no")
 
         stateChanged(.preparing)
