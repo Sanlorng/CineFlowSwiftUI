@@ -11,6 +11,7 @@
     },
     "license": {
       "name": "联系作者",
+      "url": "https://www.dandanplay.com"
     },
     "version": "v2"
   },
@@ -209,6 +210,51 @@
         }
       }
     },
+    "/api/v2/bangumi/{bangumiId}/comments": {
+      "get": {
+        "tags": [
+          "番剧"
+        ],
+        "summary": "获取指定番剧的短评论/吐槽列表",
+        "description": "### 接口说明\n此接口用于获取指定作品的用户短评论/吐槽列表。\n            \n### 参数说明\n`bangumiId`：支持传入数字形式的 animeId（如 18319）或字符串形式的 bangumiId（如 \"tmdb-movie-21832\"）。\n`page`：页码，从0开始。每页固定返回最新20条评论，最多支持到第9页。\n            \n### 所需权限\n此接口无需登录状态即可调用。",
+        "operationId": "Bangumi_GetBangumiComments",
+        "parameters": [
+          {
+            "name": "bangumiId",
+            "in": "path",
+            "required": true,
+            "description": "作品编号",
+            "schema": {
+              "type": "string"
+            },
+            "x-position": 1
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "页码，从0开始，最大为9",
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0
+            },
+            "x-position": 2
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BangumiCommentsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v2/bangumi/bgmtv/{bgmtvSubjectId}": {
       "get": {
         "tags": [
@@ -369,50 +415,6 @@
             "Bearer": []
           }
         ]
-      }
-    },
-    "/api/v2/extcomment": {
-      "get": {
-        "tags": [
-          "弹幕"
-        ],
-        "summary": "获取指定第三方url的弹幕",
-        "description": "### 接口说明\n此接口用于获取第三方弹幕站（如A/B/C站）上指定网址对应的弹幕。\n\n### 注意事项\n* 因为网址中可能包含特殊字符，`url`参数需要先进行UrlEncode编码\n* 获取到的弹幕并非最新，而是服务器上的缓存。所以此接口有可能获取到已被删除视频的弹幕。\n* 当网址不支持解析或缓存不存在时，将返回0条弹幕。\n            \n### 接口跳转说明\n在调用此接口时，将会跳转到弹幕加速服务上获取弹幕。返回的状态码为302，Location头部包含了跳转的地址。\n\n### 返回值\n 字段`p`的说明：格式为`出现时间,模式,颜色,用户ID`，各个值之间使用英文逗号分隔\n* 弹幕出现时间：格式为 0.00，单位为秒，精确到小数点后两位，例如12.34、445.6、789.01 \n* 弹幕模式：1-普通弹幕，4-底部弹幕，5-顶部弹幕\n* 颜色：32位整数表示的颜色，算法为 Rx256x256+Gx256+B，R/G/B的范围应是0-255\n* 用户ID：字符串形式表示的用户ID",
-        "operationId": "Comment_GetExtComment",
-        "parameters": [
-          {
-            "name": "url",
-            "in": "query",
-            "description": "第三方网站的页面地址",
-            "schema": {
-              "type": "string"
-            },
-            "x-position": 1
-          },
-          {
-            "name": "chConvert",
-            "in": "query",
-            "description": "中文简繁转换。0-不转换，1-转换为简体，2-转换为繁体。",
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 0
-            },
-            "x-position": 2
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "跳转到弹幕加速服务获取弹幕",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommentResponseV2"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/v2/favorite": {
@@ -952,135 +954,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/v2/related/{episodeId}": {
-      "get": {
-        "tags": [
-          "弹幕关联"
-        ],
-        "summary": "获取指定弹幕库关联的所有第三方弹幕源信息",
-        "description": "### 接口说明\n此接口用于在弹弹play官方弹幕库中弹幕不足的时候，获取此弹幕库对应的其他网站的播放地址，用以补充弹幕数量，提高观看体验。\n\n### 第三方弹幕源\n第三方弹幕源指的是除弹弹play自己外其他弹幕提供网站。常见的Acfun、BiliBili、Tucao等。\n应用可以使用 */extcomment* 接口获取来自第三方网站的弹幕，不必自行编写解析代码。",
-        "operationId": "Related_GetRelated",
-        "parameters": [
-          {
-            "name": "episodeId",
-            "in": "path",
-            "required": true,
-            "description": "弹幕库ID",
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "x-position": 1
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RelatedResponseV2"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "弹幕关联"
-        ],
-        "summary": "提交第三方关联弹幕源数据（投赞成票）",
-        "description": "### 接口说明\n此接口用于提交“弹幕库-第三方弹幕源”的关联数据，或是对已有的关联数据投出赞成票。\n\n### 权限需求\n此接口需要登录状态才可以调用。\n\n### 提交说明\n提交后并不意味着数据会被直接接受。\n当用户对某个“弹幕库-第三方弹幕源”的关联投出足够数量和比例的赞成票时，服务器才会接受对应的关联。",
-        "operationId": "Related_AddRelated",
-        "parameters": [
-          {
-            "name": "episodeId",
-            "in": "path",
-            "required": true,
-            "description": "弹幕库编号",
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "x-position": 1
-          }
-        ],
-        "requestBody": {
-          "x-name": "request",
-          "description": "关联数据",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UserAddRelatedRequest"
-              }
-            }
-          },
-          "required": true,
-          "x-position": 2
-        },
-        "responses": {
-          "200": {
-            "description": "返回投票结果",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserAddRelatedResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "未登录"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "弹幕关联"
-        ],
-        "summary": "向某个第三方弹幕源关联数据投反对票",
-        "description": "### 接口说明\n此接口用于对某个“弹幕库-第三方弹幕源”的关联数据投出反对票。\n\n### 权限需求\n此接口需要登录状态才可以调用。\n\n### 提交说明\n提交后并不意味着数据会被直接接受。\n当用户对某个已被服务器接受的“弹幕库-第三方弹幕源”的关联投出足够多比例和数量的反对票时，\n服务器才会从弹幕库中删除对应的第三方弹幕源关联。",
-        "operationId": "Related_DeleteRelated",
-        "parameters": [
-          {
-            "name": "episodeId",
-            "in": "path",
-            "required": true,
-            "description": "弹幕库编号",
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "x-position": 1
-          },
-          {
-            "name": "url",
-            "in": "query",
-            "description": "第三方弹幕源网站的网址",
-            "schema": {
-              "type": "string"
-            },
-            "x-position": 2
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "返回投票结果",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserDeleteRelatedResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "未登录"
           }
         }
       }
@@ -2231,6 +2104,87 @@
           }
         }
       },
+      "BangumiCommentsResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseBase"
+          },
+          {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "description": "当前页返回的评论数量",
+                "format": "int32"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "是否还有更多评论可以获取"
+              },
+              "comments": {
+                "type": "array",
+                "description": "评论列表",
+                "nullable": true,
+                "items": {
+                  "$ref": "#/components/schemas/BangumiComment"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "BangumiComment": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "评论编号",
+            "format": "int32"
+          },
+          "userId": {
+            "type": "integer",
+            "description": "弹弹play 用户ID。为 0 表示非本平台用户",
+            "format": "int32"
+          },
+          "externalUserId": {
+            "type": "string",
+            "description": "外部平台用户ID/主页标识",
+            "nullable": true
+          },
+          "userName": {
+            "type": "string",
+            "description": "用户名",
+            "nullable": true
+          },
+          "imageUrl": {
+            "type": "string",
+            "description": "用户头像地址",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "description": "评论来源，例如 Bangumi",
+            "nullable": true
+          },
+          "text": {
+            "type": "string",
+            "description": "评论内容",
+            "nullable": true
+          },
+          "rating": {
+            "type": "integer",
+            "description": "用户评分（0-10）",
+            "format": "int32"
+          },
+          "updatedTime": {
+            "type": "string",
+            "description": "记录更新时间",
+            "format": "date-time"
+          }
+        }
+      },
       "CommentResponseV2": {
         "type": "object",
         "description": "弹幕列表",
@@ -2598,6 +2552,11 @@
                 "description": "弹弹play用户名。如果用户使用第三方账号登录（如QQ微博）且没有关联弹弹play账号，此属性将为null",
                 "nullable": true
               },
+              "email": {
+                "type": "string",
+                "description": "用户邮箱地址",
+                "nullable": true
+              },
               "legacyTokenNumber": {
                 "type": "integer",
                 "description": "旧API中使用的数字形式的token，仅为兼容性设置，不要在新代码中使用此属性",
@@ -2659,6 +2618,15 @@
                 "type": "integer",
                 "description": "当前时间戳",
                 "format": "int64"
+              },
+              "linkedAccounts": {
+                "description": "已关联的第三方账号信息（如 bangumi.tv 账号）",
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LinkedAccounts"
+                  }
+                ]
               }
             }
           }
@@ -2730,6 +2698,52 @@
             "description": "弹弹play资源监视器权益过期时间（北京时间）",
             "format": "date-time",
             "nullable": true
+          }
+        }
+      },
+      "LinkedAccounts": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "bangumi": {
+            "description": "bangumi.tv 用户",
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkedAccountInfo"
+              }
+            ]
+          }
+        }
+      },
+      "LinkedAccountInfo": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "bangumi.tv 用户ID",
+            "nullable": true
+          },
+          "userName": {
+            "type": "string",
+            "description": "bangumi.tv 用户名",
+            "nullable": true
+          },
+          "display": {
+            "type": "string",
+            "description": "显示名称（昵称）",
+            "nullable": true
+          },
+          "avatar": {
+            "type": "string",
+            "description": "用户头像URL",
+            "nullable": true
+          },
+          "expires": {
+            "type": "string",
+            "description": "当前授权过期时间（北京时间）",
+            "format": "date-time"
           }
         }
       },
@@ -3200,86 +3214,6 @@
           }
         }
       },
-      "RelatedResponseV2": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ResponseBase"
-          },
-          {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "relateds": {
-                "type": "array",
-                "description": "关联的第三方弹幕列表",
-                "nullable": true,
-                "items": {
-                  "$ref": "#/components/schemas/RelatedItemV2"
-                }
-              }
-            }
-          }
-        ]
-      },
-      "RelatedItemV2": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "url": {
-            "type": "string",
-            "description": "第三方弹幕页面地址",
-            "nullable": true
-          },
-          "shift": {
-            "type": "number",
-            "description": "弹幕偏移时间。当此值为正数时表示弹幕应延迟多少秒出现，负数时表示弹幕应提前多少秒出现。",
-            "format": "double"
-          }
-        }
-      },
-      "UserAddRelatedResponse": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ResponseBase"
-          },
-          {
-            "type": "object",
-            "additionalProperties": true
-          }
-        ]
-      },
-      "UserAddRelatedRequest": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-          "episodeId": {
-            "type": "integer",
-            "description": "弹幕库编号",
-            "format": "int64"
-          },
-          "url": {
-            "type": "string",
-            "description": "关联的第三方网站播放地址",
-            "nullable": true
-          },
-          "shift": {
-            "type": "number",
-            "description": "弹幕偏移时间（正数为弹幕延迟几秒出现，负数为弹幕提前几秒出现）",
-            "format": "double"
-          }
-        }
-      },
-      "UserDeleteRelatedResponse": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ResponseBase"
-          },
-          {
-            "type": "object",
-            "additionalProperties": true
-          }
-        ]
-      },
       "SearchAnimeResponse": {
         "allOf": [
           {
@@ -3697,9 +3631,6 @@
     },
     {
       "name": "注册"
-    },
-    {
-      "name": "弹幕关联"
     },
     {
       "name": "搜索"
