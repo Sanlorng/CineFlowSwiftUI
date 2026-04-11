@@ -45,6 +45,11 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Trust package plugins and macros for CI
+        run: |
+          defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
+          defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+
       - name: Prepare local-only build inputs
         run: touch SharedApp/secrets.env
 
@@ -126,6 +131,11 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+
+      - name: Trust package plugins and macros for CI
+        run: |
+          defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
+          defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
       - name: Prepare local-only build inputs
         run: touch SharedApp/secrets.env
