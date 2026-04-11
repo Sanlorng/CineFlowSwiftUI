@@ -7,28 +7,52 @@
 
 import SwiftUI
 import Shared
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 @main
 struct CineFlowApp: App {
     var body: some Scene {
-        WindowGroup {
-            ZStack {
-                VisualEffectView()
-                    .ignoresSafeArea()
-                SharedContentView()
-            }
-            .frame(minWidth: 400, minHeight: 400)
-        }
-        .windowStyle(.hiddenTitleBar)
-
+        mainWindowScene
+#if os(macOS)
         Settings {
             SharedSettingsView()
         }
+#endif
+    }
+
+    private var mainWindowScene: some Scene {
+        WindowGroup {
+            ZStack {
+                HostBackgroundView()
+                    .ignoresSafeArea()
+                SharedContentView()
+            }
+#if os(macOS)
+            .frame(minWidth: 400, minHeight: 400)
+#endif
+        }
+#if os(macOS)
+        .windowStyle(.hiddenTitleBar)
+#endif
     }
 }
 
-struct VisualEffectView: NSViewRepresentable {
-    // 定义模糊的材质和混合模式
+private struct HostBackgroundView: View {
+    var body: some View {
+#if os(macOS)
+        VisualEffectView()
+#else
+        Color(uiColor: .systemBackground)
+#endif
+    }
+}
+
+#if os(macOS)
+private struct VisualEffectView: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .underWindowBackground
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
 
@@ -36,14 +60,13 @@ struct VisualEffectView: NSViewRepresentable {
         let visualEffectView = NSVisualEffectView()
         visualEffectView.material = material
         visualEffectView.blendingMode = blendingMode
-        // 设置为 active 状态，使其一直保持模糊效果
         visualEffectView.state = .active
         return visualEffectView
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        // 当 SwiftUI 视图更新时，同步更新 NSView 的属性
         nsView.material = material
         nsView.blendingMode = blendingMode
     }
 }
+#endif
