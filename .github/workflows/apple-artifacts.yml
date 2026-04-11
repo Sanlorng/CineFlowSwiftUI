@@ -31,6 +31,12 @@ jobs:
   build-macos:
     name: Build macOS app and DMG
     runs-on: macos-latest
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUILD_KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,18 +49,12 @@ jobs:
         run: touch SharedApp/secrets.env
 
       - name: Install Apple signing assets
-        if: ${{ secrets.APPLE_TEAM_ID != '' && secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
-        env:
-          BUILD_KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
-          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
+        if: ${{ env.APPLE_TEAM_ID != '' && env.MACOS_CERTIFICATE_P12_BASE64 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' }}
         run: bash .github/scripts/install-apple-signing-assets.sh
 
       - name: Archive macOS app
         env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          MACOS_SIGNING_ENABLED: ${{ secrets.APPLE_TEAM_ID != '' && secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+          MACOS_SIGNING_ENABLED: ${{ env.APPLE_TEAM_ID != '' && env.MACOS_CERTIFICATE_P12_BASE64 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' }}
         run: |
           set -euo pipefail
 
@@ -90,7 +90,7 @@ jobs:
 
       - name: Package macOS artifacts
         env:
-          MACOS_CODESIGN_IDENTITY: ${{ secrets.APPLE_TEAM_ID != '' && secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && 'Developer ID Application' || '' }}
+          MACOS_CODESIGN_IDENTITY: ${{ env.APPLE_TEAM_ID != '' && env.MACOS_CERTIFICATE_P12_BASE64 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' && 'Developer ID Application' || '' }}
         run: |
           set -euo pipefail
 
@@ -111,7 +111,12 @@ jobs:
   build-ios:
     name: Build iOS IPA
     runs-on: macos-latest
-    if: ${{ secrets.APPLE_TEAM_ID != '' && secrets.IOS_CERTIFICATE_P12_BASE64 != '' && secrets.IOS_CERTIFICATE_PASSWORD != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUILD_KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
+      IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -123,17 +128,25 @@ jobs:
       - name: Prepare local-only build inputs
         run: touch SharedApp/secrets.env
 
+      - name: Check iOS signing prerequisites
+        id: ios_prereqs
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${APPLE_TEAM_ID}" && -n "${IOS_CERTIFICATE_P12_BASE64}" && -n "${IOS_CERTIFICATE_PASSWORD}" && -n "${IOS_PROVISIONING_PROFILE_BASE64}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping iOS packaging because signing secrets are incomplete."
+          fi
+
       - name: Install Apple signing assets
-        env:
-          BUILD_KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
-          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        if: ${{ steps.ios_prereqs.outputs.enabled == 'true' }}
         run: bash .github/scripts/install-apple-signing-assets.sh
 
       - name: Generate export options
+        if: ${{ steps.ios_prereqs.outputs.enabled == 'true' }}
         env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           IOS_EXPORT_METHOD: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_export_method || 'ad-hoc' }}
           PRODUCT_BUNDLE_IDENTIFIER: ${{ env.PRODUCT_BUNDLE_IDENTIFIER }}
         run: |
@@ -142,8 +155,7 @@ jobs:
           bash .github/scripts/generate-export-options.sh "build/ExportOptions.plist"
 
       - name: Archive iOS app
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        if: ${{ steps.ios_prereqs.outputs.enabled == 'true' }}
         run: |
           set -euo pipefail
 
@@ -162,6 +174,7 @@ jobs:
           echo "IOS_ARCHIVE_PATH=${ARCHIVE_PATH}" >> "$GITHUB_ENV"
 
       - name: Export IPA
+        if: ${{ steps.ios_prereqs.outputs.enabled == 'true' }}
         run: |
           set -euo pipefail
 
@@ -175,6 +188,7 @@ jobs:
           mv "$IPA_PATH" "build/${APP_NAME}-iOS.ipa"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ steps.ios_prereqs.outputs.enabled == 'true' }}
         with:
           name: CineFlow-iOS
           path: build/CineFlow-iOS.ipa
