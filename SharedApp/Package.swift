@@ -22,7 +22,6 @@ let package = Package(
     dependencies: [
         .package(path: "../Packages/SubtitleRenderer"),
         .package(path: "../Packages/DanmakuRenderer"),
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.1"),
         .package(url: "https://github.com/apple/swift-openapi-generator", from: "1.10.3"),
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.11.0"),
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.2.0"),
@@ -107,18 +106,9 @@ let package = Package(
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture")
             ]
         ),
-        .executableTarget(
-            name: "SecretGenerator",
-            dependencies: [
-                .product(name: "ArgumentParser", package:"swift-argument-parser")
-            ]
-        ),
         .plugin(
             name: "BuildPlugin",
-            capability: .buildTool(),
-            dependencies: [
-                .target(name: "SecretGenerator")
-            ]
+            capability: .buildTool()
         ),
     ],
 )
