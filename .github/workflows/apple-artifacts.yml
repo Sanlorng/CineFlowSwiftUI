@@ -39,7 +39,7 @@ jobs:
       MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -66,6 +66,8 @@ jobs:
             -configuration "$BUILD_CONFIGURATION"
             -destination "generic/platform=macOS"
             -archivePath "$ARCHIVE_PATH"
+            -skipPackagePluginValidation
+            -skipMacroValidation
           )
 
           if [[ "${MACOS_SIGNING_ENABLED}" == "true" ]]; then
@@ -100,7 +102,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "build/${APP_NAME}-macOS-app.zip"
           bash .github/scripts/create-dmg.sh "$APP_PATH" "build/${APP_NAME}-macOS.dmg" "$APP_NAME"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: CineFlow-macOS
           path: |
@@ -119,7 +121,7 @@ jobs:
       IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -166,6 +168,8 @@ jobs:
             -configuration "$BUILD_CONFIGURATION" \
             -destination "generic/platform=iOS" \
             -archivePath "$ARCHIVE_PATH" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
             "DEVELOPMENT_TEAM=${APPLE_TEAM_ID}" \
             "CODE_SIGN_STYLE=Manual" \
             "CODE_SIGN_IDENTITY=Apple Distribution" \
@@ -187,7 +191,7 @@ jobs:
           IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 1 -name '*.ipa' -print -quit)"
           mv "$IPA_PATH" "build/${APP_NAME}-iOS.ipa"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: ${{ steps.ios_prereqs.outputs.enabled == 'true' }}
         with:
           name: CineFlow-iOS
