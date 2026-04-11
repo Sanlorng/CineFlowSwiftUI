@@ -2,7 +2,10 @@
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import CompilerPluginSupport
+import Foundation
 import PackageDescription
+
+let disableSecretsPlugin = ProcessInfo.processInfo.environment["CINEFLOW_DISABLE_SECRETS_PLUGIN"] == "1"
 
 let package = Package(
     name: "CineFlowPackage",
@@ -48,8 +51,8 @@ let package = Package(
             ],
             swiftSettings: [
                 .unsafeFlags(["-enable-testing"], .when(configuration: .debug))
-            ],
-            plugins: [
+            ] + (disableSecretsPlugin ? [.define("CINEFLOW_DISABLE_SECRETS_PLUGIN")] : []),
+            plugins: disableSecretsPlugin ? [] : [
                 .plugin(name: "BuildPlugin")
             ],
         ),

@@ -23,6 +23,7 @@ permissions:
 env:
   APP_NAME: CineFlow
   BUILD_CONFIGURATION: Release
+  CINEFLOW_DISABLE_SECRETS_PLUGIN: "1"
   PRODUCT_BUNDLE_IDENTIFIER: com.sanlorng.CineFlow
   PROJECT_PATH: CineFlow.xcodeproj
   SCHEME: CineFlow
