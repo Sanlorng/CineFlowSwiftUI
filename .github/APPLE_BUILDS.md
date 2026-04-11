@@ -30,6 +30,13 @@ This repository now includes a dedicated GitHub Actions workflow at `.github/wor
 
 If the macOS signing secrets are missing, the workflow still produces an unsigned `.app` zip and `.dmg`.
 
+## Optional secrets for homepage functionality
+
+- `DANDAN_APP_ID`: DanDanPlay app id written into `SharedApp/secrets.env` during CI.
+- `DANDAN_APP_SECRET`: DanDanPlay app secret written into `SharedApp/secrets.env` during CI.
+
+If these two secrets are omitted, CI still writes `SharedApp/secrets.env`, but with empty values. Packaging will continue and the homepage API integration will not work in the built app.
+
 ## Export method
 
 The manual workflow trigger exposes an `ios_export_method` input. Supported values:
