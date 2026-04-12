@@ -35,6 +35,7 @@ extension MPVPlayerView: PlatformViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: MPVContainerViewController, context: Context) {
+        context.coordinator.updateEventSink(eventSink)
         context.coordinator.updateView(view: uiViewController, source: source, controller: controller, options: options)
     }
 
@@ -47,6 +48,7 @@ extension MPVPlayerView: PlatformViewControllerRepresentable {
     }
 
     func updateNSViewController(_ nsViewController: MPVContainerViewController, context: Context) {
+        context.coordinator.updateEventSink(eventSink)
         context.coordinator.updateView(view: nsViewController, source: source, controller: controller, options: options)
     }
 
@@ -61,7 +63,7 @@ extension MPVPlayerView {
     final class Coordinator: NSObject, ObservableObject, @unchecked Sendable {
         typealias SurfaceView = MPVContainerViewController
         let capabilities = PlayerBackendKind.mpv.capabilities
-        private let eventSink: PlayerBackendEventSink
+        private var eventSink: PlayerBackendEventSink
 
         private var controller: MPVContainerViewController?
         private var currentSource: PlayerSource?
@@ -76,6 +78,11 @@ extension MPVPlayerView {
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
+        }
+
+        func updateEventSink(_ eventSink: PlayerBackendEventSink) {
+            self.eventSink = eventSink
+            controller?.updateEventSink(eventSink)
         }
 
         func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> MPVContainerViewController {
@@ -147,7 +154,7 @@ extension MPVPlayerView.Coordinator: PlayerBackendRenderer {
 
 @MainActor
 final class MPVContainerViewController: PlatformViewController {
-    private let eventSink: PlayerBackendEventSink
+    private var eventSink: PlayerBackendEventSink
     private let stateChanged: (PlayerPlaybackState) -> Void
 
     private let metalLayer = MPVMetalLayer()
@@ -176,6 +183,10 @@ final class MPVContainerViewController: PlatformViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func updateEventSink(_ eventSink: PlayerBackendEventSink) {
+        self.eventSink = eventSink
     }
 
 #if canImport(AppKit)

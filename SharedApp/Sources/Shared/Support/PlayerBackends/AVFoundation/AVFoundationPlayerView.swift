@@ -28,6 +28,7 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
     }
 
     func updateUIView(_ view: PlayerContainerView, context: Context) {
+        context.coordinator.updateEventSink(eventSink)
         context.coordinator.updateView(view: view, source: source, controller: controller, options: options)
     }
 
@@ -40,6 +41,7 @@ extension AVFoundationPlayerView: PlatformViewRepresentable {
     }
 
     func updateNSView(_ view: PlayerContainerView, context: Context) {
+        context.coordinator.updateEventSink(eventSink)
         context.coordinator.updateView(view: view, source: source, controller: controller, options: options)
     }
 
@@ -53,7 +55,7 @@ extension AVFoundationPlayerView {
     @MainActor
     final class Coordinator: NSObject, ObservableObject, @unchecked Sendable {
         let capabilities = PlayerBackendKind.avFoundation.capabilities
-        private let eventSink: PlayerBackendEventSink
+        private var eventSink: PlayerBackendEventSink
 
         private var state: PlayerPlaybackState = .idle {
             didSet {
@@ -77,6 +79,10 @@ extension AVFoundationPlayerView {
         private var currentPlaybackRate: Double = 1
 
         init(eventSink: PlayerBackendEventSink) {
+            self.eventSink = eventSink
+        }
+
+        func updateEventSink(_ eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
         }
 

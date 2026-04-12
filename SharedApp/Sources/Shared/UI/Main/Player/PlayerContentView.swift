@@ -250,13 +250,14 @@ private struct PlayerContentMainView: View {
                     options: options,
                 )
                     .onStateChanged { state in
+                        debugLogPlayerViewFlow(
+                            "onStateChanged state=\(describePlaybackState(state)) fileID=\(viewStore.currentFileID ?? "<none>") streamURL=\(stream.url.absoluteString)"
+                        )
                         switch state {
                         case .error(let message):
                             viewStore.send(.setPlaybackError(message ?? "播放失败。"))
                         case .playing:
-                            if let fileID = viewStore.currentFileID {
-                                viewStore.send(.playbackStarted(fileID))
-                            }
+                            viewStore.send(.playbackStarted)
                             viewStore.send(.setPlaybackError(nil))
                         case .completed:
                             viewStore.send(.setPlaybackError(nil))
@@ -265,6 +266,9 @@ private struct PlayerContentMainView: View {
                         }
                     }
                     .onFinish { error in
+                        debugLogPlayerViewFlow(
+                            "onFinish fileID=\(viewStore.currentFileID ?? "<none>") error=\(error?.localizedDescription ?? "<none>")"
+                        )
                         if let error {
                             viewStore.send(.setPlaybackError(error.localizedDescription))
                         } else {
@@ -272,15 +276,19 @@ private struct PlayerContentMainView: View {
                         }
                     }
                     .onTracksChanged { tracks in
-                        guard let fileID = viewStore.currentFileID else { return }
-                        viewStore.send(.playerTracksChanged(fileID, tracks))
+                        debugLogPlayerViewFlow(
+                            "onTracksChanged fileID=\(viewStore.currentFileID ?? "<none>") total=\(tracks.count) audio=\(tracks.filter { $0.kind == .audio }.count) subtitle=\(tracks.filter { $0.kind == .subtitle }.count) streamURL=\(stream.url.absoluteString)"
+                        )
+                        viewStore.send(.playerTracksChanged(tracks))
                     }
                     .onPlaybackTimeChanged { playbackTime in
-                        guard let fileID = viewStore.currentFileID else { return }
                         let second = max(Int(playbackTime.rounded(.down)), 0)
                         guard lastReportedSubtitleWindowPlaybackSecond != second else { return }
                         lastReportedSubtitleWindowPlaybackSecond = second
-                        viewStore.send(.playbackTimeUpdated(fileID, playbackTime))
+                        debugLogPlayerViewFlow(
+                            "onPlaybackTimeChanged fileID=\(viewStore.currentFileID ?? "<none>") playbackTime=\(playbackTime)"
+                        )
+                        viewStore.send(.playbackTimeUpdated(playbackTime))
                     }
                 Color.clear
                     .contentShape(Rectangle())
@@ -3092,6 +3100,33 @@ private func debugLogSubtitleRenderer(_ message: @autoclosure () -> String) {
 #if DEBUG
     print("[PlayerContentView][SubtitleRenderer] \(message())")
 #endif
+}
+
+private func debugLogPlayerViewFlow(_ message: @autoclosure () -> String) {
+#if DEBUG
+    print("[PlayerContentView][PlayerView] \(message())")
+#endif
+}
+
+private func describePlaybackState(_ state: PlayerPlaybackState) -> String {
+    switch state {
+    case .idle:
+        return "idle"
+    case .preparing:
+        return "preparing"
+    case .buffering:
+        return "buffering"
+    case .playing:
+        return "playing"
+    case .paused:
+        return "paused"
+    case .stopped:
+        return "stopped"
+    case .completed:
+        return "completed"
+    case let .error(message):
+        return "error(\(message ?? "<none>"))"
+    }
 }
 
 @ViewBuilder

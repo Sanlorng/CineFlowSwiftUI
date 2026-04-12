@@ -24,6 +24,7 @@ extension MPVMacOSPlayerView: NSViewControllerRepresentable {
     }
 
     func updateNSViewController(_ nsViewController: MPVMacOSViewController, context: Context) {
+        context.coordinator.updateEventSink(eventSink)
         context.coordinator.updateView(view: nsViewController, source: source, controller: controller, options: options)
     }
 
@@ -37,7 +38,7 @@ extension MPVMacOSPlayerView {
     final class Coordinator: NSObject, ObservableObject, @unchecked Sendable {
         typealias SurfaceView = MPVMacOSViewController
         let capabilities = PlayerBackendKind.mpv.capabilities
-        private let eventSink: PlayerBackendEventSink
+        private var eventSink: PlayerBackendEventSink
 
         private var controller: MPVMacOSViewController?
         private var currentSource: PlayerSource?
@@ -52,6 +53,11 @@ extension MPVMacOSPlayerView {
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
+        }
+
+        func updateEventSink(_ eventSink: PlayerBackendEventSink) {
+            self.eventSink = eventSink
+            controller?.updateEventSink(eventSink)
         }
 
         func makeView(source: PlayerSource, controller: PlayerController, options: PlayerLoadOptions) -> MPVMacOSViewController {
@@ -123,7 +129,7 @@ extension MPVMacOSPlayerView.Coordinator: PlayerBackendRenderer {
 
 @MainActor
 final class MPVMacOSViewController: NSViewController {
-    private let eventSink: PlayerBackendEventSink
+    private var eventSink: PlayerBackendEventSink
     private let stateChanged: (PlayerPlaybackState) -> Void
 
     private var glView: MPVMacOSOpenGLView?
@@ -177,6 +183,11 @@ final class MPVMacOSViewController: NSViewController {
         glView?.load(source: source, options: options)
     }
 
+    func updateEventSink(_ eventSink: PlayerBackendEventSink) {
+        self.eventSink = eventSink
+        glView?.updateEventSink(eventSink)
+    }
+
     func apply(options: PlayerLoadOptions) {
         currentOptions = options
         glView?.apply(options: options)
@@ -199,7 +210,7 @@ final class MPVMacOSViewController: NSViewController {
 }
 
 final class MPVMacOSOpenGLView: NSOpenGLView {
-    private let eventSink: PlayerBackendEventSink
+    private var eventSink: PlayerBackendEventSink
     private let stateChanged: (PlayerPlaybackState) -> Void
 
     nonisolated(unsafe) private var mpv: OpaquePointer?
@@ -229,6 +240,10 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func updateEventSink(_ eventSink: PlayerBackendEventSink) {
+        self.eventSink = eventSink
     }
 
     override var isOpaque: Bool {

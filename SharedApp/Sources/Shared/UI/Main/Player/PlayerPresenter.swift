@@ -64,6 +64,23 @@ struct PlayerPresenter {
             let trackID: SubtitleTrack.ID
             let window: ClosedRange<TimeInterval>
         }
+
+        struct SubtitleListRequest: Equatable {
+            let id: UUID
+        }
+
+        struct EmbeddedSubtitleTracksRequest: Equatable {
+            let id: UUID
+        }
+
+        struct SubtitleContentRequest: Equatable {
+            let id: UUID
+            let subtitleID: RemoteMediaLibraryClient.Subtitle.ID
+        }
+
+        struct DanmakuRequest: Equatable {
+            let id: UUID
+        }
         
         let configuration: LibraryPresenter.State.Configuration
         let seriesTitle: String?
@@ -94,6 +111,11 @@ struct PlayerPresenter {
         var loadedEmbeddedSubtitleWindow: ClosedRange<TimeInterval>?
         var inFlightEmbeddedSubtitleWindowRequest: EmbeddedSubtitleWindowRequest?
         var shouldAutoPlayCurrentEntry = true
+        var playbackContextID = UUID()
+        var subtitleListRequest: SubtitleListRequest?
+        var embeddedSubtitleTracksRequest: EmbeddedSubtitleTracksRequest?
+        var subtitleContentRequest: SubtitleContentRequest?
+        var danmakuRequest: DanmakuRequest?
         
         init(
             configuration: LibraryPresenter.State.Configuration,
@@ -132,19 +154,19 @@ struct PlayerPresenter {
         case playNext
         case playPrevious
         case updateCurrentIndex(Int)
-        case playbackStarted(String)
-        case playbackTimeUpdated(String, TimeInterval)
-        case playerTracksChanged(String, [PlayerTrack])
+        case playbackStarted
+        case playbackTimeUpdated(TimeInterval)
+        case playerTracksChanged([PlayerTrack])
         case audioTrackSelected(PlayerTrack.ID?)
-        case subtitleListResponse(String, TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
-        case embeddedSubtitleTracksResponse(String, TaskResult<[SubtitleTrack]>)
+        case subtitleListResponse(UUID, TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
+        case embeddedSubtitleTracksResponse(UUID, TaskResult<[SubtitleTrack]>)
         case subtitleSelected(RemoteMediaLibraryClient.Subtitle)
-        case subtitleContentResponse(String, RemoteMediaLibraryClient.Subtitle, TaskResult<State.LoadedSubtitle>)
+        case subtitleContentResponse(UUID, RemoteMediaLibraryClient.Subtitle, TaskResult<State.LoadedSubtitle>)
         case localSubtitleLoaded(fileName: String, content: String)
         case localSubtitleLoadFailed(String)
         case embeddedSubtitleSelected(SubtitleTrack.ID)
-        case embeddedSubtitleContentResponse(String, SubtitleTrack.ID, UUID, ClosedRange<TimeInterval>, TaskResult<State.LoadedSubtitle>)
-        case danmakuResponse(String, TaskResult<State.LoadedDanmaku>)
+        case embeddedSubtitleContentResponse(SubtitleTrack.ID, UUID, ClosedRange<TimeInterval>, TaskResult<State.LoadedSubtitle>)
+        case danmakuResponse(UUID, TaskResult<State.LoadedDanmaku>)
         case subtitleCleared
         case setSubtitlesSuppressed(Bool)
         case showFilePicker
@@ -168,6 +190,9 @@ struct PlayerPresenter {
                 guard let index = state.playlist.firstIndex(where: { $0.id == id }) else {
                     return .none
                 }
+                debugLogPlayerFlow(
+                    "playItem targetIndex=\(index) currentIndex=\(state.currentIndex) targetPlaylistItemID=\(id)"
+                )
                 state.currentIndex = index
                 state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
@@ -176,6 +201,9 @@ struct PlayerPresenter {
             case .playNext:
                 guard !state.playlist.isEmpty else { return .none }
                 guard state.currentIndex + 1 < state.playlist.count else { return .none }
+                debugLogPlayerFlow(
+                    "playNext fromIndex=\(state.currentIndex) toIndex=\(state.currentIndex + 1)"
+                )
                 state.currentIndex += 1
                 state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
@@ -184,6 +212,9 @@ struct PlayerPresenter {
             case .playPrevious:
                 guard !state.playlist.isEmpty else { return .none }
                 guard state.currentIndex > 0 else { return .none }
+                debugLogPlayerFlow(
+                    "playPrevious fromIndex=\(state.currentIndex) toIndex=\(state.currentIndex - 1)"
+                )
                 state.currentIndex -= 1
                 state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
@@ -193,24 +224,40 @@ struct PlayerPresenter {
                 guard state.playlist.indices.contains(index) else { return .none }
                 if state.currentIndex == index {
                     state.shouldAutoPlayCurrentEntry = true
+                    debugLogPlayerFlow(
+                        "updateCurrentIndex unchanged index=\(index) fileID=\(state.currentFileID ?? "<none>")"
+                    )
                     return .none
                 }
+                debugLogPlayerFlow(
+                    "updateCurrentIndex from=\(state.currentIndex) to=\(index) currentFileID=\(state.currentFileID ?? "<none>") nextFileID=\(state.playlist[index].file.id ?? "<none>")"
+                )
                 state.currentIndex = index
                 state.shouldAutoPlayCurrentEntry = true
                 state.playbackError = nil
                 return loadSubtitles(for: &state)
 
-            case let .playbackStarted(fileID):
-                guard state.currentFileID == fileID,
-                      !state.hasTriggeredPlaybackStartSync,
+            case .playbackStarted:
+                debugLogPlayerFlow(
+                    "playbackStarted currentIndex=\(state.currentIndex) fileID=\(state.currentFileID ?? "<none>") hasTriggeredSync=\(state.hasTriggeredPlaybackStartSync)"
+                )
+                guard !state.hasTriggeredPlaybackStartSync,
+                      let fileID = state.currentFileID,
                       let baseURL = state.configuration.baseURL else {
+                    debugLogPlayerFlow(
+                        "playbackStarted ignored fileID=\(state.currentFileID ?? "<none>") hasTriggeredSync=\(state.hasTriggeredPlaybackStartSync) hasBaseURL=\(state.configuration.baseURL != nil)"
+                    )
                     return .none
                 }
                 state.hasTriggeredPlaybackStartSync = true
                 let token = state.configuration.apiToken
+                debugLogPlayerFlow(
+                    "playbackStarted sync begin fileID=\(fileID) baseURL=\(baseURL.absoluteString)"
+                )
                 return .run { [remoteClient] _ in
                     do {
                         _ = try await remoteClient.makeStreamContext(baseURL, token, fileID)
+                        debugLogPlayerFlow("playbackStarted sync success fileID=\(fileID)")
                     } catch {
 #if DEBUG
                         print("[PlayerPresenter] Playback start sync failed for \(fileID): \(error)")
@@ -218,13 +265,14 @@ struct PlayerPresenter {
                     }
                 }
 
-            case let .playbackTimeUpdated(fileID, playbackTime):
-                guard state.currentFileID == fileID else { return .none }
+            case let .playbackTimeUpdated(playbackTime):
                 state.currentPlaybackTime = max(playbackTime, 0)
-                return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, fileID: fileID, force: false)
+                return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, force: false)
 
-            case let .playerTracksChanged(fileID, tracks):
-                guard state.currentFileID == fileID else { return .none }
+            case let .playerTracksChanged(tracks):
+                debugLogPlayerFlow(
+                    "playerTracksChanged fileID=\(state.currentFileID ?? "<none>") total=\(tracks.count) audio=\(tracks.filter { $0.kind == .audio }.count) subtitle=\(tracks.filter { $0.kind == .subtitle }.count)"
+                )
                 state.isLoadingEmbeddedSubtitles = false
                 let audioTracks = tracks.filter { $0.kind == .audio }
                 state.availableAudioTracks = audioTracks
@@ -244,7 +292,7 @@ struct PlayerPresenter {
                 )
                 if !backendSubtitleTracks.isEmpty {
                     debugLogEmbeddedSubtitlePlayback(
-                        "backend track list updated fileID=\(fileID) count=\(backendSubtitleTracks.count) tracks=[\(describeEmbeddedSubtitleTracks(backendSubtitleTracks))]"
+                        "backend track list updated fileID=\(state.currentFileID ?? "<none>") count=\(backendSubtitleTracks.count) tracks=[\(describeEmbeddedSubtitleTracks(backendSubtitleTracks))]"
                     )
                 }
                 if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
@@ -257,30 +305,57 @@ struct PlayerPresenter {
                 state.selectedAudioTrackID = trackID
                 return .none
                 
-            case let .subtitleListResponse(fileID, .success(subtitles)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .subtitleListResponse(requestID, .success(subtitles)):
+                guard state.subtitleListRequest?.id == requestID else {
+                    debugLogPlayerFlow(
+                        "subtitleListResponse ignored requestID=\(requestID) expected=\(state.subtitleListRequest?.id.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>")"
+                    )
+                    return .none
+                }
+                debugLogPlayerFlow(
+                    "subtitleListResponse success requestID=\(requestID) count=\(subtitles.count) fileID=\(state.currentFileID ?? "<none>")"
+                )
                 state.isLoadingSubtitles = false
+                state.subtitleListRequest = nil
                 state.availableSubtitles = subtitles
                 state.subtitleError = nil
                 return autoSelectSubtitleIfNeeded(for: &state)
                 
-            case let .subtitleListResponse(fileID, .failure(error)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .subtitleListResponse(requestID, .failure(error)):
+                guard state.subtitleListRequest?.id == requestID else {
+                    debugLogPlayerFlow(
+                        "subtitleListResponse failure ignored requestID=\(requestID) expected=\(state.subtitleListRequest?.id.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                    )
+                    return .none
+                }
+                debugLogPlayerFlow(
+                    "subtitleListResponse failure requestID=\(requestID) fileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                )
                 state.isLoadingSubtitles = false
+                state.subtitleListRequest = nil
                 state.availableSubtitles = []
                 state.subtitleError = error.localizedDescription
                 return autoSelectSubtitleIfNeeded(for: &state)
 
-            case let .embeddedSubtitleTracksResponse(fileID, .success(tracks)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .embeddedSubtitleTracksResponse(requestID, .success(tracks)):
+                guard state.embeddedSubtitleTracksRequest?.id == requestID else {
+                    debugLogPlayerFlow(
+                        "embeddedSubtitleTracksResponse ignored requestID=\(requestID) expected=\(state.embeddedSubtitleTracksRequest?.id.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>")"
+                    )
+                    return .none
+                }
+                debugLogPlayerFlow(
+                    "embeddedSubtitleTracksResponse success requestID=\(requestID) count=\(tracks.count) fileID=\(state.currentFileID ?? "<none>")"
+                )
                 state.isLoadingEmbeddedSubtitles = false
+                state.embeddedSubtitleTracksRequest = nil
                 state.availableEmbeddedSubtitles = mergeEmbeddedSubtitleTracks(
                     existing: state.availableEmbeddedSubtitles,
                     incoming: tracks,
                     preferIncoming: true
                 )
                 debugLogEmbeddedSubtitlePlayback(
-                    "extractor track list loaded fileID=\(fileID) count=\(tracks.count) tracks=[\(describeEmbeddedSubtitleTracks(tracks))]"
+                    "extractor track list loaded requestID=\(requestID) count=\(tracks.count) tracks=[\(describeEmbeddedSubtitleTracks(tracks))]"
                 )
                 if let selectedEmbeddedSubtitleTrackID = state.selectedEmbeddedSubtitleTrackID,
                    state.availableEmbeddedSubtitles.contains(where: { $0.id == selectedEmbeddedSubtitleTrackID }) == false {
@@ -289,12 +364,21 @@ struct PlayerPresenter {
                 state.subtitleError = nil
                 return autoSelectSubtitleIfNeeded(for: &state)
 
-            case let .embeddedSubtitleTracksResponse(fileID, .failure(error)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .embeddedSubtitleTracksResponse(requestID, .failure(error)):
+                guard state.embeddedSubtitleTracksRequest?.id == requestID else {
+                    debugLogPlayerFlow(
+                        "embeddedSubtitleTracksResponse failure ignored requestID=\(requestID) expected=\(state.embeddedSubtitleTracksRequest?.id.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                    )
+                    return .none
+                }
+                debugLogPlayerFlow(
+                    "embeddedSubtitleTracksResponse failure requestID=\(requestID) fileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                )
                 state.isLoadingEmbeddedSubtitles = false
+                state.embeddedSubtitleTracksRequest = nil
                 state.availableEmbeddedSubtitles = []
                 debugLogEmbeddedSubtitlePlayback(
-                    "extractor track list failed fileID=\(fileID) error=\(error.localizedDescription)"
+                    "extractor track list failed requestID=\(requestID) error=\(error.localizedDescription)"
                 )
                 state.subtitleError = error.localizedDescription
                 return autoSelectSubtitleIfNeeded(for: &state)
@@ -317,11 +401,16 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = true
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
+                let requestID = UUID()
+                state.subtitleContentRequest = .init(id: requestID, subtitleID: subtitle.id)
+                debugLogPlayerFlow(
+                    "subtitleSelected fileID=\(fileID) subtitleID=\(subtitle.id) requestID=\(requestID) fileName=\(subtitle.fileName)"
+                )
                 let token = state.configuration.apiToken
                 return .run { [remoteClient] send in
                     await send(
                         .subtitleContentResponse(
-                            fileID,
+                            requestID,
                             subtitle,
                             TaskResult {
                                 let content = try await remoteClient.fetchSubtitleFile(baseURL, token, fileID, subtitle.fileName)
@@ -331,23 +420,36 @@ struct PlayerPresenter {
                     )
                 }
 
-            case let .subtitleContentResponse(fileID, subtitle, .success(loadedSubtitle)):
-                guard state.currentFileID == fileID else { return .none }
-                state.isLoadingSelectedSubtitle = false
-                guard state.selectedSubtitle?.id == subtitle.id else {
+            case let .subtitleContentResponse(requestID, subtitle, .success(loadedSubtitle)):
+                guard state.subtitleContentRequest == .init(id: requestID, subtitleID: subtitle.id) else {
+                    debugLogPlayerFlow(
+                        "subtitleContentResponse success ignored requestID=\(requestID) subtitleID=\(subtitle.id) expectedRequest=\(state.subtitleContentRequest?.id.uuidString ?? "<none>") expectedSubtitleID=\(state.subtitleContentRequest?.subtitleID ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>")"
+                    )
                     return .none
                 }
+                debugLogPlayerFlow(
+                    "subtitleContentResponse success requestID=\(requestID) subtitleID=\(subtitle.id) fileID=\(state.currentFileID ?? "<none>") fileName=\(loadedSubtitle.fileName)"
+                )
+                state.isLoadingSelectedSubtitle = false
+                state.subtitleContentRequest = nil
                 state.subtitleError = nil
                 state.activeSubtitle = loadedSubtitle
                 return .none
 
-            case let .subtitleContentResponse(fileID, subtitle, .failure(error)):
-                guard state.currentFileID == fileID else { return .none }
-                state.isLoadingSelectedSubtitle = false
-                if state.selectedSubtitle?.id == subtitle.id {
-                    state.subtitleError = error.localizedDescription
-                    state.activeSubtitle = nil
+            case let .subtitleContentResponse(requestID, subtitle, .failure(error)):
+                guard state.subtitleContentRequest == .init(id: requestID, subtitleID: subtitle.id) else {
+                    debugLogPlayerFlow(
+                        "subtitleContentResponse failure ignored requestID=\(requestID) subtitleID=\(subtitle.id) expectedRequest=\(state.subtitleContentRequest?.id.uuidString ?? "<none>") expectedSubtitleID=\(state.subtitleContentRequest?.subtitleID ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                    )
+                    return .none
                 }
+                debugLogPlayerFlow(
+                    "subtitleContentResponse failure requestID=\(requestID) subtitleID=\(subtitle.id) fileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                )
+                state.isLoadingSelectedSubtitle = false
+                state.subtitleContentRequest = nil
+                state.subtitleError = error.localizedDescription
+                state.activeSubtitle = nil
                 return .none
 
             case let .localSubtitleLoaded(fileName, content):
@@ -358,6 +460,7 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = false
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
+                state.subtitleContentRequest = nil
                 do {
                     state.activeSubtitle = try makeLoadedSubtitle(rawText: content, fileName: fileName)
                 } catch {
@@ -385,6 +488,7 @@ struct PlayerPresenter {
                 state.activeSubtitle = nil
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
+                state.subtitleContentRequest = nil
                 let usesNativeEmbeddedSubtitleSelection =
                     PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks)
                     && selectedTrack?.backendTrackID != nil
@@ -400,49 +504,77 @@ struct PlayerPresenter {
                 debugLogEmbeddedSubtitlePlayback(
                     "embedded subtitle selected fileID=\(fileID) trackID=\(trackID) streamURL=\(currentItem.stream.url.absoluteString)"
                 )
-                return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, fileID: fileID, force: true)
+                return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, force: true)
 
-            case let .embeddedSubtitleContentResponse(fileID, trackID, requestID, window, .success(loadedSubtitle)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .embeddedSubtitleContentResponse(trackID, requestID, window, .success(loadedSubtitle)):
                 guard state.selectedEmbeddedSubtitleTrackID == trackID,
                       state.inFlightEmbeddedSubtitleWindowRequest?.requestID == requestID else {
+                    debugLogPlayerFlow(
+                        "embeddedSubtitleContentResponse success ignored requestID=\(requestID) trackID=\(trackID) selectedTrackID=\(state.selectedEmbeddedSubtitleTrackID ?? "<none>") expectedRequest=\(state.inFlightEmbeddedSubtitleWindowRequest?.requestID.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>")"
+                    )
                     return .none
                 }
+                debugLogPlayerFlow(
+                    "embeddedSubtitleContentResponse success requestID=\(requestID) trackID=\(trackID) fileID=\(state.currentFileID ?? "<none>") window=\(describeEmbeddedSubtitleWindow(window))"
+                )
                 state.isLoadingSelectedSubtitle = false
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
                 state.loadedEmbeddedSubtitleWindow = window
                 debugLogEmbeddedSubtitlePlayback(
-                    "embedded subtitle render attached fileID=\(fileID) trackID=\(trackID) window=\(describeEmbeddedSubtitleWindow(window)) fileName=\(loadedSubtitle.fileName)"
+                    "embedded subtitle render attached fileID=\(state.currentFileID ?? "<none>") trackID=\(trackID) window=\(describeEmbeddedSubtitleWindow(window)) fileName=\(loadedSubtitle.fileName)"
                 )
                 state.subtitleError = nil
                 state.activeSubtitle = loadedSubtitle
                 return .none
 
-            case let .embeddedSubtitleContentResponse(fileID, trackID, requestID, window, .failure(error)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .embeddedSubtitleContentResponse(trackID, requestID, window, .failure(error)):
                 guard state.selectedEmbeddedSubtitleTrackID == trackID,
                       state.inFlightEmbeddedSubtitleWindowRequest?.requestID == requestID else {
+                    debugLogPlayerFlow(
+                        "embeddedSubtitleContentResponse failure ignored requestID=\(requestID) trackID=\(trackID) selectedTrackID=\(state.selectedEmbeddedSubtitleTrackID ?? "<none>") expectedRequest=\(state.inFlightEmbeddedSubtitleWindowRequest?.requestID.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                    )
                     return .none
                 }
+                debugLogPlayerFlow(
+                    "embeddedSubtitleContentResponse failure requestID=\(requestID) trackID=\(trackID) fileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                )
                 state.isLoadingSelectedSubtitle = false
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
                 debugLogEmbeddedSubtitlePlayback(
-                    "embedded subtitle render failed fileID=\(fileID) trackID=\(trackID) window=\(describeEmbeddedSubtitleWindow(window)) error=\(error.localizedDescription)"
+                    "embedded subtitle render failed fileID=\(state.currentFileID ?? "<none>") trackID=\(trackID) window=\(describeEmbeddedSubtitleWindow(window)) error=\(error.localizedDescription)"
                 )
                 state.subtitleError = error.localizedDescription
                 state.activeSubtitle = nil
                 return .none
 
-            case let .danmakuResponse(fileID, .success(loadedDanmaku)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .danmakuResponse(requestID, .success(loadedDanmaku)):
+                guard state.danmakuRequest?.id == requestID else {
+                    debugLogPlayerFlow(
+                        "danmakuResponse success ignored requestID=\(requestID) expected=\(state.danmakuRequest?.id.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>")"
+                    )
+                    return .none
+                }
+                debugLogPlayerFlow(
+                    "danmakuResponse success requestID=\(requestID) fileID=\(state.currentFileID ?? "<none>")"
+                )
                 state.isLoadingDanmaku = false
+                state.danmakuRequest = nil
                 state.danmakuError = nil
                 state.activeDanmaku = loadedDanmaku
                 return .none
 
-            case let .danmakuResponse(fileID, .failure(error)):
-                guard state.currentFileID == fileID else { return .none }
+            case let .danmakuResponse(requestID, .failure(error)):
+                guard state.danmakuRequest?.id == requestID else {
+                    debugLogPlayerFlow(
+                        "danmakuResponse failure ignored requestID=\(requestID) expected=\(state.danmakuRequest?.id.uuidString ?? "<none>") currentFileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                    )
+                    return .none
+                }
+                debugLogPlayerFlow(
+                    "danmakuResponse failure requestID=\(requestID) fileID=\(state.currentFileID ?? "<none>") error=\(error.localizedDescription)"
+                )
                 state.isLoadingDanmaku = false
+                state.danmakuRequest = nil
                 state.danmakuError = error.localizedDescription
                 state.activeDanmaku = nil
                 return .none
@@ -456,6 +588,7 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = false
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
+                state.subtitleContentRequest = nil
                 return .none
 
             case let .setSubtitlesSuppressed(suppressed):
@@ -467,6 +600,7 @@ struct PlayerPresenter {
                     state.isLoadingSelectedSubtitle = false
                     state.loadedEmbeddedSubtitleWindow = nil
                     state.inFlightEmbeddedSubtitleWindowRequest = nil
+                    state.subtitleContentRequest = nil
                 }
                 state.subtitleError = nil
                 return .none
@@ -515,6 +649,7 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = false
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
+                state.subtitleContentRequest = nil
                 return loadSubtitles(for: &state)
 
             case let .setPlaybackError(message):
@@ -532,9 +667,19 @@ struct PlayerPresenter {
     }
     
     private func loadSubtitles(for state: inout State) -> Effect<Action> {
+        state.playbackContextID = UUID()
+        state.subtitleListRequest = nil
+        state.embeddedSubtitleTracksRequest = nil
+        state.subtitleContentRequest = nil
+        state.danmakuRequest = nil
+        debugLogPlayerFlow(
+            "loadSubtitles reset currentIndex=\(state.currentIndex) nextFileID=\(state.currentItem?.file.id ?? "<none>") playbackContextID=\(state.playbackContextID)"
+        )
+
         guard let currentItem = state.currentItem,
               let fileID = currentItem.file.id,
               !fileID.isEmpty else {
+            debugLogPlayerFlow("loadSubtitles aborted missing fileID currentIndex=\(state.currentIndex)")
             state.availableSubtitles = []
             state.availableEmbeddedSubtitles = []
             state.availableAudioTracks = []
@@ -579,11 +724,16 @@ struct PlayerPresenter {
 
         let subtitleListEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
+            let requestID = UUID()
+            state.subtitleListRequest = .init(id: requestID)
+            debugLogPlayerFlow(
+                "subtitleList request created requestID=\(requestID) fileID=\(fileID)"
+            )
             let token = state.configuration.apiToken
             subtitleListEffect = .run { [remoteClient] send in
                 await send(
                     .subtitleListResponse(
-                        fileID,
+                        requestID,
                         TaskResult {
                             try await remoteClient.fetchSubtitleInfo(baseURL, token, fileID)
                         }
@@ -596,11 +746,16 @@ struct PlayerPresenter {
 
         let danmakuEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
+            let requestID = UUID()
+            state.danmakuRequest = .init(id: requestID)
+            debugLogPlayerFlow(
+                "danmaku request created requestID=\(requestID) fileID=\(fileID)"
+            )
             let token = state.configuration.apiToken
             danmakuEffect = .run { [remoteClient] send in
                 await send(
                     .danmakuResponse(
-                        fileID,
+                        requestID,
                         TaskResult {
                             let xml = try await remoteClient.fetchDanmakuXML(baseURL, token, fileID)
                             return .init(document: try BilibiliDanmakuParser.parse(xml: xml))
@@ -617,6 +772,11 @@ struct PlayerPresenter {
             embeddedTracksEffect = .none
         } else {
             state.isLoadingEmbeddedSubtitles = true
+            let requestID = UUID()
+            state.embeddedSubtitleTracksRequest = .init(id: requestID)
+            debugLogPlayerFlow(
+                "embeddedSubtitleTracks request created requestID=\(requestID) fileID=\(fileID) streamURL=\(stream.url.absoluteString)"
+            )
             embeddedTracksEffect = .run { send in
                 let extractor = EmbeddedSubtitleExtractor()
                 debugLogEmbeddedSubtitlePlayback(
@@ -624,7 +784,7 @@ struct PlayerPresenter {
                 )
                 await send(
                     .embeddedSubtitleTracksResponse(
-                        fileID,
+                        requestID,
                         TaskResult {
                             try await extractor.availableTracks(for: stream.url, headers: stream.headers)
                         }
@@ -638,11 +798,9 @@ struct PlayerPresenter {
 
     private func refreshEmbeddedSubtitleWindowIfNeeded(
         for state: inout State,
-        fileID: String,
         force: Bool
     ) -> Effect<Action> {
         guard let currentItem = state.currentItem,
-              currentItem.file.id == fileID,
               let selectedTrackID = state.selectedEmbeddedSubtitleTrackID,
               let selectedTrack = state.availableEmbeddedSubtitles.first(where: { $0.id == selectedTrackID }),
               !state.areSubtitlesSuppressed,
@@ -681,16 +839,19 @@ struct PlayerPresenter {
             trackID: selectedTrackID,
             window: targetWindow
         )
+        debugLogPlayerFlow(
+            "embeddedSubtitleWindow request created requestID=\(requestID) fileID=\(currentItem.file.id ?? "<none>") trackID=\(selectedTrackID) window=\(describeEmbeddedSubtitleWindow(targetWindow))"
+        )
 
         let extractor = EmbeddedSubtitleExtractor()
         let stream = currentItem.stream
+        let fileID = currentItem.file.id ?? "<none>"
         debugLogEmbeddedSubtitlePlayback(
             "load embedded subtitle window start fileID=\(fileID) trackID=\(selectedTrackID) window=\(describeEmbeddedSubtitleWindow(targetWindow)) streamURL=\(stream.url.absoluteString)"
         )
         return .run { send in
             await send(
                 .embeddedSubtitleContentResponse(
-                    fileID,
                     selectedTrackID,
                     requestID,
                     targetWindow,
@@ -830,6 +991,12 @@ private func mergeEmbeddedSubtitleTracks(
 private func debugLogEmbeddedSubtitlePlayback(_ message: @autoclosure () -> String) {
 #if DEBUG
     print("[PlayerPresenter][EmbeddedSubtitle] \(message())")
+#endif
+}
+
+private func debugLogPlayerFlow(_ message: @autoclosure () -> String) {
+#if DEBUG
+    print("[PlayerPresenter][Flow] \(message())")
 #endif
 }
 
