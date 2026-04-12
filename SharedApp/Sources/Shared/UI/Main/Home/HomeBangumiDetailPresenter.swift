@@ -94,6 +94,7 @@ struct HomeBangumiDetailPresenter {
                 let title: String
                 let subtitle: String?
                 let url: URL
+                let imageURL: URL?
             }
 
             let title: String
@@ -658,7 +659,8 @@ private func mapOnlineDatabases(
             id: "online-\(title)-\(url.absoluteString)",
             title: title,
             subtitle: nil,
-            url: url
+            url: url,
+            imageURL: nil
         )
     }
 }
@@ -676,7 +678,8 @@ private func mapTrailers(
             id: "trailer-\(item.id ?? 0)-\(url.absoluteString)",
             title: title,
             subtitle: "预告片",
-            url: url
+            url: url,
+            imageURL: item.imageUrl.flatMap(URL.init(string:))
         )
     }
 }
