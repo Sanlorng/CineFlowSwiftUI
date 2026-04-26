@@ -210,6 +210,11 @@ final class MPVMacOSViewController: NSViewController {
 }
 
 final class MPVMacOSOpenGLView: NSOpenGLView {
+    private struct PendingLoad {
+        let source: PlayerSource
+        let options: PlayerLoadOptions
+    }
+
     private var eventSink: PlayerBackendEventSink
     private let stateChanged: (PlayerPlaybackState) -> Void
 
@@ -219,6 +224,8 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var currentSource: PlayerSource?
     private var currentOptions: PlayerLoadOptions?
     private var lastLoadedSource: PlayerSource?
+    private var pendingLoad: PendingLoad?
+    private var isStoppingForSourceChange = false
     private var isPaused = false
     private var isBuffering = false
     private var defaultFBO: GLint = -1
@@ -328,24 +335,21 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         currentOptions = options
         guard let mpv else { return }
 
-        prepareForSourceChange()
-        _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "auto-safe" : "no")
-        applyHTTPHeaders(source.headers)
-        applyAudioTrackSelection(options.selectedAudioTrackID)
-        applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
-        applySubtitleSettings(options)
-        applyPlaybackRate(currentPlaybackRate)
-        applyVolume(currentVolume)
-        stateChanged(.preparing)
+        let nextLoad = PendingLoad(source: source, options: options)
 
-        if !options.allowAutoPlay {
-            setPause(true)
+        if isStoppingForSourceChange {
+            pendingLoad = nextLoad
+            return
         }
-        runCommand("loadfile", args: [source.url.absoluteString, "replace"])
-        lastLoadedSource = source
-        if options.allowAutoPlay {
-            setPause(false)
+
+        if let lastLoadedSource, lastLoadedSource != source {
+            pendingLoad = nextLoad
+            releaseCurrentMediaResourcesForSourceChange()
+            return
         }
+
+        pendingLoad = nil
+        performLoad(nextLoad, using: mpv)
     }
 
     private func prepareForSourceChange() {
@@ -357,6 +361,10 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
 
     func apply(options: PlayerLoadOptions) {
         currentOptions = options
+        if isStoppingForSourceChange, let pendingLoad {
+            self.pendingLoad = .init(source: pendingLoad.source, options: options)
+            return
+        }
         applyAudioTrackSelection(options.selectedAudioTrackID)
         applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
         applySubtitleSettings(options)
@@ -407,8 +415,57 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                 self.mpv = nil
             }
         }
+        pendingLoad = nil
+        isStoppingForSourceChange = false
         lastLoadedSource = nil
         eventSink.onVideoPresentationSizeChanged?(nil)
+    }
+
+    private func performLoad(_ pendingLoad: PendingLoad, using mpv: OpaquePointer) {
+        let source = pendingLoad.source
+        let options = pendingLoad.options
+
+        prepareForSourceChange()
+        _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "auto-safe" : "no")
+        applyHTTPHeaders(source.headers)
+        applyAudioTrackSelection(options.selectedAudioTrackID)
+        applyEmbeddedSubtitleTrackSelection(options.selectedEmbeddedSubtitleTrackID)
+        applySubtitleSettings(options)
+        applyPlaybackRate(currentPlaybackRate)
+        applyVolume(currentVolume)
+        stateChanged(.preparing)
+
+        if !options.allowAutoPlay {
+            setPause(true)
+        }
+        runCommand("loadfile", args: [source.url.absoluteString, "replace"])
+        lastLoadedSource = source
+        if options.allowAutoPlay {
+            setPause(false)
+        }
+    }
+
+    private func releaseCurrentMediaResourcesForSourceChange() {
+        guard lastLoadedSource != nil, !isStoppingForSourceChange else { return }
+        isStoppingForSourceChange = true
+        prepareForSourceChange()
+        runCommand("stop", args: [])
+    }
+
+    @discardableResult
+    private func finishPendingLoadIfNeeded() -> Bool {
+        guard isStoppingForSourceChange else { return false }
+        isStoppingForSourceChange = false
+        lastLoadedSource = nil
+
+        guard let mpv, let pendingLoad else {
+            self.pendingLoad = nil
+            return false
+        }
+
+        self.pendingLoad = nil
+        performLoad(pendingLoad, using: mpv)
+        return true
     }
 
     private func observeProperties(handle: OpaquePointer) {
@@ -528,8 +585,9 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                         print("[MPV-GL] end-file reason=\(endFile.pointee.reason) playlistEntryID=\(endFile.pointee.playlist_entry_id)")
                     }
 #endif
-                    if shouldHandleCompletion {
-                        DispatchQueue.main.async {
+                    DispatchQueue.main.async {
+                        let didStartPendingLoad = self.finishPendingLoadIfNeeded()
+                        if shouldHandleCompletion, !didStartPendingLoad {
                             self.stateChanged(.completed)
                             self.eventSink.onFinish?(nil)
                         }

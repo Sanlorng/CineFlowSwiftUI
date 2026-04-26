@@ -323,6 +323,11 @@ private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelega
         renderThread.async { [weak self] in
             guard let self else { return }
             let shouldRefresh = self.shouldRefreshRenderer(for: snapshot)
+            let documentChanged = snapshot.documentID != self.snapshot.documentID
+            let scaleChanged = surfaceState.viewport.scale != self.currentViewport.scale
+            if shouldRefresh && (documentChanged || scaleChanged) {
+                self.compositor?.purgeAtlas()
+            }
             self.snapshot = snapshot
             self.apply(surfaceState: surfaceState)
             guard shouldRefresh else {
@@ -522,7 +527,10 @@ private final class DanmakuMetalRenderDriver: NSObject, CAMetalDisplayLinkDelega
         }
         drawCount = 0
         drawSampleStartedAt = now
-        let text = String(format: "DMK %.1f / %.0f FPS", measuredFPS, targetFPS)
+        var text = String(format: "DMK %.1f / %.0f FPS", measuredFPS, targetFPS)
+        if let compositor {
+            text += " | " + compositor.debugInfo
+        }
         perform(
             #selector(deliverStatsUpdate(_:)),
             on: Thread.main,
@@ -696,10 +704,12 @@ private struct DanmakuAtlasEntry {
 }
 
 private final class DanmakuAtlasEntryBox: NSObject {
-    let value: DanmakuAtlasEntry
+    var value: DanmakuAtlasEntry
+    var lastUsed: TimeInterval
 
     init(_ value: DanmakuAtlasEntry) {
         self.value = value
+        self.lastUsed = CACurrentMediaTime()
     }
 }
 
@@ -871,6 +881,9 @@ private final class DanmakuMetalCompositor {
     private let instanceBufferPool: DanmakuInstanceBufferPool
     private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
     private var atlasPages: [DanmakuAtlasPage] = []
+    private var atlasMap: [String: DanmakuAtlasEntryBox] = [:]
+    private var scheduledPurgeWorkItem: DispatchWorkItem?
+    private let purgeDelay: TimeInterval = 30
 
     init?(device: MTLDevice) {
         self.device = device
@@ -996,6 +1009,11 @@ private final class DanmakuMetalCompositor {
         renderPassDescriptor descriptor: MTLRenderPassDescriptor,
         viewportSize: CGSize
     ) {
+        if sprites.isEmpty {
+            schedulePurge(after: purgeDelay)
+        } else {
+            cancelScheduledPurge()
+        }
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             return
         }
@@ -1157,7 +1175,15 @@ private final class DanmakuMetalCompositor {
         commandBuffer: MTLCommandBuffer,
         blitEncoder: inout MTLBlitCommandEncoder?
     ) -> DanmakuAtlasEntry? {
+        let now = CACurrentMediaTime()
+        let key = textureKey as String
+        if let box = atlasMap[key] {
+            box.lastUsed = now
+            return box.value
+        }
         if let cached = atlasCache.object(forKey: textureKey) {
+            atlasMap[key] = cached
+            cached.lastUsed = now
             return cached.value
         }
 
@@ -1202,16 +1228,29 @@ private final class DanmakuMetalCompositor {
             uvMin: uvMin,
             uvMax: uvMax
         )
+        let box = DanmakuAtlasEntryBox(entry)
         atlasCache.setObject(
-            DanmakuAtlasEntryBox(entry),
+            box,
             forKey: textureKey,
             cost: sourceTexture.width * sourceTexture.height * 4
         )
+        atlasMap[key] = box
         return entry
     }
 
     private func cachedAtlasEntry(for textureKey: NSString) -> DanmakuAtlasEntry? {
-        atlasCache.object(forKey: textureKey)?.value
+        let key = textureKey as String
+        if let box = atlasMap[key] {
+            box.lastUsed = CACurrentMediaTime()
+            return box.value
+        }
+        if let cached = atlasCache.object(forKey: textureKey) {
+            // fallback: keep atlasMap in sync
+            atlasMap[key] = cached
+            cached.lastUsed = CACurrentMediaTime()
+            return cached.value
+        }
+        return nil
     }
 
     private func makeSourceTexture(image: CGImage) -> MTLTexture? {
@@ -1290,6 +1329,78 @@ private final class DanmakuMetalCompositor {
         )
     }
 
+    func purgeAtlas() {
+        cancelScheduledPurge()
+        atlasCache.removeAllObjects()
+        atlasMap.removeAll()
+        atlasPages.removeAll()
+    }
+
+    var debugInfo: String {
+        let pages = atlasPages.count
+        let entries = atlasMap.count
+        let bytes = pages * atlasTextureDimension * atlasTextureDimension * 4
+        let mb = Double(bytes) / (1024.0 * 1024.0)
+        return String(format: "P:%d E:%d %.0fMB", pages, entries, mb)
+    }
+
+    private func schedulePurge(after seconds: TimeInterval) {
+        scheduledPurgeWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.purgeUnusedAtlasEntries(olderThan: seconds)
+        }
+        scheduledPurgeWorkItem = work
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    private func cancelScheduledPurge() {
+        scheduledPurgeWorkItem?.cancel()
+        scheduledPurgeWorkItem = nil
+    }
+
+    private func purgeUnusedAtlasEntries(olderThan seconds: TimeInterval) {
+        let now = CACurrentMediaTime()
+        // Remove old atlas entries from maps
+        var removeKeys: [String] = []
+        for (key, box) in atlasMap {
+            if now - box.lastUsed >= seconds {
+                removeKeys.append(key)
+            }
+        }
+        for key in removeKeys {
+            atlasCache.removeObject(forKey: key as NSString)
+            atlasMap.removeValue(forKey: key)
+        }
+
+        // Find used pages
+        var usedPages = Set<Int>()
+        for box in atlasMap.values {
+            usedPages.insert(box.value.pageIndex)
+        }
+
+        guard usedPages.count < atlasPages.count else { return }
+
+        // Compact pages and build remapping
+        var newPages: [DanmakuAtlasPage] = []
+        var oldToNew: [Int: Int] = [:]
+        for (index, page) in atlasPages.enumerated() {
+            if usedPages.contains(index) {
+                oldToNew[index] = newPages.count
+                newPages.append(page)
+            }
+        }
+        atlasPages = newPages
+
+        // Remap entries to new page indices
+        for (_, box) in atlasMap {
+            let oldIndex = box.value.pageIndex
+            if let newIndex = oldToNew[oldIndex], newIndex != oldIndex {
+                box.value = DanmakuAtlasEntry(pageIndex: newIndex, uvMin: box.value.uvMin, uvMax: box.value.uvMax)
+            }
+        }
+    }
+
 }
 
 private struct DanmakuCanvasViewport: Equatable, Sendable {
@@ -1366,12 +1477,17 @@ private final class DanmakuCanvasRenderer {
     ) {
         lock.lock()
         defer { lock.unlock() }
+        let previousDocumentID = sceneDescriptor?.documentID
         currentSettings = settings
         clock.sync(
             time: max(playbackTime, 0),
             isActive: settings.isVisible && isPlaybackActive,
             rate: max(playbackRate, 0.25)
         )
+
+        if previousDocumentID != documentID {
+            textCache.purge()
+        }
 
         guard let document, viewport.isRenderable else {
             preparedScene = nil
@@ -2404,6 +2520,11 @@ private final class DanmakuTextRasterCache {
         metricsCache.countLimit = 8_192
         imageCache.countLimit = 4_096
         imageCache.totalCostLimit = 128 * 1024 * 1024
+    }
+
+    func purge() {
+        metricsCache.removeAllObjects()
+        imageCache.removeAllObjects()
     }
 
     func metrics(
