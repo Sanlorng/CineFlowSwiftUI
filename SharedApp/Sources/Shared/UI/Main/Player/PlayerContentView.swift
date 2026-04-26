@@ -390,6 +390,7 @@ private struct PlayerContentMainView: View {
             case .ended:
                 isPointerInsidePlayer = false
                 lastPointerLocation = nil
+                syncPointerContextAfterLeavingPlayerRegion()
                 if !usesFullscreenLayout {
                     scheduleControlBarVisibilityUpdate()
                 }
@@ -1969,10 +1970,12 @@ private struct PlayerContentMainView: View {
     private func revealControls() {
         cancelControlBarAutoHide()
         showCursorIfNeeded()
-        guard !isControlBarVisible else { return }
-        withAnimation(.easeOut(duration: 0.18)) {
-            isControlBarVisible = true
+        if !isControlBarVisible {
+            withAnimation(.easeOut(duration: 0.18)) {
+                isControlBarVisible = true
+            }
         }
+        scheduleControlBarVisibilityUpdate()
     }
 
     private func showSubtitleOffsetPopup() {
@@ -2014,6 +2017,14 @@ private struct PlayerContentMainView: View {
         cancelControlBarAutoHide()
 
 #if os(macOS)
+        if !isPointerInsideObservedWindow() && !isAnyControlPopoverPresented {
+            showCursorIfNeeded()
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isControlBarVisible = false
+            }
+            return
+        }
+
         if usesFullscreenLayout {
             if isAnyControlPopoverPresented || isPointerInsideControls {
                 revealControlsIfNeeded()
@@ -2108,8 +2119,24 @@ private struct PlayerContentMainView: View {
         observedWindow?.toolbar?.isVisible = !usesFullscreenLayout
     }
 
+    private func isPointerInsideObservedWindow() -> Bool {
+        guard let observedWindow else { return false }
+        return observedWindow.frame.contains(NSEvent.mouseLocation)
+    }
+
+    private func syncPointerContextAfterLeavingPlayerRegion() {
+        let pointerInsideWindow = isPointerInsideObservedWindow()
+        if !pointerInsideWindow {
+            isPointerInsideControls = false
+            showCursorIfNeeded()
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isControlBarVisible = false
+            }
+        }
+    }
+
     private func hideCursorIfNeeded() {
-        guard !isCursorHidden else { return }
+        guard !isCursorHidden, isPointerInsideObservedWindow() else { return }
         NSCursor.hide()
         isCursorHidden = true
     }
