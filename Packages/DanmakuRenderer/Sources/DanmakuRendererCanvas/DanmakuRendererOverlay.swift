@@ -1425,6 +1425,7 @@ private struct DanmakuSceneDescriptor: Equatable, Sendable {
 private final class DanmakuCanvasRenderer {
     var onInvalidation: (() -> Void)?
 
+    private let maximumBackgroundRasterizationsPerFrame = 12
     private let scheduleOnRenderThread: (@escaping () -> Void) -> Void
     private let lock = NSLock()
     private let textCache = DanmakuTextRasterCache()
@@ -1439,6 +1440,7 @@ private final class DanmakuCanvasRenderer {
     private var sceneDescriptor: DanmakuSceneDescriptor?
     private var preparationGeneration = 0
     private var currentSettings = DanmakuRenderSettings()
+    private var pendingRasterizationKeys: Set<String> = []
 
     init(scheduleOnRenderThread: @escaping (@escaping () -> Void) -> Void) {
         self.scheduleOnRenderThread = scheduleOnRenderThread
@@ -1487,12 +1489,14 @@ private final class DanmakuCanvasRenderer {
 
         if previousDocumentID != documentID {
             textCache.purge()
+            pendingRasterizationKeys.removeAll()
         }
 
         guard let document, viewport.isRenderable else {
             preparedScene = nil
             sceneDescriptor = nil
             scheduler.reset(scene: nil, time: clock.currentTime)
+            pendingRasterizationKeys.removeAll()
             return
         }
 
@@ -1556,6 +1560,7 @@ private final class DanmakuCanvasRenderer {
         var spriteBuckets: [[DanmakuSprite]] = [[], [], []]
         var spriteScratch: [DanmakuSprite] = []
         var prewarmScratch: [DanmakuRasterImage] = []
+        var rasterizationScratch: [DanmakuPreparedComment] = []
         let currentTime = presentationTime ?? clock.currentTime
         scheduler.populateVisibleEntries(
             at: currentTime,
@@ -1570,10 +1575,13 @@ private final class DanmakuCanvasRenderer {
             if lowerBound < upperBound {
                 prewarmScratch.reserveCapacity(min(maximumPrewarmCount, upperBound - lowerBound))
                 for entry in preparedScene.entries[lowerBound..<upperBound] {
-                    guard let asset = textCache.imageAsset(for: entry, scale: scale) else { continue }
-                    prewarmScratch.append(asset)
-                    if prewarmScratch.count >= maximumPrewarmCount {
-                        break
+                    if let asset = textCache.cachedImageAsset(for: entry, scale: scale) {
+                        prewarmScratch.append(asset)
+                        if prewarmScratch.count >= maximumPrewarmCount {
+                            break
+                        }
+                    } else if rasterizationScratch.count < maximumBackgroundRasterizationsPerFrame {
+                        rasterizationScratch.append(entry)
                     }
                 }
             }
@@ -1586,20 +1594,23 @@ private final class DanmakuCanvasRenderer {
         for entry in visibleEntriesScratch {
             let bucketIndex = max(0, min(entry.zIndex, spriteBuckets.count - 1))
             if let renderState = entry.renderState(at: currentTime),
-               renderState.frame.intersects(bounds),
-               let imageAsset = textCache.imageAsset(for: entry, scale: scale) {
-                spriteBuckets[bucketIndex].append(
-                    DanmakuSprite(
-                        textureKey: imageAsset.key,
-                        image: imageAsset.image,
-                        frame: renderState.frame,
-                        alpha: Float(
-                            clampedOpacity(renderState.opacity)
-                                * effectiveOpacity(currentSettings.opacity)
-                        ),
-                        rotation: Float(renderState.rotation)
+               renderState.frame.intersects(bounds) {
+                if let imageAsset = textCache.cachedImageAsset(for: entry, scale: scale) {
+                    spriteBuckets[bucketIndex].append(
+                        DanmakuSprite(
+                            textureKey: imageAsset.key,
+                            image: imageAsset.image,
+                            frame: renderState.frame,
+                            alpha: Float(
+                                clampedOpacity(renderState.opacity)
+                                    * effectiveOpacity(currentSettings.opacity)
+                            ),
+                            rotation: Float(renderState.rotation)
+                        )
                     )
-                )
+                } else if rasterizationScratch.count < maximumBackgroundRasterizationsPerFrame {
+                    rasterizationScratch.append(entry)
+                }
             }
         }
 
@@ -1612,6 +1623,9 @@ private final class DanmakuCanvasRenderer {
         let resolvedPrewarmScratch = prewarmScratch
         let resolvedSpriteScratch = spriteScratch
         lock.unlock()
+        if rasterizationScratch.isEmpty == false {
+            scheduleRasterizationIfNeeded(for: rasterizationScratch, scale: scale)
+        }
         body(resolvedPrewarmScratch, resolvedSpriteScratch)
     }
 
@@ -1659,6 +1673,49 @@ private final class DanmakuCanvasRenderer {
     private func effectiveOpacity(_ value: Double) -> Double {
         let clamped = clampedOpacity(value)
         return pow(clamped, 1.2)
+    }
+
+    private func scheduleRasterizationIfNeeded(
+        for entries: [DanmakuPreparedComment],
+        scale: CGFloat
+    ) {
+        guard entries.isEmpty == false else { return }
+
+        var pendingEntries: [DanmakuPreparedComment] = []
+        lock.lock()
+        pendingEntries.reserveCapacity(entries.count)
+        for entry in entries {
+            let key = textCache.imageCacheKey(for: entry, scale: scale) as String
+            if pendingRasterizationKeys.contains(key) {
+                continue
+            }
+            pendingRasterizationKeys.insert(key)
+            pendingEntries.append(entry)
+        }
+        lock.unlock()
+
+        guard pendingEntries.isEmpty == false else { return }
+        let textCache = self.textCache
+        preparationThread.async { [weak self] in
+            guard let self else { return }
+            var renderedKeys: [String] = []
+            renderedKeys.reserveCapacity(pendingEntries.count)
+            for entry in pendingEntries {
+                guard let asset = textCache.imageAsset(for: entry, scale: scale) else { continue }
+                renderedKeys.append(asset.key as String)
+            }
+            self.scheduleOnRenderThread { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                for key in pendingEntries.map({ textCache.imageCacheKey(for: $0, scale: scale) as String }) {
+                    self.pendingRasterizationKeys.remove(key)
+                }
+                self.lock.unlock()
+                if renderedKeys.isEmpty == false {
+                    self.onInvalidation?()
+                }
+            }
+        }
     }
 }
 
@@ -2527,6 +2584,12 @@ private final class DanmakuTextRasterCache {
         imageCache.removeAllObjects()
     }
 
+    func cachedImageAsset(for comment: DanmakuPreparedComment, scale: CGFloat) -> DanmakuRasterImage? {
+        let key = imageCacheKey(for: comment, scale: scale)
+        guard let cached = imageCache.object(forKey: key) else { return nil }
+        return DanmakuRasterImage(key: key, image: cached.value)
+    }
+
     func metrics(
         for text: String,
         fontSize: CGFloat,
@@ -2712,7 +2775,7 @@ private final class DanmakuTextRasterCache {
         return NSColor(red: red, green: green, blue: blue, alpha: 1)
     }
 
-    private func imageCacheKey(for comment: DanmakuPreparedComment, scale: CGFloat) -> NSString {
+    func imageCacheKey(for comment: DanmakuPreparedComment, scale: CGFloat) -> NSString {
         NSString(
             string: "i|\(cacheValue(comment.fontSize))|\(cacheValue(scale))|\(comment.fontFamily ?? "<system>")|\(comment.usesStroke ? 1 : 0)|\(comment.colorRGB)|\(comment.text)"
         )

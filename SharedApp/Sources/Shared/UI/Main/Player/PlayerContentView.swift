@@ -2321,9 +2321,9 @@ private func adjustedSubtitlePlaybackTime(
 
 private func isDanmakuPlaybackActive(_ playbackState: PlayerPlaybackState) -> Bool {
     switch playbackState {
-    case .playing, .buffering:
+    case .playing:
         return true
-    case .preparing, .paused, .stopped, .completed, .idle, .error:
+    case .buffering, .preparing, .paused, .stopped, .completed, .idle, .error:
         return false
     }
 }
