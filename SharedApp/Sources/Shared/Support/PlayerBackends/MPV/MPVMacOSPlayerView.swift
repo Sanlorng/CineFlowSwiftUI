@@ -224,6 +224,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var currentSource: PlayerSource?
     private var currentOptions: PlayerLoadOptions?
     private var lastLoadedSource: PlayerSource?
+    private var hasActiveMedia = false
     private var pendingLoad: PendingLoad?
     private var isStoppingForSourceChange = false
     private var isPaused = false
@@ -342,7 +343,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             return
         }
 
-        if let lastLoadedSource, lastLoadedSource != source {
+        if let lastLoadedSource, lastLoadedSource != source, hasActiveMedia {
             pendingLoad = nextLoad
             releaseCurrentMediaResourcesForSourceChange()
             return
@@ -415,6 +416,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                 self.mpv = nil
             }
         }
+        hasActiveMedia = false
         pendingLoad = nil
         isStoppingForSourceChange = false
         lastLoadedSource = nil
@@ -439,6 +441,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             setPause(true)
         }
         runCommand("loadfile", args: [source.url.absoluteString, "replace"])
+        hasActiveMedia = true
         lastLoadedSource = source
         if options.allowAutoPlay {
             setPause(false)
@@ -446,7 +449,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     }
 
     private func releaseCurrentMediaResourcesForSourceChange() {
-        guard lastLoadedSource != nil, !isStoppingForSourceChange else { return }
+        guard lastLoadedSource != nil, hasActiveMedia, !isStoppingForSourceChange else { return }
         isStoppingForSourceChange = true
         prepareForSourceChange()
         runCommand("stop", args: [])
@@ -456,6 +459,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private func finishPendingLoadIfNeeded() -> Bool {
         guard isStoppingForSourceChange else { return false }
         isStoppingForSourceChange = false
+        hasActiveMedia = false
         lastLoadedSource = nil
 
         guard let mpv, let pendingLoad else {
@@ -570,9 +574,13 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
 
                 switch event.pointee.event_id {
                 case MPV_EVENT_START_FILE:
-                    DispatchQueue.main.async { self.stateChanged(.preparing) }
+                    DispatchQueue.main.async {
+                        self.hasActiveMedia = true
+                        self.stateChanged(.preparing)
+                    }
                 case MPV_EVENT_FILE_LOADED:
                     DispatchQueue.main.async {
+                        self.hasActiveMedia = true
                         self.publishVideoPresentationSize()
                         self.publishTracksSnapshot()
                         self.syncPlaybackState()
@@ -586,6 +594,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                     }
 #endif
                     DispatchQueue.main.async {
+                        self.hasActiveMedia = false
                         let didStartPendingLoad = self.finishPendingLoadIfNeeded()
                         if shouldHandleCompletion, !didStartPendingLoad {
                             self.stateChanged(.completed)
