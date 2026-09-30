@@ -18,13 +18,13 @@ struct MainContentView: View {
         WithViewStore(homeStore, observe: \.requestedPlayerState) { homeViewStore in
             WithViewStore(libraryStore, observe: \.requestedPlayerState) { libraryViewStore in
                 TabView(selection: $selectedTab) {
-                    Tab("Home", systemImage: "house", value: .Home) {
+                    Tab("首页", systemImage: "house", value: .Home) {
                         HomeContentView(store: homeStore)
                     }
-                    Tab("Library", systemImage: "rectangle.stack", value: .Library) {
+                    Tab("媒体库", systemImage: "rectangle.stack", value: .Library) {
                         LibraryContentView(store: libraryStore)
                     }
-                    Tab("Player", systemImage: "play.rectangle.on.rectangle", value: .Player) {
+                    Tab("播放器", systemImage: "play.rectangle.on.rectangle", value: .Player) {
                         PlayerContentView(store: playerStore)
                     }
                 }

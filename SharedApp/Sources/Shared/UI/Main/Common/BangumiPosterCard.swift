@@ -13,6 +13,7 @@ struct BangumiPosterCard<Content: View>: View {
     let width: CGFloat?
     let content: () -> Content
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     private let cardPadding: CGFloat = 12
@@ -43,19 +44,18 @@ struct BangumiPosterCard<Content: View>: View {
         .frame(width: width, alignment: .topLeading)
         .background(cardBackground)
         .overlay(cardBorder)
-        .scaleEffect(isHovering ? 1.014 : 1)
-        .offset(y: isHovering ? -4 : 0)
+        .offset(y: isHovering && !reduceMotion ? -2 : 0)
         .shadow(
-            color: Color.black.opacity(isHovering ? 0.16 : 0.05),
-            radius: isHovering ? 22 : 10,
+            color: Color.black.opacity(isHovering ? 0.10 : 0.03),
+            radius: isHovering ? 14 : 6,
             x: 0,
-            y: isHovering ? 12 : 4
+            y: isHovering ? 6 : 2
         )
         .zIndex(isHovering ? 1 : 0)
         .onHover { hovering in
             isHovering = hovering
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.84), value: isHovering)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isHovering)
     }
 
     private var coverContainer: some View {
@@ -85,7 +85,7 @@ struct BangumiPosterCard<Content: View>: View {
                         image
                             .resizable()
                             .scaledToFill()
-                            .scaleEffect(isHovering ? 1.035 : 1)
+                            .scaleEffect(isHovering && !reduceMotion ? 1.02 : 1)
                             .frame(
                                 width: geometry.size.width,
                                 height: geometry.size.height,
@@ -139,31 +139,22 @@ struct BangumiPosterCard<Content: View>: View {
     }
 
     private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 18)
-            .fill(
-                LinearGradient(
-                    colors: isHovering
-                        ? [
-                            Color.white.opacity(0.18),
-                            Color.secondary.opacity(0.12)
-                        ]
-                        : [
-                            Color.secondary.opacity(0.08),
-                            Color.secondary.opacity(0.06)
-                        ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(.regularMaterial)
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.accentColor.opacity(isHovering ? 0.04 : 0))
+            }
     }
 
     private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 18)
-            .stroke(
-                isHovering ? Color.white.opacity(0.22) : Color.secondary.opacity(0.1),
-                lineWidth: isHovering ? 1.2 : 1
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(
+                isHovering ? Color.accentColor.opacity(0.3) : Color.primary.opacity(0.08),
+                lineWidth: 1
             )
     }
+
 }
 
 private struct OptionalWidthFrame: ViewModifier {

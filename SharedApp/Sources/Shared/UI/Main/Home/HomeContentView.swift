@@ -12,6 +12,7 @@ import ComposableArchitecture
 struct HomeContentView: View {
     let store: StoreOf<HomePresenter>
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var currentBannerIndex = 0
 
     private let scheduleColumns = [
@@ -34,8 +35,10 @@ struct HomeContentView: View {
 
                         seasonScheduleSection(viewStore)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 20)
+                    .frame(maxWidth: 1280, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .navigationTitle("首页")
                 .toolbar {
@@ -101,7 +104,7 @@ struct HomeContentView: View {
                 }
                 .task(id: viewStore.banners.map(\.id)) {
                     currentBannerIndex = 0
-                    guard viewStore.banners.count > 1 else { return }
+                    guard viewStore.banners.count > 1, !reduceMotion else { return }
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .seconds(5))
                         guard !Task.isCancelled else { break }
@@ -136,7 +139,7 @@ struct HomeContentView: View {
         Group {
             quickStatusCard(
                 title: "未看番剧",
-                subtitle: "来自默认远程媒体库的最近更新，只显示仍有未看集数的条目。",
+                subtitle: "最近更新的番剧，精彩内容等你来看。",
                 icon: "clock.badge.exclamationmark",
                 accent: Color.orange,
                 items: viewStore.unwatchedItems,
@@ -148,7 +151,7 @@ struct HomeContentView: View {
 
             quickStatusCard(
                 title: "继续播放",
-                subtitle: "来自默认远程媒体库的最近播放记录，点击后按 Library 相同逻辑进入播放。",
+                subtitle: "回到上次观看的番剧，接着看下去。",
                 icon: "play.circle",
                 accent: Color.blue,
                 items: viewStore.continueWatchingItems,
@@ -196,45 +199,18 @@ struct HomeContentView: View {
     @ViewBuilder
     private func seasonScheduleSection(_ viewStore: ViewStore<HomePresenter.State, HomePresenter.Action>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                sectionTitle("新番时间表")
-
-                Picker(
-                    "季度",
-                    selection: Binding(
-                        get: { viewStore.selectedSeasonID },
-                        set: { id in
-                            guard let id else { return }
-                            viewStore.send(.selectedSeasonChanged(id))
-                        }
-                    )
-                ) {
-                    ForEach(viewStore.seasons) { season in
-                        Text(season.name)
-                            .tag(Optional(season.id))
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    scheduleHeading(viewStore)
+                    Spacer(minLength: 16)
+                    scheduleFilter(viewStore)
+                        .frame(width: 250)
                 }
-                .pickerStyle(.menu)
-                .frame(maxWidth: 220)
 
-                Button {
-                    viewStore.send(.refresh)
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+                VStack(alignment: .leading, spacing: 12) {
+                    scheduleHeading(viewStore)
+                    scheduleFilter(viewStore)
                 }
-                .buttonStyle(.borderless)
-                .disabled(viewStore.isLoadingHomepage || viewStore.isLoadingSeason)
-
-                Spacer()
-
-                ScheduleFilterField(
-                    text: Binding(
-                        get: { viewStore.seasonFilterQuery },
-                        set: { viewStore.send(.setSeasonFilterQuery($0)) }
-                    ),
-                    placeholder: "筛选当前时间表"
-                )
-                .frame(width: 250)
             }
 
             scheduleDaySelector(viewStore)
@@ -262,6 +238,41 @@ struct HomeContentView: View {
         }
     }
 
+    private func scheduleHeading(_ viewStore: ViewStore<HomePresenter.State, HomePresenter.Action>) -> some View {
+        HStack(spacing: 12) {
+            sectionTitle("新番时间表")
+                .fixedSize()
+
+            Picker(
+                "季度",
+                selection: Binding(
+                    get: { viewStore.selectedSeasonID },
+                    set: { id in
+                        guard let id else { return }
+                        viewStore.send(.selectedSeasonChanged(id))
+                    }
+                )
+            ) {
+                ForEach(viewStore.seasons) { season in
+                    Text(season.name)
+                        .tag(Optional(season.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 220)
+        }
+    }
+
+    private func scheduleFilter(_ viewStore: ViewStore<HomePresenter.State, HomePresenter.Action>) -> some View {
+        ScheduleFilterField(
+            text: Binding(
+                get: { viewStore.seasonFilterQuery },
+                set: { viewStore.send(.setSeasonFilterQuery($0)) }
+            ),
+            placeholder: "筛选当前时间表"
+        )
+    }
+
     @ViewBuilder
     private func scheduleDaySelector(_ viewStore: ViewStore<HomePresenter.State, HomePresenter.Action>) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -285,6 +296,7 @@ struct HomeContentView: View {
                             )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(viewStore.selectedScheduleDay == day ? .isSelected : [])
                 }
             }
             .padding(.vertical, 2)
@@ -343,7 +355,7 @@ struct HomeContentView: View {
             }
         }
         .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 280, maxWidth: .infinity, alignment: .leading)
         .background(panelBackground)
         .overlay(panelBorder)
     }
@@ -367,6 +379,8 @@ struct HomeContentView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .frame(width: 32, height: 32)
                     }
+                    .help("上一条公告")
+                    .accessibilityLabel("上一条公告")
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.3)) {
@@ -377,6 +391,8 @@ struct HomeContentView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .frame(width: 32, height: 32)
                     }
+                    .help("下一条公告")
+                    .accessibilityLabel("下一条公告")
                 }
                 .buttonStyle(.plain)
                 .background(
@@ -438,14 +454,14 @@ struct HomeContentView: View {
                 )
                 .overlay(alignment: .bottomLeading) {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("FEATURED")
+                        Text("精选公告")
                             .font(.caption.weight(.bold))
-                            .tracking(1.4)
+                            .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.78))
 
                         VStack(alignment: .leading, spacing: 10) {
                             Text(banner.title)
-                                .font(.system(size: 30, weight: .bold, design: .rounded))
+                                .font(.system(size: 28, weight: .bold))
                                 .foregroundStyle(.white)
                                 .lineLimit(2)
 
@@ -541,7 +557,7 @@ struct HomeContentView: View {
 
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
-            .font(.title2.weight(.bold))
+            .font(.title2.weight(.semibold))
     }
 
     private func placeholderPanel(_ message: String) -> some View {
@@ -679,11 +695,11 @@ private struct QuickStatusRow: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isHovering ? Color.white.opacity(0.14) : Color.clear)
+                    .fill(isHovering ? Color.primary.opacity(0.05) : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isHovering ? Color.white.opacity(0.16) : Color.clear, lineWidth: 1)
+                    .stroke(isHovering ? Color.primary.opacity(0.08) : Color.clear, lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .scaleEffect(isHovering ? 1.01 : 1)
@@ -725,6 +741,8 @@ private struct ScheduleFilterField: View {
                         .foregroundStyle(.secondary.opacity(0.9))
                 }
                 .buttonStyle(.plain)
+                .help("清除筛选")
+                .accessibilityLabel("清除筛选")
             }
         }
         .padding(.horizontal, 14)
