@@ -27,7 +27,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.11.0"),
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.2.0"),
         .package(url: "https://github.com/mpvkit/MPVKit.git", exact: "0.41.0"),
-        .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.22.3"),
+        .package(url: "https://github.com/pointfreeco/swift-composable-architecture", exact: "1.26.0"),
+        // Keep TCA's transitive Sharing dependency on the Xcode 27 compatibility fixes.
+        .package(url: "https://github.com/pointfreeco/swift-sharing", exact: "2.8.2"),
         .package(url: "https://github.com/swiftlang/swift-syntax", "509.0.0"..<"603.0.0"),
     ],
     targets: [
