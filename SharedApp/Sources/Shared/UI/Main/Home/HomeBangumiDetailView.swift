@@ -40,16 +40,16 @@ struct HomeBangumiDetailView: View {
     var body: some View {
         GeometryReader { geometry in
             WithViewStore(store, observe: { $0 }) { viewStore in
-                ZStack {
+                detailLayout(
+                    viewStore,
+                    availableWidth: geometry.size.width,
+                    availableHeight: geometry.size.height,
+                    bottomSafeAreaInset: geometry.safeAreaInsets.bottom
+                )
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+                .background {
                     blockingBackgroundLayer(for: viewStore.detail?.coverURL ?? viewStore.summary.imageURL)
                         .ignoresSafeArea()
-
-                    detailLayout(
-                        viewStore,
-                        availableWidth: geometry.size.width,
-                        availableHeight: geometry.size.height,
-                        bottomSafeAreaInset: geometry.safeAreaInsets.bottom
-                    )
                 }
                 .navigationTitle(viewStore.detail?.title ?? viewStore.summary.title)
                 .toolbar {
@@ -112,10 +112,7 @@ struct HomeBangumiDetailView: View {
             ? mainColumnWidth + detailColumnSpacing + detailSidebarWidth
             : mainColumnWidth
         let bottomPadding = max(bottomSafeAreaInset, 24)
-        let contentAreaHeight = max(
-            availableHeight - detailVerticalPadding - bottomPadding,
-            1
-        )
+        let sidebarHeight = max(availableHeight - detailVerticalPadding, 1)
 
         Group {
             if usesTwoColumnLayout {
@@ -126,22 +123,22 @@ struct HomeBangumiDetailView: View {
                             isCompactHeader: mainColumnWidth < detailHeaderInlineBreakpoint
                         )
                         .frame(width: mainColumnWidth, alignment: .leading)
-                        .padding(.bottom, detailVerticalPadding)
+                        .padding(.top, detailVerticalPadding)
+                        .padding(.bottom, detailVerticalPadding + bottomPadding)
                     }
-                    .frame(width: mainColumnWidth, height: contentAreaHeight, alignment: .top)
+                    .frame(width: mainColumnWidth, height: availableHeight, alignment: .top)
                     .layoutPriority(1)
 
                     episodeSidebar(
                         viewStore,
-                        availableHeight: contentAreaHeight
+                        availableHeight: sidebarHeight
                     )
                     .frame(width: detailSidebarWidth, alignment: .top)
+                    .padding(.top, detailVerticalPadding)
                 }
                 .frame(width: max(contentWidth, 0), alignment: .topLeading)
-                .frame(height: contentAreaHeight, alignment: .topLeading)
+                .frame(height: availableHeight, alignment: .topLeading)
                 .padding(.horizontal, detailHorizontalPadding)
-                .padding(.top, detailVerticalPadding)
-                .padding(.bottom, bottomPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
                 ScrollView {
@@ -1064,26 +1061,31 @@ struct HomeBangumiDetailView: View {
 
     @ViewBuilder
     private func coverView(url: URL?, title: String) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.secondary.opacity(0.08))
+        GeometryReader { geometry in
+            ZStack {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.secondary.opacity(0.08))
 
-            if let url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .empty:
-                        ProgressView()
-                    default:
-                        coverPlaceholder(title: title)
+                if let url {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        case .empty:
+                            ProgressView()
+                        default:
+                            coverPlaceholder(title: title)
+                        }
                     }
+                } else {
+                    coverPlaceholder(title: title)
                 }
-            } else {
-                coverPlaceholder(title: title)
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
         .aspectRatio(2 / 3, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -1209,35 +1211,40 @@ struct HomeBangumiDetailView: View {
 
     @ViewBuilder
     private func blockingBackgroundLayer(for coverURL: URL?) -> some View {
-        ZStack {
-            Color.detailBackgroundBase
+        GeometryReader { geometry in
+            ZStack {
+                Color.detailBackgroundBase
 
-            if let coverURL {
-                AsyncImage(url: coverURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .saturation(0.8)
-                            .blur(radius: 36)
-                            .opacity(0.42)
-                    default:
-                        fallbackBackground
+                if let coverURL {
+                    AsyncImage(url: coverURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .saturation(0.8)
+                                .blur(radius: 36)
+                                .opacity(0.42)
+                        default:
+                            fallbackBackground
+                        }
                     }
+                } else {
+                    fallbackBackground
                 }
-            } else {
-                fallbackBackground
-            }
 
-            LinearGradient(
-                colors: [
-                    Color.detailBackgroundBase.opacity(0.24),
-                    Color.detailBackgroundBase.opacity(0.78)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+                LinearGradient(
+                    colors: [
+                        Color.detailBackgroundBase.opacity(0.24),
+                        Color.detailBackgroundBase.opacity(0.78)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
     }
 

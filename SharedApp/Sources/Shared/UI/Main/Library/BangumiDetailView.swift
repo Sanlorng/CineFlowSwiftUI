@@ -86,6 +86,7 @@ struct BangumiDetailView: View {
         .padding([.horizontal, .top])
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal)
+        .padding(.bottom, 24)
     }
     
     @ViewBuilder
@@ -225,27 +226,35 @@ struct BangumiDetailView: View {
     
     @ViewBuilder
     private func coverView(url: URL?) -> some View {
-        if let url {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                case .failure:
-                    coverPlaceholder
-                case .empty:
-                    ZStack {
-                        coverPlaceholder
-                        ProgressView()
+        GeometryReader { geometry in
+            Group {
+                if let url {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        case .failure:
+                            coverPlaceholder
+                        case .empty:
+                            ZStack {
+                                coverPlaceholder
+                                ProgressView()
+                            }
+                        @unknown default:
+                            coverPlaceholder
+                        }
                     }
-                @unknown default:
+                } else {
                     coverPlaceholder
                 }
             }
-        } else {
-            coverPlaceholder
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
+        .aspectRatio(2 / 3, contentMode: .fit)
     }
     
     private var coverPlaceholder: some View {
