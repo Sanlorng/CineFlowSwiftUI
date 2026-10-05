@@ -457,50 +457,65 @@ private func libraryGridMetrics(for availableWidth: CGFloat) -> LibraryGridMetri
 }
 
 private struct GroupSidebar: View {
+    private struct ScrollID: Hashable {
+        let group: String
+    }
+
     let groups: [String]
     let selected: String?
     let action: (String) -> Void
     
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            groupButtons
+                .fixedSize(horizontal: false, vertical: true)
+            scrollableGroups
+        }
+        .padding(.horizontal, 4)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var groupButtons: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            ForEach(groups, id: \.self) { group in
+                Button {
+                    action(group)
+                } label: {
+                    Text(group)
+                        .font(.caption)
+                        .foregroundColor(selected == group ? .accentColor : .primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color.secondary.opacity(0.2))
+                                .cineFlowCardInteractionTint(usesCapsule: true)
+                        )
+                }
+                .id(ScrollID(group: group))
+                .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false, isSelected: selected == group))
+            }
+        }
+    }
+
+    private var scrollableGroups: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .trailing, spacing: 8) {
-                    ForEach(groups, id: \.self) { group in
-                        Button {
-                            action(group)
-                        } label: {
-                            Text(group)
-                                .font(.caption)
-                                .foregroundColor(selected == group ? .accentColor : .primary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.secondary.opacity(0.2))
-                                        .cineFlowCardInteractionTint(usesCapsule: true)
-                                )
-                        }
-                        .id(group)
-                        .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false, isSelected: selected == group))
-                    }
-                }
+                groupButtons
             }
             .onAppear {
                 guard let selected else { return }
                 DispatchQueue.main.async {
-                    proxy.scrollTo(selected, anchor: .center)
+                    proxy.scrollTo(ScrollID(group: selected), anchor: .center)
                 }
             }
             .onChange(of: selected) { _, newValue in
                 guard let newValue else { return }
                 withAnimation(.easeInOut(duration: 0.18)) {
-                    proxy.scrollTo(newValue, anchor: .center)
+                    proxy.scrollTo(ScrollID(group: newValue), anchor: .center)
                 }
             }
         }
-        .frame(maxHeight: 360)
-        .padding(.horizontal, 4)
-        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
