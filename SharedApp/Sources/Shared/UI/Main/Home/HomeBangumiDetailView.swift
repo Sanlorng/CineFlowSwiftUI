@@ -112,7 +112,10 @@ struct HomeBangumiDetailView: View {
             ? mainColumnWidth + detailColumnSpacing + detailSidebarWidth
             : mainColumnWidth
         let bottomPadding = max(bottomSafeAreaInset, 24)
-        let sidebarHeight = max(availableHeight - detailVerticalPadding, 1)
+        let sidebarHeight = max(
+            availableHeight - detailVerticalPadding - bottomPadding,
+            1
+        )
 
         Group {
             if usesTwoColumnLayout {
@@ -135,6 +138,7 @@ struct HomeBangumiDetailView: View {
                     )
                     .frame(width: detailSidebarWidth, alignment: .top)
                     .padding(.top, detailVerticalPadding)
+                    .padding(.bottom, bottomPadding)
                 }
                 .frame(width: max(contentWidth, 0), alignment: .topLeading)
                 .frame(height: availableHeight, alignment: .topLeading)
