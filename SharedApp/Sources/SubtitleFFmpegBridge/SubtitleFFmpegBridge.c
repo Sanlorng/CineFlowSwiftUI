@@ -149,6 +149,7 @@ static void bridge_set_error(char **error_message, const char *format, ...) {
 static int bridge_open_input(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     AVFormatContext **format_context,
     char **error_message
 ) {
@@ -163,6 +164,9 @@ static int bridge_open_input(
     );
 
     AVDictionary *options = NULL;
+    if (bypass_http_proxy) {
+        av_dict_set(&options, "http_proxy", "", 0);
+    }
     if (headers && headers[0] != '\0') {
         av_dict_set(&options, "headers", headers, 0);
     }
@@ -552,6 +556,7 @@ static int bridge_append_subtitle_rect(
 int subtitle_bridge_copy_tracks(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     SubtitleBridgeTrackInfo **tracks,
     int *count,
     char **error_message
@@ -568,7 +573,7 @@ int subtitle_bridge_copy_tracks(
     );
 
     AVFormatContext *format_context = NULL;
-    if (bridge_open_input(media_url, headers, &format_context, error_message) < 0) {
+    if (bridge_open_input(media_url, headers, bypass_http_proxy, &format_context, error_message) < 0) {
         bridge_log("copy_tracks failed before stream scan");
         return -1;
     }
@@ -628,6 +633,7 @@ int subtitle_bridge_copy_tracks(
 int subtitle_bridge_copy_ass_document(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     int stream_index,
     char **ass_document,
     char **error_message
@@ -645,7 +651,7 @@ int subtitle_bridge_copy_ass_document(
     );
 
     AVFormatContext *format_context = NULL;
-    if (bridge_open_input(media_url, headers, &format_context, error_message) < 0) {
+    if (bridge_open_input(media_url, headers, bypass_http_proxy, &format_context, error_message) < 0) {
         bridge_log("copy_ass_document failed before locating target stream");
         return -1;
     }
@@ -872,6 +878,7 @@ int subtitle_bridge_copy_ass_document(
 int subtitle_bridge_copy_ass_document_window(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     int stream_index,
     int64_t window_start_ms,
     int64_t window_end_ms,
@@ -898,7 +905,7 @@ int subtitle_bridge_copy_ass_document_window(
     );
 
     AVFormatContext *format_context = NULL;
-    if (bridge_open_input(media_url, headers, &format_context, error_message) < 0) {
+    if (bridge_open_input(media_url, headers, bypass_http_proxy, &format_context, error_message) < 0) {
         bridge_log("copy_ass_document_window failed before locating target stream");
         return -1;
     }
@@ -1097,12 +1104,14 @@ void subtitle_bridge_free_string(char *string) {
 int subtitle_bridge_copy_tracks(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     SubtitleBridgeTrackInfo **tracks,
     int *count,
     char **error_message
 ) {
     (void) media_url;
     (void) headers;
+    (void) bypass_http_proxy;
     if (tracks) *tracks = NULL;
     if (count) *count = 0;
     if (error_message) *error_message = strdup("当前构建未包含可用的 FFmpeg 字幕提取支持。");
@@ -1112,12 +1121,14 @@ int subtitle_bridge_copy_tracks(
 int subtitle_bridge_copy_ass_document(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     int stream_index,
     char **ass_document,
     char **error_message
 ) {
     (void) media_url;
     (void) headers;
+    (void) bypass_http_proxy;
     (void) stream_index;
     if (ass_document) *ass_document = NULL;
     if (error_message) *error_message = strdup("当前构建未包含可用的 FFmpeg 字幕提取支持。");
@@ -1127,6 +1138,7 @@ int subtitle_bridge_copy_ass_document(
 int subtitle_bridge_copy_ass_document_window(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     int stream_index,
     int64_t window_start_ms,
     int64_t window_end_ms,
@@ -1135,6 +1147,7 @@ int subtitle_bridge_copy_ass_document_window(
 ) {
     (void) media_url;
     (void) headers;
+    (void) bypass_http_proxy;
     (void) stream_index;
     (void) window_start_ms;
     (void) window_end_ms;

@@ -49,6 +49,7 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                     let result = subtitle_bridge_copy_tracks(
                         mediaURLCString,
                         headerCString,
+                        MediaNetworkPolicy.shouldBypassProxy(for: mediaURL) ? 1 : 0,
                         &tracksPointer,
                         &count,
                         &errorPointer
@@ -129,6 +130,7 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                         let result = subtitle_bridge_copy_ass_document(
                             mediaURLCString,
                             headerCString,
+                            MediaNetworkPolicy.shouldBypassProxy(for: mediaURL) ? 1 : 0,
                             Int32(streamIndex),
                             &documentPointer,
                             &errorPointer
@@ -210,6 +212,7 @@ struct EmbeddedSubtitleExtractor: SubtitleTrackExtracting {
                         let result = subtitle_bridge_copy_ass_document_window(
                             mediaURLCString,
                             headerCString,
+                            MediaNetworkPolicy.shouldBypassProxy(for: mediaURL) ? 1 : 0,
                             Int32(streamIndex),
                             Int64((normalizedWindow.lowerBound * 1000).rounded(.down)),
                             Int64((normalizedWindow.upperBound * 1000).rounded(.up)),

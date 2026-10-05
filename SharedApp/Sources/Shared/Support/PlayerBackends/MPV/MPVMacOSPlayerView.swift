@@ -210,6 +210,14 @@ final class MPVMacOSViewController: NSViewController {
 }
 
 final class MPVMacOSOpenGLView: NSOpenGLView {
+    private enum MediaLoadState {
+        case preparing
+        case ready
+        case stopped
+        case completed
+        case failed(String)
+    }
+
     private struct PendingLoad {
         let source: PlayerSource
         let options: PlayerLoadOptions
@@ -225,6 +233,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var currentOptions: PlayerLoadOptions?
     private var lastLoadedSource: PlayerSource?
     private var hasActiveMedia = false
+    private var mediaLoadState = MediaLoadState.preparing
     private var pendingLoad: PendingLoad?
     private var isStoppingForSourceChange = false
     private var isPaused = false
@@ -302,7 +311,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
 
         stateChanged(.preparing)
         observeProperties(handle: handle)
-        checkError(mpv_initialize(handle), fallback: "初始化 mpv 失败。")
+        guard checkError(mpv_initialize(handle), fallback: "初始化 mpv 失败。") else { return }
 
         let api = UnsafeMutableRawPointer(mutating: (MPV_RENDER_API_TYPE_OPENGL as NSString).utf8String)
         var initParams = mpv_opengl_init_params(
@@ -311,17 +320,15 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             },
             get_proc_address_ctx: nil
         )
-        withUnsafeMutablePointer(to: &initParams) { initParams in
+        let renderStatus = withUnsafeMutablePointer(to: &initParams) { initParams in
             var params = [
                 mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: api),
                 mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, data: initParams),
                 mpv_render_param(),
             ]
-            if mpv_render_context_create(&mpvGL, handle, &params) < 0 {
-                stateChanged(.error("初始化 mpv OpenGL 上下文失败。"))
-                return
-            }
+            return mpv_render_context_create(&mpvGL, handle, &params)
         }
+        guard checkError(renderStatus, fallback: "初始化 mpv OpenGL 上下文失败。"), let mpvGL else { return }
 
         mpv_render_context_set_update_callback(
             mpvGL,
@@ -334,7 +341,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     func load(source: PlayerSource, options: PlayerLoadOptions) {
         currentSource = source
         currentOptions = options
-        guard let mpv else { return }
+        guard let mpv, mpvGL != nil else { return }
 
         let nextLoad = PendingLoad(source: source, options: options)
 
@@ -354,6 +361,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     }
 
     private func prepareForSourceChange() {
+        mediaLoadState = .preparing
         currentDuration = nil
         eventSink.onVideoPresentationSizeChanged?(nil)
         isBuffering = false
@@ -417,6 +425,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
             }
         }
         hasActiveMedia = false
+        mediaLoadState = .stopped
         pendingLoad = nil
         isStoppingForSourceChange = false
         lastLoadedSource = nil
@@ -428,6 +437,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         let options = pendingLoad.options
 
         prepareForSourceChange()
+        _ = mpv_set_option_string(mpv, "stream-lavf-o", MediaNetworkPolicy.shouldBypassProxy(for: source.url) ? "http_proxy=" : "")
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "auto-safe" : "no")
         applyHTTPHeaders(source.headers)
         applyAudioTrackSelection(options.selectedAudioTrackID)
@@ -440,7 +450,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         if !options.allowAutoPlay {
             setPause(true)
         }
-        runCommand("loadfile", args: [source.url.absoluteString, "replace"])
+        guard runCommand("loadfile", args: [source.url.absoluteString, "replace"]) else { return }
         hasActiveMedia = true
         lastLoadedSource = source
         if options.allowAutoPlay {
@@ -554,15 +564,16 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         syncPlaybackState()
     }
 
-    private func runCommand(_ command: String, args: [String]) {
-        guard let mpv else { return }
+    @discardableResult
+    private func runCommand(_ command: String, args: [String]) -> Bool {
+        guard let mpv else { return false }
         var cargs: [UnsafePointer<CChar>?] = ([command] + args).map { UnsafePointer(strdup($0)) } + [nil]
         defer {
             for case let pointer? in cargs {
                 free(UnsafeMutablePointer(mutating: pointer))
             }
         }
-        _ = mpv_command(mpv, &cargs)
+        return checkError(mpv_command(mpv, &cargs), fallback: "播放器命令执行失败。")
     }
 
     func readEvents() {
@@ -576,18 +587,21 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                 case MPV_EVENT_START_FILE:
                     DispatchQueue.main.async {
                         self.hasActiveMedia = true
+                        self.mediaLoadState = .preparing
                         self.stateChanged(.preparing)
                     }
                 case MPV_EVENT_FILE_LOADED:
                     DispatchQueue.main.async {
                         self.hasActiveMedia = true
+                        self.mediaLoadState = .ready
                         self.publishVideoPresentationSize()
                         self.publishTracksSnapshot()
                         self.syncPlaybackState()
                     }
                 case MPV_EVENT_END_FILE:
                     let endFile = UnsafePointer<mpv_event_end_file>(OpaquePointer(event.pointee.data))
-                    let shouldHandleCompletion = endFile?.pointee.reason == MPV_END_FILE_REASON_EOF
+                    let reason = endFile?.pointee.reason
+                    let errorCode = endFile?.pointee.error ?? 0
 #if DEBUG
                     if let endFile {
                         print("[MPV-GL] end-file reason=\(endFile.pointee.reason) playlistEntryID=\(endFile.pointee.playlist_entry_id)")
@@ -596,9 +610,16 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                     DispatchQueue.main.async {
                         self.hasActiveMedia = false
                         let didStartPendingLoad = self.finishPendingLoadIfNeeded()
-                        if shouldHandleCompletion, !didStartPendingLoad {
+                        guard !didStartPendingLoad else { return }
+                        if reason == MPV_END_FILE_REASON_ERROR {
+                            self.reportPlaybackError(errorCode, fallback: "视频加载失败，请检查媒体地址和网络连接。")
+                        } else if reason == MPV_END_FILE_REASON_EOF {
+                            self.mediaLoadState = .completed
                             self.stateChanged(.completed)
                             self.eventSink.onFinish?(nil)
+                        } else if reason == MPV_END_FILE_REASON_STOP || reason == MPV_END_FILE_REASON_QUIT {
+                            self.mediaLoadState = .stopped
+                            self.stateChanged(.stopped)
                         }
                     }
                 case MPV_EVENT_PROPERTY_CHANGE:
@@ -623,13 +644,13 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
 
         switch propertyName {
         case MPVProperty.pause:
-            let paused = UnsafePointer<Bool>(OpaquePointer(property.data))?.pointee ?? false
+            let paused = (UnsafePointer<Int32>(OpaquePointer(property.data))?.pointee ?? 0) != 0
             DispatchQueue.main.async {
                 self.isPaused = paused
                 self.syncPlaybackState()
             }
         case MPVProperty.pausedForCache:
-            let buffering = UnsafePointer<Bool>(OpaquePointer(property.data))?.pointee ?? false
+            let buffering = (UnsafePointer<Int32>(OpaquePointer(property.data))?.pointee ?? 0) != 0
             DispatchQueue.main.async {
                 self.isBuffering = buffering
                 self.syncPlaybackState()
@@ -685,20 +706,38 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     }
 
     private func syncPlaybackState() {
-        if isBuffering {
-            stateChanged(.buffering)
-        } else if isPaused {
-            stateChanged(.paused)
-        } else {
-            stateChanged(.playing)
+        switch mediaLoadState {
+        case .preparing:
+            stateChanged(.preparing)
+        case .ready:
+            stateChanged(isBuffering ? .buffering : isPaused ? .paused : .playing)
+        case .stopped:
+            stateChanged(.stopped)
+        case .completed:
+            stateChanged(.completed)
+        case let .failed(message):
+            stateChanged(.error(message))
         }
         eventSink.onTimelineChanged?(.init(currentTime: currentPlaybackTime, duration: currentDuration))
     }
 
-    private func checkError(_ status: Int32, fallback: String) {
-        guard status < 0 else { return }
-        let message = String(cString: mpv_error_string(status))
-        stateChanged(.error(message.isEmpty ? fallback : message))
+    private func checkError(_ status: Int32, fallback: String) -> Bool {
+        guard status < 0 else { return true }
+        reportPlaybackError(status, fallback: fallback)
+        return false
+    }
+
+    private func reportPlaybackError(_ status: Int32, fallback: String) {
+        let detail = String(cString: mpv_error_string(status))
+        let message = detail.isEmpty ? fallback : "\(fallback)（\(detail)）"
+        mediaLoadState = .failed(message)
+        hasActiveMedia = false
+        stateChanged(.error(message))
+        eventSink.onFinish?(NSError(
+            domain: "CineFlow.MPV",
+            code: Int(status),
+            userInfo: [NSLocalizedDescriptionKey: message]
+        ))
     }
 
     override func draw(_ dirtyRect: NSRect) {

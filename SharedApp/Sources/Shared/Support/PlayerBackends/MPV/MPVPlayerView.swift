@@ -388,6 +388,7 @@ final class MPVContainerViewController: PlatformViewController {
         guard let mpv else { return }
 
         prepareForSourceChange()
+        _ = mpv_set_option_string(mpv, "stream-lavf-o", MediaNetworkPolicy.shouldBypassProxy(for: source.url) ? "http_proxy=" : "")
         _ = mpv_set_option_string(mpv, "hwdec", options.enableHardwareDecoding ? "videotoolbox" : "no")
         applyHTTPHeaders(source.headers, to: mpv)
         applyAudioTrackSelection(options.selectedAudioTrackID)

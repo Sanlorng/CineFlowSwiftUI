@@ -17,6 +17,7 @@ typedef struct SubtitleBridgeTrackInfo {
 int subtitle_bridge_copy_tracks(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     SubtitleBridgeTrackInfo **tracks,
     int *count,
     char **error_message
@@ -25,6 +26,7 @@ int subtitle_bridge_copy_tracks(
 int subtitle_bridge_copy_ass_document(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     int stream_index,
     char **ass_document,
     char **error_message
@@ -33,6 +35,7 @@ int subtitle_bridge_copy_ass_document(
 int subtitle_bridge_copy_ass_document_window(
     const char *media_url,
     const char *headers,
+    int bypass_http_proxy,
     int stream_index,
     int64_t window_start_ms,
     int64_t window_end_ms,
