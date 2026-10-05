@@ -47,8 +47,9 @@ extension BaseAPIProtocol {
         do {
             output = try await apiCall()
         } catch {
-            // 将底层的网络错误包装成我们的 APIError
-            throw APIError.networkError(underlyingError: error as NSError)
+            // Preserve URLSession error codes instead of hiding them behind the OpenAPI wrapper.
+            let underlyingError = (error as? ClientError)?.underlyingError ?? error
+            throw APIError.networkError(underlyingError: underlyingError as NSError)
         }
         
         // 成功提取模型

@@ -365,7 +365,7 @@ struct LibraryPresenter {
                         let welcome = try await remoteClient.fetchWelcome(baseURL, draft.token)
                         await send(.welcomeChecked(.init(draft: draft, welcome: welcome)))
                     } catch {
-                        await send(.welcomeCheckFailed(error.localizedDescription))
+                        await send(.welcomeCheckFailed(RemoteMediaLibraryNetworking.validationErrorMessage(for: error)))
                     }
                 }
                 
@@ -647,7 +647,11 @@ extension RemoteMediaLibraryClient: DependencyKey {
     static var liveValue: RemoteMediaLibraryClient {
         RemoteMediaLibraryClient(
             fetchWelcome: { baseURL, token in
-                let api = try makeClient(baseURL: baseURL, token: token)
+                let api = try makeClient(
+                    baseURL: baseURL,
+                    token: token,
+                    session: RemoteMediaLibraryNetworking.validationSession
+                )
                 let response = try await api.fetch {
                     try await api.getWelcomeMessage(.init())
                 }
@@ -987,13 +991,20 @@ extension RemoteMediaLibraryClient: DependencyKey {
         )
     }
     
-    private static func makeClient(baseURL: URL, token: String?) throws -> RemoteMediaLibrary.Client {
+    private static func makeClient(
+        baseURL: URL,
+        token: String?,
+        session: URLSession = .shared
+    ) throws -> RemoteMediaLibrary.Client {
         RemoteMediaLibrary.Client(
             serverURL: baseURL,
             configuration: .init(
                 dateTranscoder: LenientRFC3339Transcoder(),
             ),
-            transport: TokenTransport(token: token, next: URLSessionTransport())
+            transport: TokenTransport(
+                token: token,
+                next: URLSessionTransport(configuration: .init(session: session))
+            )
         )
     }
 }
