@@ -402,7 +402,7 @@ private struct LibraryCard: View {
         Button(action: onTap) {
             cardContent
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CineFlowCardButtonStyle())
     }
     
     private var cardContent: some View {
@@ -471,16 +471,17 @@ private struct GroupSidebar: View {
                         } label: {
                             Text(group)
                                 .font(.caption)
-                                .foregroundColor(selected == group ? .white : .primary)
+                                .foregroundColor(selected == group ? .accentColor : .primary)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(
                                     Capsule()
-                                        .fill(selected == group ? Color.accentColor : Color.secondary.opacity(0.2))
+                                        .fill(Color.secondary.opacity(0.2))
+                                        .cineFlowCardInteractionTint(usesCapsule: true)
                                 )
                         }
                         .id(group)
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false, isSelected: selected == group))
                     }
                 }
             }

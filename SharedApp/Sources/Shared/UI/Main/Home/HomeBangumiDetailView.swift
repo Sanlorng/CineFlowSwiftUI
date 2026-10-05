@@ -304,7 +304,7 @@ struct HomeBangumiDetailView: View {
                 Link(destination: bangumiURL) {
                     detailActionLabel(title: "Bangumi.tv", systemImage: "safari")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false))
             }
 
             if let ratingTitle = ratingButtonTitle(detail: detail, summary: summary) {
@@ -313,7 +313,7 @@ struct HomeBangumiDetailView: View {
                 } label: {
                     detailActionLabel(title: ratingTitle, systemImage: "star.leadinghalf.filled")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false))
                 .popover(isPresented: $isRatingPopoverPresented, arrowEdge: .bottom) {
                     ratingPopover(detail: detail, summary: summary)
                 }
@@ -533,7 +533,7 @@ struct HomeBangumiDetailView: View {
                     isSelected: featured?.id == episode.id
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CineFlowCardButtonStyle(isSelected: featured?.id == episode.id))
             .disabled(!episode.hasMatchedFile)
         }
     }
@@ -726,7 +726,7 @@ struct HomeBangumiDetailView: View {
                             previewImageURL: trailerPreviewImageURL(for: trailer)
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 22))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -840,13 +840,14 @@ struct HomeBangumiDetailView: View {
                         .background(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .fill(Color.secondary.opacity(0.08))
+                                .cineFlowCardInteractionTint()
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CineFlowCardButtonStyle())
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1125,6 +1126,7 @@ struct HomeBangumiDetailView: View {
             .background(
                 Capsule(style: .continuous)
                     .fill(Color.secondary.opacity(0.12))
+                    .cineFlowCardInteractionTint(usesCapsule: true)
             )
             .overlay(
                 Capsule(style: .continuous)
@@ -1314,7 +1316,6 @@ struct HomeBangumiDetailView: View {
 private struct HomeEpisodeSidebarRow: View {
     let episode: HomeBangumiDetailPresenter.State.Detail.Episode
     let isSelected: Bool
-    @State private var isHovering = false
 
     private var isDisabled: Bool {
         !episode.hasMatchedFile
@@ -1371,27 +1372,20 @@ private struct HomeEpisodeSidebarRow: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .scaleEffect(isHovering && !isSelected && !isDisabled ? 1.01 : 1)
         .opacity(isDisabled ? 0.72 : 1)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(backgroundFill)
+                .cineFlowCardInteractionTint()
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(borderColor, lineWidth: 1)
         )
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
-#endif
     }
 
     private var backgroundFill: LinearGradient {
-        if isSelected {
+        if isSelected && isDisabled {
             return LinearGradient(
                 colors: [
                     Color.accentColor.opacity(0.24),
@@ -1404,8 +1398,8 @@ private struct HomeEpisodeSidebarRow: View {
 
         return LinearGradient(
             colors: [
-                Color.white.opacity(isHovering ? 0.24 : 0.1),
-                Color.white.opacity(isHovering ? 0.14 : 0.04)
+                Color.white.opacity(0.1),
+                Color.white.opacity(0.04)
             ],
             startPoint: .top,
             endPoint: .bottom
@@ -1413,10 +1407,10 @@ private struct HomeEpisodeSidebarRow: View {
     }
 
     private var borderColor: Color {
-        if isSelected {
+        if isSelected && isDisabled {
             return Color.accentColor.opacity(0.55)
         }
-        return Color.white.opacity(isHovering ? 0.28 : 0.08)
+        return Color.white.opacity(0.08)
     }
 
     private var recentTag: some View {
@@ -1444,7 +1438,6 @@ private struct HomeDetailEpisodePageTag: View {
     let page: HomeDetailEpisodePage
     let isSelected: Bool
     let action: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
@@ -1455,30 +1448,15 @@ private struct HomeDetailEpisodePageTag: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(
-                            isSelected
-                            ? Color.white.opacity(0.18)
-                            : Color.white.opacity(isHovering ? 0.08 : 0.02)
-                        )
+                        .fill(Color.white.opacity(0.02))
+                        .cineFlowCardInteractionTint(cornerRadius: 10)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(
-                            isSelected
-                            ? Color.white.opacity(0.16)
-                            : Color.white.opacity(isHovering ? 0.1 : 0.04),
-                            lineWidth: 1
-                        )
+                        .stroke(Color.white.opacity(0.04), lineWidth: 1)
                 )
         }
-        .buttonStyle(.plain)
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
-#endif
+        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 10, liftsOnHover: false, isSelected: isSelected))
     }
 }
 
@@ -1610,22 +1588,21 @@ private struct HomeTagFlowLayout: Layout {
 private struct HomeTrailerCard: View {
     let trailer: HomeBangumiDetailPresenter.State.Detail.ExternalLink
     let previewImageURL: URL?
-    @State private var isHovering = false
 
     private var previewBorderColor: Color {
-        isHovering ? Color.white.opacity(0.2) : Color.white.opacity(0.08)
+        Color.white.opacity(0.08)
     }
 
     private var cardBackgroundColor: Color {
-        Color.white.opacity(isHovering ? 0.12 : 0.07)
+        Color.white.opacity(0.07)
     }
 
     private var cardBorderColor: Color {
-        isHovering ? Color.white.opacity(0.18) : Color.white.opacity(0.08)
+        Color.white.opacity(0.08)
     }
 
     private var cardShadowColor: Color {
-        isHovering ? Color.black.opacity(0.22) : .clear
+        .clear
     }
 
     var body: some View {
@@ -1635,8 +1612,8 @@ private struct HomeTrailerCard: View {
 
                 LinearGradient(
                     colors: [
-                        Color.black.opacity(isHovering ? 0.02 : 0.08),
-                        Color.black.opacity(isHovering ? 0.68 : 0.55)
+                        Color.black.opacity(0.08),
+                        Color.black.opacity(0.55)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -1655,7 +1632,6 @@ private struct HomeTrailerCard: View {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.96))
-                        .scaleEffect(isHovering ? 1.08 : 1)
                 }
                 .padding(12)
             }
@@ -1685,6 +1661,7 @@ private struct HomeTrailerCard: View {
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(cardBackgroundColor)
+                .cineFlowCardInteractionTint(cornerRadius: 22)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -1692,17 +1669,9 @@ private struct HomeTrailerCard: View {
         )
         .shadow(
             color: cardShadowColor,
-            radius: isHovering ? 24 : 0,
-            y: isHovering ? 12 : 0
+            radius: 0,
+            y: 0
         )
-        .scaleEffect(isHovering ? 1.015 : 1)
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.14)) {
-                isHovering = hovering
-            }
-        }
-#endif
     }
 
     @ViewBuilder
@@ -1714,7 +1683,6 @@ private struct HomeTrailerCard: View {
                     image
                         .resizable()
                         .scaledToFill()
-                        .scaleEffect(isHovering ? 1.04 : 1)
                 case .empty:
                     placeholderImage
                         .overlay(ProgressView())
@@ -1807,9 +1775,10 @@ private struct HomeDetailFileSelectionView: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
                                     .fill(Color.detailBackgroundBase.opacity(0.14))
+                                    .cineFlowCardInteractionTint(cornerRadius: 12)
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12))
                     }
                 }
                 .padding(.vertical, 8)

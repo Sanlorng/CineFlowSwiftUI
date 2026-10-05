@@ -13,9 +13,6 @@ struct BangumiPosterCard<Content: View>: View {
     let width: CGFloat?
     let content: () -> Content
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovering = false
-
     private let cardPadding: CGFloat = 12
     private let coverCornerRadius: CGFloat = 14
     private let coverAspectRatio: CGFloat = 2 / 3
@@ -44,18 +41,7 @@ struct BangumiPosterCard<Content: View>: View {
         .frame(width: width, alignment: .topLeading)
         .background(cardBackground)
         .overlay(cardBorder)
-        .offset(y: isHovering && !reduceMotion ? -2 : 0)
-        .shadow(
-            color: Color.black.opacity(isHovering ? 0.10 : 0.03),
-            radius: isHovering ? 14 : 6,
-            x: 0,
-            y: isHovering ? 6 : 2
-        )
-        .zIndex(isHovering ? 1 : 0)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isHovering)
+        .shadow(color: Color.black.opacity(0.03), radius: 6, x: 0, y: 2)
     }
 
     private var coverContainer: some View {
@@ -69,10 +55,6 @@ struct BangumiPosterCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: coverCornerRadius))
         .contentShape(RoundedRectangle(cornerRadius: coverCornerRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: coverCornerRadius)
-                .stroke(Color.white.opacity(isHovering ? 0.14 : 0), lineWidth: 1)
-        }
     }
 
     @ViewBuilder
@@ -85,7 +67,6 @@ struct BangumiPosterCard<Content: View>: View {
                         image
                             .resizable()
                             .scaledToFill()
-                            .scaleEffect(isHovering && !reduceMotion ? 1.02 : 1)
                             .frame(
                                 width: geometry.size.width,
                                 height: geometry.size.height,
@@ -141,16 +122,13 @@ struct BangumiPosterCard<Content: View>: View {
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
             .fill(.regularMaterial)
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.accentColor.opacity(isHovering ? 0.04 : 0))
-            }
+            .cineFlowCardInteractionTint()
     }
 
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
             .strokeBorder(
-                isHovering ? Color.accentColor.opacity(0.3) : Color.primary.opacity(0.08),
+                Color.primary.opacity(0.08),
                 lineWidth: 1
             )
     }

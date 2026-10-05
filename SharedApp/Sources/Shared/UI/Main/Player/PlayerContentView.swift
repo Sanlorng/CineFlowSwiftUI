@@ -658,7 +658,7 @@ private struct PlayerContentMainView: View {
                             isSelected: abs(playerController.playbackRate - rate) < 0.001
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: abs(playerController.playbackRate - rate) < 0.001))
                 }
             }
             .padding(12)
@@ -807,7 +807,7 @@ private struct PlayerContentMainView: View {
                                             isSelected: subtitleFontFamily == option.rawValue
                                         )
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: subtitleFontFamily == option.rawValue))
                                 }
                             }
                         }
@@ -826,7 +826,7 @@ private struct PlayerContentMainView: View {
                                         isSelected: playbackMode == mode
                                     )
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: playbackMode == mode))
                             }
                         }
 
@@ -1035,7 +1035,7 @@ private struct PlayerContentMainView: View {
                                     )
                                 }
                                 .id(item.id)
-                                .buttonStyle(.plain)
+                                .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, isSelected: viewStore.currentItem?.id == item.id))
                             }
                         }
                         .padding(.horizontal, 12)
@@ -1089,7 +1089,7 @@ private struct PlayerContentMainView: View {
                                 )
                             }
                             .id(item.id)
-                            .buttonStyle(.plain)
+                            .buttonStyle(CineFlowCardButtonStyle(isSelected: viewStore.currentItem?.id == item.id))
                         }
                     }
                     .padding(10)
@@ -1147,23 +1147,15 @@ private struct PlayerContentMainView: View {
                                 .padding(.vertical, 9)
                                 .background(
                                     Capsule(style: .continuous)
-                                        .fill(
-                                            selectedEpisodePageIndex == page.index
-                                            ? Color.accentColor.opacity(0.22)
-                                            : Color.white.opacity(0.06)
-                                        )
+                                        .fill(Color.white.opacity(0.06))
+                                        .cineFlowCardInteractionTint(usesCapsule: true)
                                 )
                                 .overlay(
                                     Capsule(style: .continuous)
-                                        .stroke(
-                                            selectedEpisodePageIndex == page.index
-                                            ? Color.accentColor.opacity(0.7)
-                                            : Color.white.opacity(0.06),
-                                            lineWidth: 1
-                                        )
+                                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
                                 )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false, isSelected: selectedEpisodePageIndex == page.index))
                     }
                 }
             }
@@ -1234,7 +1226,7 @@ private struct PlayerContentMainView: View {
                             selectionRowLabel(title: "自动选择", subtitle: nil, isSelected: viewStore.selectedAudioTrackID == nil)
                         }
                         .id("audio-auto")
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.selectedAudioTrackID == nil))
                         ForEach(viewStore.availableAudioTracks) { track in
                             Button {
                                 viewStore.send(.audioTrackSelected(track.id))
@@ -1243,7 +1235,7 @@ private struct PlayerContentMainView: View {
                                 selectionRowLabel(title: track.displayName, subtitle: track.language, isSelected: viewStore.selectedAudioTrackID == track.id)
                             }
                             .id(track.id)
-                            .buttonStyle(.plain)
+                            .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.selectedAudioTrackID == track.id))
                         }
                     }
                 }
@@ -1291,13 +1283,14 @@ private struct PlayerContentMainView: View {
                                 isSelected: false
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: false))
                         Button(action: {
                             isImportingLocalSubtitle = true
                             isSubtitlePopoverPresented = false
                         }) {
                             selectionRowLabel(title: "导入本地字幕…", subtitle: nil, isSelected: false)
                         }
+                        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: false))
 
                         if !viewStore.areSubtitlesSuppressed,
                            (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
@@ -1326,7 +1319,7 @@ private struct PlayerContentMainView: View {
                                         )
                                     }
                                     .id("subtitle-external-\(subtitle.id)")
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.selectedSubtitle?.id == subtitle.id))
                                 }
                             }
                             if !viewStore.availableEmbeddedSubtitles.isEmpty {
@@ -1348,7 +1341,7 @@ private struct PlayerContentMainView: View {
                                         )
                                     }
                                     .id("subtitle-embedded-\(subtitle.id)")
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.selectedSubtitle == nil))
                                 }
                             }
                         }
@@ -2172,23 +2165,15 @@ private struct PlayerContentMainView: View {
                         .frame(maxWidth: 200, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(
-                                    viewStore.currentItem?.id == item.id ?
-                                    Color.accentColor.opacity(0.2) :
-                                    Color.platformBackground.opacity(0.3)
-                                )
+                                .fill(Color.platformBackground.opacity(0.3))
+                                .cineFlowCardInteractionTint(cornerRadius: 10)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(
-                                    viewStore.currentItem?.id == item.id ?
-                                    Color.accentColor :
-                                    Color.platformBackground.opacity(0.4),
-                                    lineWidth: viewStore.currentItem?.id == item.id ? 2 : 1
-                                )
+                                .stroke(Color.platformBackground.opacity(0.4), lineWidth: 1)
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 10, isSelected: viewStore.currentItem?.id == item.id))
                 }
             }
             .padding(.vertical, 4)
@@ -2258,9 +2243,10 @@ private struct PlayerFileSelectionView: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
                                     .fill(Color.platformBackground.opacity(0.3))
+                                    .cineFlowCardInteractionTint(cornerRadius: 12)
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12))
                     }
                 }
                 .padding(.vertical, 8)
@@ -2648,7 +2634,7 @@ private struct SelectionRowLabelView: View {
     let title: String
     let subtitle: String?
     let isSelected: Bool
-    @State private var isHovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -2672,28 +2658,13 @@ private struct SelectionRowLabelView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    isSelected
-                    ? Color.accentColor.opacity(0.14)
-                    : Color.white.opacity(isHovering ? 0.08 : 0)
-                )
+                .fill(isSelected && !isEnabled ? Color.accentColor.opacity(0.14) : Color.clear)
+                .cineFlowCardInteractionTint(cornerRadius: 12)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(
-                    isSelected
-                    ? Color.accentColor.opacity(0.28)
-                    : Color.white.opacity(isHovering ? 0.12 : 0),
-                    lineWidth: 1
-                )
+                .stroke(isSelected && !isEnabled ? Color.accentColor.opacity(0.28) : Color.clear, lineWidth: 1)
         )
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
-#endif
     }
 }
 
@@ -2709,7 +2680,7 @@ private func episodeBrowserRow(
 private struct EpisodeBrowserRowContent: View {
     let item: PlayerPresenter.State.PlaylistItem
     let isSelected: Bool
-    @State private var isHovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2729,11 +2700,10 @@ private struct EpisodeBrowserRowContent: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .scaleEffect(isHovering && !isSelected ? 1.01 : 1)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
-                    isSelected
+                    isSelected && !isEnabled
                     ? LinearGradient(
                         colors: [
                             Color.accentColor.opacity(0.24),
@@ -2744,30 +2714,24 @@ private struct EpisodeBrowserRowContent: View {
                     )
                     : LinearGradient(
                         colors: [
-                            Color.white.opacity(isHovering ? 0.24 : 0.1),
-                            Color.white.opacity(isHovering ? 0.14 : 0.04)
+                            Color.white.opacity(0.1),
+                            Color.white.opacity(0.04)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
+                .cineFlowCardInteractionTint()
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(
-                    isSelected
+                    isSelected && !isEnabled
                     ? Color.accentColor.opacity(0.55)
-                    : Color.white.opacity(isHovering ? 0.28 : 0.08),
+                    : Color.white.opacity(0.08),
                     lineWidth: 1
                 )
         )
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
-#endif
     }
 }
 

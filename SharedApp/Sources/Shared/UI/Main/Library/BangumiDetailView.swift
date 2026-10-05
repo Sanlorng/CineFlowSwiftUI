@@ -271,7 +271,6 @@ struct BangumiDetailView: View {
 private struct EpisodeCard: View {
     let episode: Components.Schemas.LibraryBangumiEpisode
     let onTap: () -> Void
-    @State private var isHovering = false
 
     private var isSelected: Bool {
         episode.isLatestWatched == true
@@ -322,32 +321,25 @@ private struct EpisodeCard: View {
             .background(
                 RoundedRectangle(cornerRadius: 14)
                     .fill(
-                        isSelected
-                        ? Color.accentColor.opacity(isDisabled ? 0.12 : 0.2)
-                        : Color.platformBackground.opacity(isHovering ? 0.36 : 0.25)
+                        isSelected && isDisabled
+                        ? Color.accentColor.opacity(0.12)
+                        : Color.platformBackground.opacity(0.25)
                     )
+                    .cineFlowCardInteractionTint(cornerRadius: 14)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(
-                        isSelected
-                        ? Color.accentColor.opacity(isDisabled ? 0.4 : 0.7)
-                        : Color.platformBackground.opacity(isHovering ? 0.5 : 0.25),
+                        isSelected && isDisabled
+                        ? Color.accentColor.opacity(0.4)
+                        : Color.platformBackground.opacity(0.25),
                         lineWidth: 1.2
                     )
             )
-            .scaleEffect(isHovering && !isDisabled ? 1.01 : 1)
             .opacity(isDisabled ? 0.72 : 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .buttonStyle(.plain)
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
-#endif
+        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 14, isSelected: isSelected))
     }
     
     private var title: String {
@@ -396,7 +388,6 @@ private struct BangumiDetailEpisodePageTag: View {
     let page: BangumiDetailEpisodePage
     let isSelected: Bool
     let action: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
@@ -407,30 +398,15 @@ private struct BangumiDetailEpisodePageTag: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(
-                            isSelected
-                            ? Color.white.opacity(0.18)
-                            : Color.white.opacity(isHovering ? 0.08 : 0.02)
-                        )
+                        .fill(Color.white.opacity(0.02))
+                        .cineFlowCardInteractionTint(cornerRadius: 10)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(
-                            isSelected
-                            ? Color.white.opacity(0.16)
-                            : Color.white.opacity(isHovering ? 0.1 : 0.04),
-                            lineWidth: 1
-                        )
+                        .stroke(Color.white.opacity(0.04), lineWidth: 1)
                 )
         }
-        .buttonStyle(.plain)
-#if os(macOS)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovering = hovering
-            }
-        }
-#endif
+        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 10, liftsOnHover: false, isSelected: isSelected))
     }
 }
 
@@ -597,9 +573,10 @@ private struct FileSelectionView: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
                                     .fill(Color.platformBackground.opacity(0.3))
+                                    .cineFlowCardInteractionTint(cornerRadius: 12)
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12))
                     }
                 }
                 .padding(.vertical, 8)

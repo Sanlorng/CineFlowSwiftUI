@@ -189,7 +189,7 @@ struct HomeContentView: View {
                         } label: {
                             SearchResultCard(item: item)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle())
                     }
                 }
             }
@@ -231,7 +231,7 @@ struct HomeContentView: View {
                         } label: {
                             SeasonBangumiCard(item: item)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CineFlowCardButtonStyle())
                     }
                 }
             }
@@ -283,19 +283,18 @@ struct HomeContentView: View {
                     } label: {
                         Text(day.title)
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(viewStore.selectedScheduleDay == day ? Color.white : Color.primary)
+                            .foregroundStyle(viewStore.selectedScheduleDay == day ? Color.accentColor : Color.primary)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
                             .background(
                                 Capsule(style: .continuous)
                                     .fill(
-                                        viewStore.selectedScheduleDay == day
-                                            ? Color.accentColor
-                                            : Color.secondary.opacity(0.12)
+                                        Color.secondary.opacity(0.12)
                                     )
+                                    .cineFlowCardInteractionTint(usesCapsule: true)
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CineFlowCardButtonStyle(usesCapsule: true, liftsOnHover: false, isSelected: viewStore.selectedScheduleDay == day))
                     .accessibilityAddTraits(viewStore.selectedScheduleDay == day ? .isSelected : [])
                 }
             }
@@ -516,7 +515,7 @@ struct HomeContentView: View {
             .frame(height: 308)
             .shadow(color: .black.opacity(0.14), radius: 24, y: 14)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 30))
         .disabled(banner.url == nil)
     }
 
@@ -669,8 +668,6 @@ private struct QuickStatusRow: View {
     let item: HomePresenter.State.QuickStatusItem
     let onTap: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
@@ -690,29 +687,33 @@ private struct QuickStatusRow: View {
 
                 Spacer(minLength: 0)
 
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isHovering ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
-                    .opacity(isHovering ? 1 : 0)
+                QuickStatusChevron()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isHovering ? Color.primary.opacity(0.05) : Color.clear)
+                    .fill(Color.clear)
+                    .cineFlowCardInteractionTint(cornerRadius: 14)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isHovering ? Color.primary.opacity(0.08) : Color.clear, lineWidth: 1)
+                    .stroke(Color.clear, lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .scaleEffect(isHovering ? 1.01 : 1)
-            .animation(.easeInOut(duration: 0.16), value: isHovering)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 14))
+    }
+}
+
+private struct QuickStatusChevron: View {
+    @Environment(\.cineFlowCardInteraction) private var interaction
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(interaction.isHovering ? Color.primary.opacity(0.8) : Color.secondary.opacity(0.7))
+            .opacity(interaction.isHovering ? 1 : 0)
     }
 }
 
