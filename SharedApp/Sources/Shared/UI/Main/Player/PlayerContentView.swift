@@ -75,7 +75,7 @@ private struct PlayerContentMainView: View {
     @State private var subtitleTimeOffset = 0.0
     @AppStorage("player.subtitle.fontSize") private var subtitleFontSize = 54.0
     @AppStorage("player.subtitle.fontFamily") private var subtitleFontFamily = ""
-    @AppStorage("player.playback.mode") private var playbackModeRawValue = PlaybackMode.sequential.rawValue
+    @AppStorage("player.playback.mode") private var playbackModeRawValue = PlayerPlaybackMode.sequential.rawValue
     @AppStorage("player.shortcut.seekStepMilliseconds") private var shortcutSeekStepMilliseconds = PlayerShortcutDefaults.seekStepMilliseconds
     @AppStorage("player.shortcut.holdToBoostRate") private var shortcutHoldToBoostRate = PlayerShortcutDefaults.holdToBoostRate
     @AppStorage("player.shortcut.volumeStepPercent") private var shortcutVolumeStepPercent = PlayerShortcutDefaults.volumeStepPercent
@@ -136,8 +136,8 @@ private struct PlayerContentMainView: View {
                     subtitleTimeOffset: subtitleTimeOffset,
                     subtitleFontSize: subtitleFontSize,
                     subtitleFontFamily: effectiveSubtitleFontFamily,
-                    allowAutoPlay: shouldAllowAutoPlay(
-                        viewStore: viewStore,
+                    allowAutoPlay: PlayerPlaybackPolicy.allowsAutoPlay(
+                        state: viewStore.state,
                         isDanmakuVisible: isDanmakuVisible,
                         isSubtitleRendererReady: isSubtitleRendererReady,
                         playbackState: playerController.playbackState
@@ -234,8 +234,8 @@ private struct PlayerContentMainView: View {
     ) -> some View {
         GeometryReader { geometry in
             let subtitleViewportSize = subtitleOverlayViewportSize(in: geometry.size)
-            let blocksPlaybackStartForDanmaku = shouldBlockPlaybackStartUntilDanmakuLoads(
-                viewStore: viewStore,
+            let blocksPlaybackStartForDanmaku = PlayerPlaybackPolicy.blocksStartForDanmaku(
+                danmaku: viewStore.danmaku,
                 isDanmakuVisible: isDanmakuVisible,
                 playbackState: playerController.playbackState
             )
@@ -585,8 +585,8 @@ private struct PlayerContentMainView: View {
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
         displayMode: PlaybackControlDisplayMode
     ) -> some View {
-        let blocksPlaybackStartForDanmaku = shouldBlockPlaybackStartUntilDanmakuLoads(
-            viewStore: viewStore,
+        let blocksPlaybackStartForDanmaku = PlayerPlaybackPolicy.blocksStartForDanmaku(
+            danmaku: viewStore.danmaku,
             isDanmakuVisible: isDanmakuVisible,
             playbackState: playerController.playbackState
         )
@@ -816,7 +816,7 @@ private struct PlayerContentMainView: View {
 
                         VStack(alignment: .leading, spacing: 10) {
                             settingsSectionTitle("播放模式")
-                            ForEach(PlaybackMode.allCases) { mode in
+                            ForEach(PlayerPlaybackMode.allCases) { mode in
                                 Button {
                                     playbackModeRawValue = mode.rawValue
                                 } label: {
@@ -1412,8 +1412,8 @@ private struct PlayerContentMainView: View {
         subtitleFontOptions.first(where: { $0.rawValue == subtitleFontFamily }) ?? .systemDefault
     }
 
-    private var playbackMode: PlaybackMode {
-        PlaybackMode(rawValue: playbackModeRawValue) ?? .sequential
+    private var playbackMode: PlayerPlaybackMode {
+        PlayerPlaybackMode(rawValue: playbackModeRawValue) ?? .sequential
     }
 
     private var shortcutSeekStepSeconds: TimeInterval {
@@ -1766,8 +1766,8 @@ private struct PlayerContentMainView: View {
     private func togglePlaybackIfReady(
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
     ) {
-        guard !shouldBlockPlaybackStartUntilDanmakuLoads(
-            viewStore: viewStore,
+        guard !PlayerPlaybackPolicy.blocksStartForDanmaku(
+            danmaku: viewStore.danmaku,
             isDanmakuVisible: isDanmakuVisible,
             playbackState: playerController.playbackState
         ) else {
@@ -1897,24 +1897,16 @@ private struct PlayerContentMainView: View {
     private func handlePlaybackCompletion(
         viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
     ) {
-        switch playbackMode {
-        case .singleRepeat:
+        switch PlayerPlaybackPolicy.completion(
+            mode: playbackMode, currentIndex: viewStore.currentIndex, itemCount: viewStore.playlist.count
+        ) {
+        case .stop:
+            break
+        case .restart:
             playerController.seekTo(0)
             playerController.setPaused(false)
-        case .sequential:
-            guard viewStore.currentIndex + 1 < viewStore.playlist.count else { return }
-            playNextEpisode(viewStore: viewStore)
-        case .listRepeat:
-            if viewStore.currentIndex + 1 < viewStore.playlist.count {
-                playNextEpisode(viewStore: viewStore)
-            } else if let firstItem = viewStore.playlist.first {
-                if firstItem.id == viewStore.currentItem?.id {
-                    playerController.seekTo(0)
-                    playerController.setPaused(false)
-                } else {
-                    playEpisode(firstItem.id, viewStore: viewStore)
-                }
-            }
+        case let .play(index):
+            playEpisode(viewStore.playlist[index].id, viewStore: viewStore)
         }
     }
 
@@ -2326,68 +2318,6 @@ private func effectiveEmbeddedSubtitleTrackID(
     return viewStore.subtitles.selectedEmbeddedSubtitle?.backendTrackID
 }
 
-@MainActor
-private func shouldAllowAutoPlay(
-    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
-    isDanmakuVisible: Bool,
-    isSubtitleRendererReady: Bool,
-    playbackState: PlayerPlaybackState
-) -> Bool {
-    guard viewStore.shouldAutoPlayCurrentEntry else {
-        return false
-    }
-    if shouldBlockPlaybackStartUntilDanmakuLoads(
-        viewStore: viewStore,
-        isDanmakuVisible: isDanmakuVisible,
-        playbackState: playbackState
-    ) {
-        return false
-    }
-    if viewStore.subtitles.areSubtitlesSuppressed {
-        return true
-    }
-    if viewStore.subtitles.subtitleError != nil,
-       !viewStore.subtitles.isLoadingSelectedSubtitle {
-        return true
-    }
-    if viewStore.subtitles.activeSubtitle != nil {
-        return isSubtitleRendererReady
-    }
-    if PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks),
-       viewStore.subtitles.selectedEmbeddedSubtitle?.backendTrackID != nil {
-        return true
-    }
-    if viewStore.subtitles.selectedEmbeddedSubtitleTrackID != nil || viewStore.subtitles.selectedSubtitle != nil {
-        return false
-    }
-    if !viewStore.subtitles.availableEmbeddedSubtitles.isEmpty {
-        return false
-    }
-    if viewStore.subtitles.isLoadingEmbeddedSubtitles {
-        return false
-    }
-    return true
-}
-
-@MainActor
-private func shouldBlockPlaybackStartUntilDanmakuLoads(
-    viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>,
-    isDanmakuVisible: Bool,
-    playbackState: PlayerPlaybackState
-) -> Bool {
-    guard isDanmakuVisible,
-          viewStore.danmaku.isLoading,
-          viewStore.danmaku.document == nil else {
-        return false
-    }
-
-    switch playbackState {
-    case .playing, .buffering:
-        return false
-    case .preparing, .paused, .stopped, .completed, .idle, .error:
-        return true
-    }
-}
 
 private func selectedAudioTrackTitle(
     tracks: [PlayerTrack],
@@ -2748,145 +2678,7 @@ private func currentTitleStatic(for episode: Components.Schemas.LibraryBangumiEp
     return "未命名剧集"
 }
 
-#if os(macOS)
-private struct PlayerWindowObserver: NSViewRepresentable {
-    let onWindowChanged: (NSWindow?) -> Void
-    let onFullscreenWillChange: (Bool) -> Void
-    let onFullscreenChanged: (Bool) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            onWindowChanged: onWindowChanged,
-            onFullscreenWillChange: onFullscreenWillChange,
-            onFullscreenChanged: onFullscreenChanged
-        )
-    }
-
-    func makeNSView(context: Context) -> WindowObserverView {
-        let view = WindowObserverView(frame: .zero)
-        view.coordinator = context.coordinator
-        return view
-    }
-
-    func updateNSView(_ view: WindowObserverView, context: Context) {
-        view.coordinator = context.coordinator
-        context.coordinator.refresh(for: view.window)
-    }
-
-    static func dismantleNSView(_ view: WindowObserverView, coordinator: Coordinator) {
-        coordinator.teardown()
-    }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        private let onWindowChanged: (NSWindow?) -> Void
-        private let onFullscreenWillChange: (Bool) -> Void
-        private let onFullscreenChanged: (Bool) -> Void
-        private weak var observedWindow: NSWindow?
-        private var notificationTokens: [NSObjectProtocol] = []
-
-        init(
-            onWindowChanged: @escaping (NSWindow?) -> Void,
-            onFullscreenWillChange: @escaping (Bool) -> Void,
-            onFullscreenChanged: @escaping (Bool) -> Void
-        ) {
-            self.onWindowChanged = onWindowChanged
-            self.onFullscreenWillChange = onFullscreenWillChange
-            self.onFullscreenChanged = onFullscreenChanged
-        }
-
-        @MainActor
-        func refresh(for window: NSWindow?) {
-            guard observedWindow !== window else { return }
-            notificationTokens.forEach(NotificationCenter.default.removeObserver)
-            notificationTokens.removeAll()
-            observedWindow = window
-            reportWindowChange(window)
-            reportFullscreenChange(window?.styleMask.contains(.fullScreen) ?? false)
-
-            guard let window else { return }
-            notificationTokens.append(
-                NotificationCenter.default.addObserver(
-                    forName: NSWindow.willEnterFullScreenNotification,
-                    object: window,
-                    queue: .main
-                ) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.reportFullscreenWillChange(true)
-                    }
-                }
-            )
-            notificationTokens.append(
-                NotificationCenter.default.addObserver(
-                    forName: NSWindow.willExitFullScreenNotification,
-                    object: window,
-                    queue: .main
-                ) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.reportFullscreenWillChange(false)
-                    }
-                }
-            )
-            notificationTokens.append(
-                NotificationCenter.default.addObserver(
-                    forName: NSWindow.didEnterFullScreenNotification,
-                    object: window,
-                    queue: .main
-                ) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.reportFullscreenChange(true)
-                    }
-                }
-            )
-            notificationTokens.append(
-                NotificationCenter.default.addObserver(
-                    forName: NSWindow.didExitFullScreenNotification,
-                    object: window,
-                    queue: .main
-                ) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.reportFullscreenChange(false)
-                    }
-                }
-            )
-        }
-
-        func teardown() {
-            notificationTokens.forEach(NotificationCenter.default.removeObserver)
-            notificationTokens.removeAll()
-            observedWindow = nil
-            reportWindowChange(nil)
-        }
-
-        private func reportWindowChange(_ window: NSWindow?) {
-            Task { @MainActor in
-                onWindowChanged(window)
-            }
-        }
-
-        private func reportFullscreenWillChange(_ fullscreen: Bool) {
-            Task { @MainActor in
-                onFullscreenWillChange(fullscreen)
-            }
-        }
-
-        private func reportFullscreenChange(_ fullscreen: Bool) {
-            Task { @MainActor in
-                onFullscreenChanged(fullscreen)
-            }
-        }
-    }
-}
-
-private final class WindowObserverView: NSView {
-    weak var coordinator: PlayerWindowObserver.Coordinator?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        coordinator?.refresh(for: window)
-    }
-}
-#endif
 
 private func subtitleMenuTitle(
     externalSubtitle: String?,
@@ -2987,35 +2779,6 @@ private func subtitleOffsetStatusTitle(_ offset: TimeInterval) -> String {
     return "字幕推后 \(formatted)"
 }
 
-private enum PlaybackMode: String, CaseIterable, Identifiable {
-    case sequential
-    case singleRepeat
-    case listRepeat
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .sequential:
-            return "顺序播放"
-        case .singleRepeat:
-            return "单集循环"
-        case .listRepeat:
-            return "列表循环"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .sequential:
-            return "播放完成后自动进入下一集，最后一集结束后停止"
-        case .singleRepeat:
-            return "当前集播放完成后从头重新播放"
-        case .listRepeat:
-            return "播放完成后自动进入下一集，最后一集结束后回到第一集"
-        }
-    }
-}
 
 private struct PlayerShortcutHUDState: Equatable {
     let title: String
