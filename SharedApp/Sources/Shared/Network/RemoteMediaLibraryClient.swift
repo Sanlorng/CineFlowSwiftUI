@@ -101,6 +101,7 @@ extension RemoteMediaLibraryClient: DependencyKey {
                         fileID: fileID
                     )
                 } catch {
+                    try Task.checkCancellation()
 #if DEBUG
                     print("[Network][RemoteMediaLibrary] web player stream fallback reason: \(error)")
 #endif
@@ -139,6 +140,7 @@ extension RemoteMediaLibraryClient: DependencyKey {
                         throw APIError.serverError(statusCode: statusCode)
                     }
                 } catch {
+                    try Task.checkCancellation()
                     return try await fetchSubtitleInfoFallback(
                         baseURL: baseURL,
                         token: token,
@@ -164,6 +166,7 @@ extension RemoteMediaLibraryClient: DependencyKey {
                         throw APIError.serverError(statusCode: statusCode)
                     }
                 } catch {
+                    try Task.checkCancellation()
                     return try await fetchSubtitleFileFallback(
                         baseURL: baseURL,
                         token: token,
@@ -629,6 +632,7 @@ private func fetchSubtitleFileFallback(
             }
             throw APIError.unexpectedResponse("字幕文件不是可识别的文本编码。")
         } catch {
+            try Task.checkCancellation()
             lastError = error
         }
     }

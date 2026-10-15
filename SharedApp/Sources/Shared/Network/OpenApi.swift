@@ -47,6 +47,8 @@ extension BaseAPIProtocol {
         do {
             output = try await apiCall()
         } catch {
+            try Task.checkCancellation()
+            if error is CancellationError { throw error }
             // Preserve URLSession error codes instead of hiding them behind the OpenAPI wrapper.
             let underlyingError = (error as? ClientError)?.underlyingError ?? error
             throw APIError.networkError(underlyingError: underlyingError as NSError)

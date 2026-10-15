@@ -16,6 +16,16 @@ import SubtitleRendererCore
 struct PlayerPresenter {
     
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
+    @Dependency(\.uuid) var uuid
+
+    private enum CancelID: CaseIterable {
+        case subtitleList, embeddedTracks, subtitleContent, embeddedWindow, danmaku, playbackSync
+    }
+
+    private var cancelPlaybackEffects: Effect<Action> {
+        .merge(CancelID.allCases.map { .cancel(id: $0) })
+    }
+
     
     @ObservableState
     struct State: Equatable, Identifiable {
@@ -128,6 +138,7 @@ struct PlayerPresenter {
     
     enum Action: Equatable {
         case onAppear
+        case stop
         case playItem(PlaybackItem.ID)
         case playNext
         case playPrevious
@@ -161,6 +172,18 @@ struct PlayerPresenter {
     var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
+            case .stop:
+                state.subtitleListRequest = nil
+                state.embeddedSubtitleTracksRequest = nil
+                state.subtitleContentRequest = nil
+                state.inFlightEmbeddedSubtitleWindowRequest = nil
+                state.danmakuRequest = nil
+                state.isLoadingSubtitles = false
+                state.isLoadingEmbeddedSubtitles = false
+                state.isLoadingSelectedSubtitle = false
+                state.isLoadingDanmaku = false
+                return cancelPlaybackEffects
+
             case .onAppear:
                 return loadSubtitles(for: &state)
                 
@@ -242,6 +265,7 @@ struct PlayerPresenter {
 #endif
                     }
                 }
+                .cancellable(id: CancelID.playbackSync, cancelInFlight: true)
 
             case let .playbackTimeUpdated(playbackTime):
                 state.currentPlaybackTime = max(playbackTime, 0)
@@ -379,7 +403,7 @@ struct PlayerPresenter {
                 state.isLoadingSelectedSubtitle = true
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
-                let requestID = UUID()
+                let requestID = uuid()
                 state.subtitleContentRequest = .init(id: requestID, subtitleID: subtitle.id)
                 debugLogPlayerFlow(
                     "subtitleSelected fileID=\(fileID) subtitleID=\(subtitle.id) requestID=\(requestID) fileName=\(subtitle.fileName)"
@@ -397,6 +421,8 @@ struct PlayerPresenter {
                         )
                     )
                 }
+                .cancellable(id: CancelID.subtitleContent, cancelInFlight: true)
+                .merge(with: .cancel(id: CancelID.embeddedWindow))
 
             case let .subtitleContentResponse(requestID, subtitle, .success(loadedSubtitle)):
                 guard state.subtitleContentRequest == .init(id: requestID, subtitleID: subtitle.id) else {
@@ -445,7 +471,7 @@ struct PlayerPresenter {
                     state.activeSubtitle = nil
                     state.subtitleError = error.localizedDescription
                 }
-                return .none
+                return .merge(.cancel(id: CancelID.subtitleContent), .cancel(id: CancelID.embeddedWindow))
 
             case let .localSubtitleLoadFailed(message):
                 state.subtitleError = message
@@ -476,13 +502,14 @@ struct PlayerPresenter {
                     debugLogEmbeddedSubtitlePlayback(
                         "embedded subtitle selected for native backend fileID=\(fileID) trackID=\(trackID) backendTrackID=\(selectedTrack?.backendTrackID ?? "<none>")"
                     )
-                    return .none
+                    return .merge(.cancel(id: CancelID.subtitleContent), .cancel(id: CancelID.embeddedWindow))
                 }
 
                 debugLogEmbeddedSubtitlePlayback(
                     "embedded subtitle selected fileID=\(fileID) trackID=\(trackID) streamURL=\(currentItem.stream.url.absoluteString)"
                 )
                 return refreshEmbeddedSubtitleWindowIfNeeded(for: &state, force: true)
+                    .merge(with: .cancel(id: CancelID.subtitleContent))
 
             case let .embeddedSubtitleContentResponse(trackID, requestID, window, .success(loadedSubtitle)):
                 guard state.selectedEmbeddedSubtitleTrackID == trackID,
@@ -567,7 +594,7 @@ struct PlayerPresenter {
                 state.loadedEmbeddedSubtitleWindow = nil
                 state.inFlightEmbeddedSubtitleWindowRequest = nil
                 state.subtitleContentRequest = nil
-                return .none
+                return .merge(.cancel(id: CancelID.subtitleContent), .cancel(id: CancelID.embeddedWindow))
 
             case let .setSubtitlesSuppressed(suppressed):
                 state.areSubtitlesSuppressed = suppressed
@@ -581,7 +608,7 @@ struct PlayerPresenter {
                     state.subtitleContentRequest = nil
                 }
                 state.subtitleError = nil
-                return .none
+                return suppressed ? .merge(.cancel(id: CancelID.subtitleContent), .cancel(id: CancelID.embeddedWindow)) : .none
                 
             case .showFilePicker:
                 guard let currentItem = state.currentItem,
@@ -645,7 +672,7 @@ struct PlayerPresenter {
     }
     
     private func loadSubtitles(for state: inout State) -> Effect<Action> {
-        state.playbackContextID = UUID()
+        state.playbackContextID = uuid()
         state.subtitleListRequest = nil
         state.embeddedSubtitleTracksRequest = nil
         state.subtitleContentRequest = nil
@@ -676,7 +703,7 @@ struct PlayerPresenter {
             state.currentPlaybackTime = 0
             state.loadedEmbeddedSubtitleWindow = nil
             state.inFlightEmbeddedSubtitleWindowRequest = nil
-            return .none
+            return cancelPlaybackEffects
         }
         let stream = currentItem.stream
         let prefersBackendEmbeddedTracks = PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks)
@@ -702,7 +729,7 @@ struct PlayerPresenter {
 
         let subtitleListEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
-            let requestID = UUID()
+            let requestID = uuid()
             state.subtitleListRequest = .init(id: requestID)
             debugLogPlayerFlow(
                 "subtitleList request created requestID=\(requestID) fileID=\(fileID)"
@@ -718,13 +745,14 @@ struct PlayerPresenter {
                     )
                 )
             }
+            .cancellable(id: CancelID.subtitleList, cancelInFlight: true)
         } else {
             subtitleListEffect = .none
         }
 
         let danmakuEffect: Effect<Action>
         if let baseURL = state.configuration.baseURL {
-            let requestID = UUID()
+            let requestID = uuid()
             state.danmakuRequest = .init(id: requestID)
             debugLogPlayerFlow(
                 "danmaku request created requestID=\(requestID) fileID=\(fileID)"
@@ -741,6 +769,7 @@ struct PlayerPresenter {
                     )
                 )
             }
+            .cancellable(id: CancelID.danmaku, cancelInFlight: true)
         } else {
             danmakuEffect = .none
         }
@@ -750,7 +779,7 @@ struct PlayerPresenter {
             embeddedTracksEffect = .none
         } else {
             state.isLoadingEmbeddedSubtitles = true
-            let requestID = UUID()
+            let requestID = uuid()
             state.embeddedSubtitleTracksRequest = .init(id: requestID)
             debugLogPlayerFlow(
                 "embeddedSubtitleTracks request created requestID=\(requestID) fileID=\(fileID) streamURL=\(stream.url.absoluteString)"
@@ -769,9 +798,13 @@ struct PlayerPresenter {
                     )
                 )
             }
+            .cancellable(id: CancelID.embeddedTracks, cancelInFlight: true)
         }
 
-        return .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect)
+        return .concatenate(
+            cancelPlaybackEffects,
+            .merge(subtitleListEffect, embeddedTracksEffect, danmakuEffect)
+        )
     }
 
     private func refreshEmbeddedSubtitleWindowIfNeeded(
@@ -809,7 +842,7 @@ struct PlayerPresenter {
             }
         }
 
-        let requestID = UUID()
+        let requestID = uuid()
         state.isLoadingSelectedSubtitle = true
         state.subtitleError = nil
         state.inFlightEmbeddedSubtitleWindowRequest = .init(
@@ -855,6 +888,7 @@ struct PlayerPresenter {
                 )
             )
         }
+        .cancellable(id: CancelID.embeddedWindow, cancelInFlight: true)
     }
 
     private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {

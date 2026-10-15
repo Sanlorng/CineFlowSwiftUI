@@ -65,6 +65,7 @@ struct LibraryPresenter {
         var searchQuery: String = ""
         var requestedPlayerState: PlaybackRequest?
         
+        var libraryRequestID: UUID?
         var isLoadingLibrary = false
         var isCheckingWelcome = false
         var formError: String?
@@ -109,8 +110,8 @@ struct LibraryPresenter {
         case selectConfiguration(UUID)
         case refresh
         case fetchLibrary(UUID)
-        case libraryLoaded(UUID, MediaLibrarySort, [State.BangumiItem])
-        case libraryFailed(UUID, MediaLibrarySort, String)
+        case libraryLoaded(UUID, UUID, MediaLibrarySort, [State.BangumiItem])
+        case libraryFailed(UUID, UUID, MediaLibrarySort, String)
         case setIsShowingForm(Bool)
         case saveNewConfiguration
         case welcomeChecked(WelcomePayload)
@@ -130,6 +131,9 @@ struct LibraryPresenter {
     
     @Dependency(\.remoteLibraryConfigurationOperation) var configurationOperation
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
+    @Dependency(\.uuid) var uuid
+
+    private enum CancelID { case library }
 
     @Reducer
     struct Path {
@@ -239,22 +243,28 @@ struct LibraryPresenter {
                     return .none
                 }
                 let sort = state.selectedSort
+                let requestID = uuid()
+                state.libraryRequestID = requestID
                 state.isLoadingLibrary = true
                 state.infoMessage = nil
                 return .run { [token = configuration.apiToken, remoteClient, sort] send in
                     do {
                         let items = try await remoteClient.fetchBangumiList(baseURL, token, sort)
                         let mapped = items.map { State.BangumiItem($0, baseURL: baseURL) }
-                        await send(.libraryLoaded(id, sort, mapped))
+                        try Task.checkCancellation()
+                        await send(.libraryLoaded(requestID, id, sort, mapped))
                     } catch {
-                        debugPrint(error)
-                        await send(.libraryFailed(id, sort, error.localizedDescription))
+                        guard !Task.isCancelled else { return }
+                        await send(.libraryFailed(requestID, id, sort, error.localizedDescription))
                     }
                 }
+                .cancellable(id: CancelID.library, cancelInFlight: true)
                 
-            case let .libraryLoaded(id, sort, items):
-                guard state.selectedConfigurationID == id,
+            case let .libraryLoaded(requestID, id, sort, items):
+                guard state.libraryRequestID == requestID,
+                      state.selectedConfigurationID == id,
                       state.selectedSort == sort else { return .none }
+                state.libraryRequestID = nil
                 state.isLoadingLibrary = false
                 state.bangumiItems = IdentifiedArray(uniqueElements: items)
                 if items.isEmpty {
@@ -262,9 +272,11 @@ struct LibraryPresenter {
                 }
                 return .none
                 
-            case let .libraryFailed(id, sort, message):
-                guard state.selectedConfigurationID == id,
+            case let .libraryFailed(requestID, id, sort, message):
+                guard state.libraryRequestID == requestID,
+                      state.selectedConfigurationID == id,
                       state.selectedSort == sort else { return .none }
+                state.libraryRequestID = nil
                 state.isLoadingLibrary = false
                 state.infoMessage = message
                 return .none
