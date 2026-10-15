@@ -33,8 +33,10 @@ Agents working in this repository should treat `SharedApp` as the default place 
   Build plugin logic.
 - `SharedApp/Sources/SecretGenerator`
   Generates `Secrets.swift` from `secrets.env`.
+- `SharedApp/Tests/SharedTests/`
+  Package tests for reducers, playback policies, networking, and persistence.
 - `CineFlowTests/`, `CineFlowUITests/`
-  Test targets. Coverage is currently light, so build verification matters.
+  Host and UI test targets. A macOS app build remains the minimum verification bar.
 
 ## Working Rules
 
@@ -56,8 +58,9 @@ Agents working in this repository should treat `SharedApp` as the default place 
 
 ## Player Rules
 
-- The current player backend is `FSPlayer`.
-- If player work expands, prefer introducing a backend-agnostic abstraction in `SharedApp/Sources/Shared/Support`.
+- The player supports `mpv` and `AVFoundation`; `PlayerBackendKind.defaultDistributable` selects mpv when `Libmpv` is available and otherwise AVFoundation.
+- Reuse the backend-agnostic interfaces in `SharedApp/Sources/Shared/Support/PlayerCore` and keep implementations in `Support/PlayerBackends`.
+- `PlayerPresenter` coordinates the playlist and playback session. Subtitle and danmaku state and effects belong in their respective child presenters.
 - Keep backend-specific APIs isolated behind that support layer.
 - Do not couple `UI/Main/Player` directly to a specific backend more than necessary.
 
