@@ -144,8 +144,8 @@ private struct PlayerContentMainView: View {
                     )
                 )
                 let customSubtitleDocument = makeCustomSubtitleDocument(
-                    from: viewStore.activeSubtitle,
-                    isSuppressed: viewStore.areSubtitlesSuppressed
+                    from: viewStore.subtitles.activeSubtitle,
+                    isSuppressed: viewStore.subtitles.areSubtitlesSuppressed
                 )
                 HStack(alignment: .top, spacing: usesFullscreenLayout ? 0 : 18) {
                     playerStage(
@@ -166,7 +166,7 @@ private struct PlayerContentMainView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !usesFullscreenLayout, let error = viewStore.subtitleError {
+            if !usesFullscreenLayout, let error = viewStore.subtitles.subtitleError {
                 Text(error)
                     .font(.footnote)
                     .foregroundStyle(.red)
@@ -288,7 +288,7 @@ private struct PlayerContentMainView: View {
                         debugLogPlayerViewFlow(
                             "onPlaybackTimeChanged fileID=\(viewStore.currentFileID ?? "<none>") playbackTime=\(playbackTime)"
                         )
-                        viewStore.send(.playbackTimeUpdated(playbackTime))
+                        viewStore.send(.subtitles(.playbackTimeUpdated(playbackTime)))
                     }
                 Color.clear
                     .contentShape(Rectangle())
@@ -306,7 +306,7 @@ private struct PlayerContentMainView: View {
                     onReadinessChanged: { ready in
                         if isSubtitleRendererReady != ready {
                             debugLogSubtitleRenderer(
-                                "readiness changed ready=\(ready) fileID=\(viewStore.currentFileID ?? "<none>") activeSubtitle=\(viewStore.activeSubtitle?.fileName ?? "<none>")"
+                                "readiness changed ready=\(ready) fileID=\(viewStore.currentFileID ?? "<none>") activeSubtitle=\(viewStore.subtitles.activeSubtitle?.fileName ?? "<none>")"
                             )
                         }
                         isSubtitleRendererReady = ready
@@ -319,8 +319,8 @@ private struct PlayerContentMainView: View {
                 }
                 .allowsHitTesting(false)
                 DanmakuRendererOverlay(
-                    document: viewStore.activeDanmaku?.document,
-                    documentID: viewStore.activeDanmaku?.id,
+                    document: viewStore.danmaku.document?.document,
+                    documentID: viewStore.danmaku.document?.id,
                     playbackTime: max(playerController.timeline.currentTime, 0),
                     isPlaybackActive: isDanmakuPlaybackActive(playerController.playbackState),
                     playbackRate: playerController.playbackRate,
@@ -425,12 +425,12 @@ private struct PlayerContentMainView: View {
             guard !isScrubbing else { return }
             scrubPosition = newValue
         }
-        .onChange(of: viewStore.activeSubtitle?.fileName) { oldValue, newValue in
+        .onChange(of: viewStore.subtitles.activeSubtitle?.fileName) { oldValue, newValue in
             debugLogSubtitleRenderer(
                 "active subtitle changed old=\(oldValue ?? "<none>") new=\(newValue ?? "<none>") fileID=\(viewStore.currentFileID ?? "<none>")"
             )
         }
-        .onChange(of: viewStore.selectedEmbeddedSubtitleTrackID) { oldValue, newValue in
+        .onChange(of: viewStore.subtitles.selectedEmbeddedSubtitleTrackID) { oldValue, newValue in
             debugLogSubtitleRenderer(
                 "selected embedded subtitle track changed old=\(oldValue ?? "<none>") new=\(newValue ?? "<none>") fileID=\(viewStore.currentFileID ?? "<none>")"
             )
@@ -930,7 +930,7 @@ private struct PlayerContentMainView: View {
                             Text("后端：\(PlayerBackendKind.defaultDistributable.displayName)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text("当前字幕：\(subtitleMenuTitle(externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore), embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName, isSuppressed: viewStore.areSubtitlesSuppressed))")
+                            Text("当前字幕：\(subtitleMenuTitle(externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore), embeddedSubtitle: viewStore.subtitles.selectedEmbeddedSubtitle?.displayName, isSuppressed: viewStore.subtitles.areSubtitlesSuppressed))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1262,8 +1262,8 @@ private struct PlayerContentMainView: View {
             glassAdaptiveControlLabel(
                 title: subtitleMenuTitle(
                     externalSubtitle: selectedExternalSubtitleTitle(viewStore: viewStore),
-                    embeddedSubtitle: viewStore.selectedEmbeddedSubtitle?.displayName,
-                    isSuppressed: viewStore.areSubtitlesSuppressed
+                    embeddedSubtitle: viewStore.subtitles.selectedEmbeddedSubtitle?.displayName,
+                    isSuppressed: viewStore.subtitles.areSubtitlesSuppressed
                 ),
                 systemImage: "captions.bubble",
                 displayMode: displayMode
@@ -1275,10 +1275,10 @@ private struct PlayerContentMainView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         Button(action: {
-                            viewStore.send(.setSubtitlesSuppressed(!viewStore.areSubtitlesSuppressed))
+                            viewStore.send(.subtitles(.setSubtitlesSuppressed(!viewStore.subtitles.areSubtitlesSuppressed)))
                         }) {
                             selectionRowLabel(
-                                title: viewStore.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕",
+                                title: viewStore.subtitles.areSubtitlesSuppressed ? "开启字幕" : "关闭字幕",
                                 subtitle: nil,
                                 isSelected: false
                             )
@@ -1292,56 +1292,56 @@ private struct PlayerContentMainView: View {
                         }
                         .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: false))
 
-                        if !viewStore.areSubtitlesSuppressed,
-                           (viewStore.availableSubtitles.isEmpty == false || viewStore.availableEmbeddedSubtitles.isEmpty == false) {
+                        if !viewStore.subtitles.areSubtitlesSuppressed,
+                           (viewStore.subtitles.availableSubtitles.isEmpty == false || viewStore.subtitles.availableEmbeddedSubtitles.isEmpty == false) {
                             Divider()
                         }
-                        if viewStore.availableSubtitles.isEmpty,
-                           viewStore.availableEmbeddedSubtitles.isEmpty {
+                        if viewStore.subtitles.availableSubtitles.isEmpty,
+                           viewStore.subtitles.availableEmbeddedSubtitles.isEmpty {
                             Text("暂无字幕")
                                 .foregroundStyle(.secondary)
-                        } else if !viewStore.areSubtitlesSuppressed {
-                            if !viewStore.availableSubtitles.isEmpty {
-                                if !viewStore.availableEmbeddedSubtitles.isEmpty {
+                        } else if !viewStore.subtitles.areSubtitlesSuppressed {
+                            if !viewStore.subtitles.availableSubtitles.isEmpty {
+                                if !viewStore.subtitles.availableEmbeddedSubtitles.isEmpty {
                                     Text("外挂字幕")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                ForEach(viewStore.availableSubtitles) { subtitle in
+                                ForEach(viewStore.subtitles.availableSubtitles) { subtitle in
                                     Button {
-                                        viewStore.send(.subtitleSelected(subtitle))
+                                        viewStore.send(.subtitles(.subtitleSelected(subtitle)))
                                         isSubtitlePopoverPresented = false
                                     } label: {
                                         selectionRowLabel(
                                             title: externalSubtitleDisplayTitle(subtitle),
                                             subtitle: nil,
-                                            isSelected: viewStore.selectedSubtitle?.id == subtitle.id
+                                            isSelected: viewStore.subtitles.selectedSubtitle?.id == subtitle.id
                                         )
                                     }
                                     .id("subtitle-external-\(subtitle.id)")
-                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.selectedSubtitle?.id == subtitle.id))
+                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.subtitles.selectedSubtitle?.id == subtitle.id))
                                 }
                             }
-                            if !viewStore.availableEmbeddedSubtitles.isEmpty {
-                                if !viewStore.availableSubtitles.isEmpty {
+                            if !viewStore.subtitles.availableEmbeddedSubtitles.isEmpty {
+                                if !viewStore.subtitles.availableSubtitles.isEmpty {
                                     Divider()
                                     Text("内嵌字幕")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                ForEach(viewStore.availableEmbeddedSubtitles) { subtitle in
+                                ForEach(viewStore.subtitles.availableEmbeddedSubtitles) { subtitle in
                                     Button {
-                                        viewStore.send(.embeddedSubtitleSelected(subtitle.id))
+                                        viewStore.send(.subtitles(.embeddedSubtitleSelected(subtitle.id)))
                                         isSubtitlePopoverPresented = false
                                     } label: {
                                         selectionRowLabel(
                                             title: subtitle.displayName,
                                             subtitle: subtitle.language,
-                                            isSelected: viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.selectedSubtitle == nil
+                                            isSelected: viewStore.subtitles.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.subtitles.selectedSubtitle == nil
                                         )
                                     }
                                     .id("subtitle-embedded-\(subtitle.id)")
-                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.selectedSubtitle == nil))
+                                    .buttonStyle(CineFlowCardButtonStyle(cornerRadius: 12, liftsOnHover: false, isSelected: viewStore.subtitles.selectedEmbeddedSubtitleTrackID == subtitle.id && viewStore.subtitles.selectedSubtitle == nil))
                                 }
                             }
                         }
@@ -1350,8 +1350,8 @@ private struct PlayerContentMainView: View {
                 .padding(12)
                 .frame(minWidth: 240, maxHeight: 320, alignment: .leading)
                 .onAppear {
-                    let targetID = viewStore.selectedSubtitle.map { "subtitle-external-\($0.id)" }
-                        ?? viewStore.selectedEmbeddedSubtitleTrackID.map { "subtitle-embedded-\($0)" }
+                    let targetID = viewStore.subtitles.selectedSubtitle.map { "subtitle-external-\($0.id)" }
+                        ?? viewStore.subtitles.selectedEmbeddedSubtitleTrackID.map { "subtitle-embedded-\($0)" }
                     guard let targetID else { return }
                     DispatchQueue.main.async {
                         proxy.scrollTo(targetID, anchor: .center)
@@ -1375,12 +1375,12 @@ private struct PlayerContentMainView: View {
                 }
                 do {
                     let content = try String(contentsOf: url, encoding: .utf8)
-                    store.send(.localSubtitleLoaded(fileName: url.lastPathComponent, content: content))
+                    store.send(.subtitles(.localSubtitleLoaded(fileName: url.lastPathComponent, content: content)))
                 } catch {
-                    store.send(.localSubtitleLoadFailed(error.localizedDescription))
+                    store.send(.subtitles(.localSubtitleLoadFailed(error.localizedDescription)))
                 }
             case let .failure(error):
-                store.send(.localSubtitleLoadFailed(error.localizedDescription))
+                store.send(.subtitles(.localSubtitleLoadFailed(error.localizedDescription)))
             }
         }
     }
@@ -2319,11 +2319,11 @@ private func effectiveEmbeddedSubtitleTrackID(
     viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
 ) -> String? {
     guard PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks),
-          !viewStore.areSubtitlesSuppressed,
-          viewStore.selectedSubtitle == nil else {
+          !viewStore.subtitles.areSubtitlesSuppressed,
+          viewStore.subtitles.selectedSubtitle == nil else {
         return nil
     }
-    return viewStore.selectedEmbeddedSubtitle?.backendTrackID
+    return viewStore.subtitles.selectedEmbeddedSubtitle?.backendTrackID
 }
 
 @MainActor
@@ -2343,27 +2343,27 @@ private func shouldAllowAutoPlay(
     ) {
         return false
     }
-    if viewStore.areSubtitlesSuppressed {
+    if viewStore.subtitles.areSubtitlesSuppressed {
         return true
     }
-    if viewStore.subtitleError != nil,
-       !viewStore.isLoadingSelectedSubtitle {
+    if viewStore.subtitles.subtitleError != nil,
+       !viewStore.subtitles.isLoadingSelectedSubtitle {
         return true
     }
-    if viewStore.activeSubtitle != nil {
+    if viewStore.subtitles.activeSubtitle != nil {
         return isSubtitleRendererReady
     }
     if PlayerBackendKind.defaultDistributable.capabilities.contains(.embeddedSubtitleTracks),
-       viewStore.selectedEmbeddedSubtitle?.backendTrackID != nil {
+       viewStore.subtitles.selectedEmbeddedSubtitle?.backendTrackID != nil {
         return true
     }
-    if viewStore.selectedEmbeddedSubtitleTrackID != nil || viewStore.selectedSubtitle != nil {
+    if viewStore.subtitles.selectedEmbeddedSubtitleTrackID != nil || viewStore.subtitles.selectedSubtitle != nil {
         return false
     }
-    if !viewStore.availableEmbeddedSubtitles.isEmpty {
+    if !viewStore.subtitles.availableEmbeddedSubtitles.isEmpty {
         return false
     }
-    if viewStore.isLoadingEmbeddedSubtitles {
+    if viewStore.subtitles.isLoadingEmbeddedSubtitles {
         return false
     }
     return true
@@ -2376,8 +2376,8 @@ private func shouldBlockPlaybackStartUntilDanmakuLoads(
     playbackState: PlayerPlaybackState
 ) -> Bool {
     guard isDanmakuVisible,
-          viewStore.isLoadingDanmaku,
-          viewStore.activeDanmaku == nil else {
+          viewStore.danmaku.isLoading,
+          viewStore.danmaku.document == nil else {
         return false
     }
 
@@ -2909,13 +2909,13 @@ private func subtitleMenuTitle(
 private func selectedExternalSubtitleTitle(
     viewStore: ViewStore<PlayerPresenter.State, PlayerPresenter.Action>
 ) -> String? {
-    if viewStore.selectedEmbeddedSubtitleTrackID != nil {
+    if viewStore.subtitles.selectedEmbeddedSubtitleTrackID != nil {
         return nil
     }
-    if let selectedSubtitle = viewStore.selectedSubtitle {
+    if let selectedSubtitle = viewStore.subtitles.selectedSubtitle {
         return externalSubtitleDisplayTitle(selectedSubtitle)
     }
-    return viewStore.activeSubtitle.flatMap { externalSubtitleDisplayTitle(fileName: $0.fileName) }
+    return viewStore.subtitles.activeSubtitle.flatMap { externalSubtitleDisplayTitle(fileName: $0.fileName) }
 }
 
 private func externalSubtitleDisplayTitle(_ subtitle: RemoteMediaLibraryClient.Subtitle) -> String {
@@ -3075,7 +3075,7 @@ private let supportedSubtitleContentTypes: [UTType] = {
 }()
 
 private func makeCustomSubtitleDocument(
-    from subtitle: PlayerPresenter.State.LoadedSubtitle?,
+    from subtitle: PlayerSubtitlesPresenter.State.LoadedSubtitle?,
     isSuppressed: Bool
 ) -> SubtitleDocument? {
     guard !isSuppressed, let subtitle else { return nil }

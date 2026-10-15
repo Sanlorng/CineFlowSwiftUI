@@ -43,7 +43,7 @@ struct AppPresenterTests {
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
-        let oldPlayer = await store.send(.player(.onAppear))
+        let oldPlayer = await store.send(.player(.subtitles(.load)))
         let request = PlaybackTestFixtures.request(fileIDs: ["replacement"])
         await store.send(.library(.delegate(.startPlayback(request))))
         await oldPlayer.finish()
