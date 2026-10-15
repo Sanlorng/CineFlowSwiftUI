@@ -18,26 +18,10 @@ struct PlayerPresenter {
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
     
     @ObservableState
-    struct State: Equatable {
-        
-        struct PlaylistItem: Equatable, Identifiable {
-            let id: UUID
-            let episode: Components.Schemas.LibraryBangumiEpisode
-            var file: Components.Schemas.LibraryBangumiMatchedFile
-            var stream: RemoteMediaLibraryClient.StreamContext
-            
-            init(
-                id: UUID = UUID(),
-                episode: Components.Schemas.LibraryBangumiEpisode,
-                file: Components.Schemas.LibraryBangumiMatchedFile,
-                stream: RemoteMediaLibraryClient.StreamContext
-            ) {
-                self.id = id
-                self.episode = episode
-                self.file = file
-                self.stream = stream
-            }
-        }
+    struct State: Equatable, Identifiable {
+        typealias PlaylistItem = PlaybackItem
+        let id: UUID
+
         
         struct FileSelection: Equatable, Identifiable {
             let id = UUID()
@@ -117,22 +101,16 @@ struct PlayerPresenter {
         var subtitleContentRequest: SubtitleContentRequest?
         var danmakuRequest: DanmakuRequest?
         
-        init(
-            configuration: MediaLibraryConfiguration,
-            seriesTitle: String? = nil,
-            coverURL: URL? = nil,
-            playlist: [PlaylistItem],
-            currentIndex: Int,
-            allEpisodeFiles: [Components.Schemas.LibraryBangumiEpisode: [Components.Schemas.LibraryBangumiMatchedFile]]
-        ) {
-            self.configuration = configuration
-            self.seriesTitle = seriesTitle
-            self.coverURL = coverURL
-            self.playlist = IdentifiedArray(uniqueElements: playlist)
-            self.currentIndex = playlist.indices.contains(currentIndex) ? currentIndex : 0
-            self.allEpisodeFiles = allEpisodeFiles
+        init(request: PlaybackRequest) {
+            self.id = request.id
+            self.configuration = request.configuration
+            self.seriesTitle = request.seriesTitle
+            self.coverURL = request.coverURL
+            self.playlist = IdentifiedArray(uniqueElements: request.playlist)
+            self.currentIndex = request.playlist.indices.contains(request.currentIndex) ? request.currentIndex : 0
+            self.allEpisodeFiles = request.allEpisodeFiles
         }
-        
+
         var currentItem: PlaylistItem? {
             guard playlist.indices.contains(currentIndex) else { return nil }
             return playlist[currentIndex]
@@ -150,7 +128,7 @@ struct PlayerPresenter {
     
     enum Action: Equatable {
         case onAppear
-        case playItem(PlayerPresenter.State.PlaylistItem.ID)
+        case playItem(PlaybackItem.ID)
         case playNext
         case playPrevious
         case updateCurrentIndex(Int)

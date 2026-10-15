@@ -133,7 +133,7 @@ struct HomePresenter {
         var homeSearchQuery = ""
         var homeSearchResults: [SearchResult] = []
         var path = StackState<Path.State>()
-        var requestedPlayerState: PlayerPresenter.State?
+        var requestedPlayerState: PlaybackRequest?
 
         var isLoadingHomepage = false
         var isLoadingSeason = false

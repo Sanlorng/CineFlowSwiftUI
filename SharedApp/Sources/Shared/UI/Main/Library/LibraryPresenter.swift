@@ -63,7 +63,7 @@ struct LibraryPresenter {
         var bangumiItems: IdentifiedArrayOf<BangumiItem> = []
         var selectedSort: MediaLibrarySort = .lastPlay
         var searchQuery: String = ""
-        var requestedPlayerState: PlayerPresenter.State?
+        var requestedPlayerState: PlaybackRequest?
         
         var isLoadingLibrary = false
         var isCheckingWelcome = false

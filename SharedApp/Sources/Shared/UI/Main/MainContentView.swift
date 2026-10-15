@@ -31,7 +31,7 @@ struct MainContentView: View {
                 .tabViewStyle(.automatic)
                 .onChange(of: homeViewStore.state) { _, requestedPlayerState in
                     guard let requestedPlayerState else { return }
-                    playerStore = Store(initialState: requestedPlayerState) {
+                    playerStore = Store(initialState: PlayerPresenter.State(request: requestedPlayerState)) {
                         PlayerPresenter()
                     }
                     selectedTab = .Player
@@ -39,7 +39,7 @@ struct MainContentView: View {
                 }
                 .onChange(of: libraryViewStore.state) { _, requestedPlayerState in
                     guard let requestedPlayerState else { return }
-                    playerStore = Store(initialState: requestedPlayerState) {
+                    playerStore = Store(initialState: PlayerPresenter.State(request: requestedPlayerState)) {
                         PlayerPresenter()
                     }
                     selectedTab = .Player
