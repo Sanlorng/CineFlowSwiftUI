@@ -82,7 +82,7 @@ struct PlayerPresenter {
             let id: UUID
         }
         
-        let configuration: LibraryPresenter.State.Configuration
+        let configuration: MediaLibraryConfiguration
         let seriesTitle: String?
         let coverURL: URL?
         var playlist: IdentifiedArrayOf<PlaylistItem>
@@ -118,7 +118,7 @@ struct PlayerPresenter {
         var danmakuRequest: DanmakuRequest?
         
         init(
-            configuration: LibraryPresenter.State.Configuration,
+            configuration: MediaLibraryConfiguration,
             seriesTitle: String? = nil,
             coverURL: URL? = nil,
             playlist: [PlaylistItem],

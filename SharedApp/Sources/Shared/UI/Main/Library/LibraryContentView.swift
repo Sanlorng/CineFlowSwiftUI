@@ -86,7 +86,7 @@ struct LibraryContentView: View {
                         set: { viewStore.send(.setSort($0)) }
                     ),
                 ) {
-                    ForEach(LibraryPresenter.SortOption.allCases, id: \.self) { sort in
+                    ForEach(MediaLibrarySort.allCases, id: \.self) { sort in
                         Text(sort.displayName)
                             .tag(sort)
                     }

@@ -123,7 +123,7 @@ struct HomeBangumiDetailPresenter {
 
         let summary: Summary
         var detail: Detail?
-        var remoteConfiguration: LibraryPresenter.State.Configuration?
+        var remoteConfiguration: MediaLibraryConfiguration?
         var remoteDetail: HomeDetailRemoteSchemas.LibraryBangumiDetailsResponse?
         var isLoading = false
         var errorMessage: String?
@@ -138,7 +138,7 @@ struct HomeBangumiDetailPresenter {
 
     struct DetailPayload {
         let detail: State.Detail
-        let remoteConfiguration: LibraryPresenter.State.Configuration?
+        let remoteConfiguration: MediaLibraryConfiguration?
         let remoteDetail: HomeDetailRemoteSchemas.LibraryBangumiDetailsResponse?
     }
 
@@ -332,7 +332,7 @@ struct HomeBangumiDetailPresenter {
         detail: HomeDetailRemoteSchemas.LibraryBangumiDetailsResponse,
         baseURL: URL,
         token: String?,
-        configuration: LibraryPresenter.State.Configuration,
+        configuration: MediaLibraryConfiguration,
         seriesTitle: String?,
         coverURL: URL?,
         selectedEpisode: HomeDetailRemoteSchemas.LibraryBangumiEpisode,
@@ -475,7 +475,7 @@ private enum HomeBangumiDetailError: LocalizedError {
 }
 
 private struct RemotePlaybackPayload {
-    let configuration: LibraryPresenter.State.Configuration
+    let configuration: MediaLibraryConfiguration
     let detail: HomeDetailRemoteSchemas.LibraryBangumiDetailsResponse
 }
 

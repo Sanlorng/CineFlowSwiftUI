@@ -17,7 +17,7 @@ struct BangumiDetailPresenter {
     @ObservableState
     struct State: Equatable {
         let summary: LibraryPresenter.State.BangumiItem
-        let configuration: LibraryPresenter.State.Configuration
+        let configuration: MediaLibraryConfiguration
         var detail: Components.Schemas.LibraryBangumiDetailsResponse?
         var isLoading = false
         var errorMessage: String?
@@ -168,7 +168,7 @@ struct BangumiDetailPresenter {
         detail: Components.Schemas.LibraryBangumiDetailsResponse,
         baseURL: URL,
         token: String?,
-        configuration: LibraryPresenter.State.Configuration,
+        configuration: MediaLibraryConfiguration,
         seriesTitle: String?,
         coverURL: URL?,
         selectedEpisode: Components.Schemas.LibraryBangumiEpisode,
