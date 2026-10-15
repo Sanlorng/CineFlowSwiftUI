@@ -30,6 +30,7 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", exact: "1.26.0"),
         // Keep TCA's transitive Sharing dependency on the Xcode 27 compatibility fixes.
         .package(url: "https://github.com/pointfreeco/swift-sharing", exact: "2.8.2"),
+        .package(url: "https://github.com/pointfreeco/xctest-dynamic-overlay", from: "1.6.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax", "509.0.0"..<"603.0.0"),
     ],
     targets: [
@@ -72,7 +73,9 @@ let package = Package(
         .testTarget(
             name: "SharedTests",
             dependencies: [
-                "Shared"
+                "Shared",
+                // Use the real Testing ABI when TestStore reports dependency assertions.
+                .product(name: "IssueReportingTestSupport", package: "xctest-dynamic-overlay"),
             ]
         ),
         .target(
