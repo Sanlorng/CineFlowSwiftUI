@@ -75,7 +75,6 @@ extension AVFoundationPlayerView {
         private var likelyToKeepUpObservation: NSKeyValueObservation?
         private var periodicTimeObserver: Any?
         private var notificationTokens: [NSObjectProtocol] = []
-        private var lastHandledCommandRevision: UInt64 = 0
         private var currentPlaybackRate: Double = 1
 
         init(eventSink: PlayerBackendEventSink) {
@@ -289,11 +288,12 @@ extension AVFoundationPlayerView {
         }
 
         private func handleCommandIfNeeded(from controller: PlayerController) {
-            guard controller.commandRevision != lastHandledCommandRevision,
-                  let command = controller.latestCommand else {
-                return
+            for command in controller.takePendingCommands() {
+                handle(command)
             }
-            lastHandledCommandRevision = controller.commandRevision
+        }
+
+        private func handle(_ command: PlayerCommand) {
 
             switch command {
             case .togglePlayPause:

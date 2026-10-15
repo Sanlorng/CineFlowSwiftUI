@@ -1,6 +1,6 @@
 import Foundation
 
-enum PlayerCommand: Sendable {
+enum PlayerCommand: Equatable, Sendable {
     case togglePlayPause
     case setPaused(Bool)
     case setRate(Double)

@@ -49,7 +49,6 @@ extension MPVMacOSPlayerView {
                 eventSink.onStateChanged?(state)
             }
         }
-        private var lastHandledCommandRevision: UInt64 = 0
 
         init(eventSink: PlayerBackendEventSink) {
             self.eventSink = eventSink
@@ -113,12 +112,10 @@ extension MPVMacOSPlayerView {
         }
 
         private func handleCommandIfNeeded(from controller: PlayerController) {
-            guard controller.commandRevision != lastHandledCommandRevision,
-                  let command = controller.latestCommand else {
-                return
+            guard let surfaceController = self.controller else { return }
+            for command in controller.takePendingCommands() {
+                surfaceController.handle(command: command)
             }
-            lastHandledCommandRevision = controller.commandRevision
-            self.controller?.handle(command: command)
         }
     }
 }

@@ -10,7 +10,7 @@ final class PlayerController: ObservableObject {
     @Published private(set) var videoPresentationSize: CGSize?
 
     @Published private(set) var commandRevision: UInt64 = 0
-    @Published private(set) var latestCommand: PlayerCommand?
+    private var pendingCommands: [PlayerCommand] = []
 
     var isPlaying: Bool {
         playbackState == .playing
@@ -73,11 +73,18 @@ final class PlayerController: ObservableObject {
         timeline = .init()
         playbackRate = 1
         videoPresentationSize = nil
-        latestCommand = nil
+        pendingCommands.removeAll()
+    }
+
+    /// A view update may coalesce several commands. Consume the complete batch in order.
+    func takePendingCommands() -> [PlayerCommand] {
+        let commands = pendingCommands
+        pendingCommands.removeAll(keepingCapacity: true)
+        return commands
     }
 
     private func send(_ command: PlayerCommand) {
-        latestCommand = command
+        pendingCommands.append(command)
         commandRevision &+= 1
     }
 }
