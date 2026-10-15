@@ -113,6 +113,7 @@ struct PlayerPresenter {
         
         init(request: PlaybackRequest) {
             self.id = request.id
+            self.playbackContextID = request.id
             self.configuration = request.configuration
             self.seriesTitle = request.seriesTitle
             self.coverURL = request.coverURL

@@ -133,7 +133,6 @@ struct HomePresenter {
         var homeSearchQuery = ""
         var homeSearchResults: [SearchResult] = []
         var path = StackState<Path.State>()
-        var requestedPlayerState: PlaybackRequest?
 
         var isLoadingHomepage = false
         var isLoadingSeason = false
@@ -199,8 +198,12 @@ struct HomePresenter {
         case searchResponse(String, TaskResult<[State.SearchResult]>)
         case remoteHighlightsResponse(TaskResult<RemoteHighlightsPayload>)
         case showBangumiDetail(HomeBangumiDetailPresenter.State.Summary)
-        case playbackRequestHandled
+        case delegate(DelegateAction)
         case path(StackAction<Path.State, Path.Action>)
+    }
+
+    enum DelegateAction: Equatable {
+        case startPlayback(PlaybackRequest)
     }
 
     @Dependency(\.dandanCachedService) var dandanService
@@ -250,14 +253,12 @@ struct HomePresenter {
                 return .none
 
             case let .path(.element(id: _, action: .bangumiDetail(.delegate(.startPlayback(playerState))))):
-                state.requestedPlayerState = playerState
-                return .none
+                return .send(.delegate(.startPlayback(playerState)))
 
             case .path:
                 return .none
 
-            case .playbackRequestHandled:
-                state.requestedPlayerState = nil
+            case .delegate:
                 return .none
 
             case .onAppear:

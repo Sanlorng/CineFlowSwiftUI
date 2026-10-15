@@ -63,7 +63,6 @@ struct LibraryPresenter {
         var bangumiItems: IdentifiedArrayOf<BangumiItem> = []
         var selectedSort: MediaLibrarySort = .lastPlay
         var searchQuery: String = ""
-        var requestedPlayerState: PlaybackRequest?
         
         var libraryRequestID: UUID?
         var isLoadingLibrary = false
@@ -125,10 +124,14 @@ struct LibraryPresenter {
         case setSort(MediaLibrarySort)
         case setSearchQuery(String)
         case bangumiTapped(State.BangumiItem)
-        case playbackRequestHandled
+        case delegate(DelegateAction)
         case path(StackAction<Path.State, Path.Action>)
     }
     
+    enum DelegateAction: Equatable {
+        case startPlayback(PlaybackRequest)
+    }
+
     @Dependency(\.remoteLibraryConfigurationOperation) var configurationOperation
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
     @Dependency(\.uuid) var uuid
@@ -164,14 +167,12 @@ struct LibraryPresenter {
                 return .none
 
             case let .path(.element(id: _, action: .bangumiDetail(.delegate(.startPlayback(playerState))))):
-                state.requestedPlayerState = playerState
-                return .none
+                return .send(.delegate(.startPlayback(playerState)))
 
             case .path:
                 return .none
 
-            case .playbackRequestHandled:
-                state.requestedPlayerState = nil
+            case .delegate:
                 return .none
 
             case let .setFormName(name):
