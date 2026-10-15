@@ -29,6 +29,9 @@ struct AppPresenter {
                 state.selectedTab = .Player
                 return .none
 
+            case .library(.delegate(.configurationChanged)):
+                return .send(.home(.remoteLibraryChanged))
+
             case let .selectTab(tab):
                 state.selectedTab = tab
                 return .none

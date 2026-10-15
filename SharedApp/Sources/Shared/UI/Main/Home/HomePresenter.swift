@@ -143,6 +143,7 @@ struct HomePresenter {
         var seasonErrorMessage: String?
         var searchErrorMessage: String?
         var quickStatusErrorMessage: String?
+        var remoteHighlightsRequestID: UUID?
 
         var selectedSeason: Season? {
             guard let selectedSeasonID else { return nil }
@@ -196,7 +197,8 @@ struct HomePresenter {
         case setHomeSearchQuery(String)
         case performSearch(String)
         case searchResponse(String, TaskResult<[State.SearchResult]>)
-        case remoteHighlightsResponse(TaskResult<RemoteHighlightsPayload>)
+        case remoteLibraryChanged
+        case remoteHighlightsResponse(UUID, TaskResult<RemoteHighlightsPayload>)
         case showBangumiDetail(HomeBangumiDetailPresenter.State.Summary)
         case delegate(DelegateAction)
         case path(StackAction<Path.State, Path.Action>)
@@ -208,6 +210,7 @@ struct HomePresenter {
 
     @Dependency(\.dandanCachedService) var dandanService
     @Dependency(\.continuousClock) var clock
+    @Dependency(\.uuid) var uuid
     @Dependency(\.remoteLibraryConfigurationOperation) var configurationOperation
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
 
@@ -282,19 +285,7 @@ struct HomePresenter {
                         )
                     }
                     .cancellable(id: CancelID.homepage, cancelInFlight: true),
-                    .run { [configurationOperation, remoteClient] send in
-                        await send(
-                            .remoteHighlightsResponse(
-                                await TaskResult {
-                                    try await fetchRemoteHighlights(
-                                        configurationOperation: configurationOperation,
-                                        remoteClient: remoteClient
-                                    )
-                                }
-                            )
-                        )
-                    }
-                    .cancellable(id: CancelID.remoteHighlights, cancelInFlight: true)
+                    loadRemoteHighlights(for: &state)
                 )
 
             case .refresh:
@@ -314,19 +305,7 @@ struct HomePresenter {
                         )
                     }
                     .cancellable(id: CancelID.homepage, cancelInFlight: true),
-                    .run { [configurationOperation, remoteClient] send in
-                        await send(
-                            .remoteHighlightsResponse(
-                                await TaskResult {
-                                    try await fetchRemoteHighlights(
-                                        configurationOperation: configurationOperation,
-                                        remoteClient: remoteClient
-                                    )
-                                }
-                            )
-                        )
-                    }
-                    .cancellable(id: CancelID.remoteHighlights, cancelInFlight: true)
+                    loadRemoteHighlights(for: &state)
                 )
 
             case let .homepageResponse(mode, .success(payload)):
@@ -353,13 +332,24 @@ struct HomePresenter {
                 state.homepageErrorMessage = error.localizedDescription
                 return .none
 
-            case let .remoteHighlightsResponse(.success(payload)):
+            case .remoteLibraryChanged:
+                state.path.removeAll()
+                state.unwatchedItems = []
+                state.continueWatchingItems = []
+                state.quickStatusErrorMessage = nil
+                return loadRemoteHighlights(for: &state)
+
+            case let .remoteHighlightsResponse(requestID, .success(payload)):
+                guard state.remoteHighlightsRequestID == requestID else { return .none }
+                state.remoteHighlightsRequestID = nil
                 state.unwatchedItems = payload.unwatchedItems
                 state.continueWatchingItems = payload.continueWatchingItems
                 state.quickStatusErrorMessage = nil
                 return .none
 
-            case let .remoteHighlightsResponse(.failure(error)):
+            case let .remoteHighlightsResponse(requestID, .failure(error)):
+                guard state.remoteHighlightsRequestID == requestID else { return .none }
+                state.remoteHighlightsRequestID = nil
                 state.unwatchedItems = []
                 state.continueWatchingItems = []
                 state.quickStatusErrorMessage = error.localizedDescription
@@ -459,6 +449,20 @@ struct HomePresenter {
             Path()
         }
     }
+
+    private func loadRemoteHighlights(for state: inout State) -> Effect<Action> {
+        let requestID = uuid()
+        state.remoteHighlightsRequestID = requestID
+        return .run { [configurationOperation, remoteClient] send in
+            let result = await TaskResult {
+                try await fetchRemoteHighlights(configurationOperation: configurationOperation, remoteClient: remoteClient)
+            }
+            try Task.checkCancellation()
+            await send(.remoteHighlightsResponse(requestID, result))
+        }
+        .cancellable(id: CancelID.remoteHighlights, cancelInFlight: true)
+    }
+
 }
 
 private func mapHomepagePayload(_ response: DandanSchemas.HomepageResponseV2) -> HomePresenter.HomepagePayload {

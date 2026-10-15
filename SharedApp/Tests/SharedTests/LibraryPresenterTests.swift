@@ -6,6 +6,32 @@ import Testing
 @MainActor
 struct LibraryPresenterTests {
     @Test
+    func failedDefaultWritePreservesTheCurrentSelection() async {
+        let original = PlaybackTestFixtures.configuration
+        let other = MediaLibraryConfiguration(
+            id: UUID(1), name: "Other", url: original.url, apiToken: nil,
+            isDefault: false, createdAt: original.createdAt
+        )
+        var state = LibraryPresenter.State()
+        state.configurations = [original, other]
+        state.selectedConfigurationID = original.id
+        let store = TestStore(initialState: state) { LibraryPresenter() } withDependencies: {
+            $0.remoteLibraryConfigurationOperation.setDefault = { _ in
+                throw RemoteLibraryConfigurationOperation.OperationError.missingRecord
+            }
+        }
+
+        await store.send(.selectConfiguration(other.id)) { $0.pendingDefaultConfigurationID = other.id }
+        let message = RemoteLibraryConfigurationOperation.OperationError.missingRecord.localizedDescription
+        await store.receive(.defaultConfigurationUpdateFailed(other.id, message)) {
+            $0.pendingDefaultConfigurationID = nil
+            $0.infoMessage = message
+        }
+        #expect(store.state.selectedConfigurationID == original.id)
+        #expect(store.state.configurations.filter(\.isDefault).map(\.id) == [original.id])
+    }
+
+    @Test
     func sameLibraryRefreshCancelsThePreviousRequest() async {
         let clock = TestClock()
         let configuration = PlaybackTestFixtures.configuration

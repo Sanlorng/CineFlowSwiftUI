@@ -60,6 +60,7 @@ struct LibraryPresenter {
         var configurations: IdentifiedArrayOf<MediaLibraryConfiguration> = []
         var path = StackState<Path.State>()
         var selectedConfigurationID: UUID?
+        var pendingDefaultConfigurationID: UUID?
         var bangumiItems: IdentifiedArrayOf<BangumiItem> = []
         var selectedSort: MediaLibrarySort = .lastPlay
         var searchQuery: String = ""
@@ -107,6 +108,8 @@ struct LibraryPresenter {
         case configurationsLoaded([MediaLibraryConfiguration])
         case configurationsFailed(String)
         case selectConfiguration(UUID)
+        case defaultConfigurationUpdated(UUID, [MediaLibraryConfiguration])
+        case defaultConfigurationUpdateFailed(UUID, String)
         case refresh
         case fetchLibrary(UUID)
         case libraryLoaded(UUID, UUID, MediaLibrarySort, [State.BangumiItem])
@@ -130,13 +133,14 @@ struct LibraryPresenter {
     
     enum DelegateAction: Equatable {
         case startPlayback(PlaybackRequest)
+        case configurationChanged
     }
 
     @Dependency(\.remoteLibraryConfigurationOperation) var configurationOperation
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
     @Dependency(\.uuid) var uuid
 
-    private enum CancelID { case library }
+    private enum CancelID { case library, defaultConfiguration }
 
     @Reducer
     struct Path {
@@ -203,12 +207,17 @@ struct LibraryPresenter {
             case let .configurationsLoaded(configurations):
                 state.configurations = IdentifiedArray(uniqueElements: configurations.sorted { $0.createdAt < $1.createdAt })
                 if let defaultConfig = state.configurations.first(where: \.isDefault) ?? state.configurations.first {
+                    if state.selectedConfigurationID != defaultConfig.id {
+                        state.path.removeAll()
+                        state.bangumiItems = []
+                    }
                     state.selectedConfigurationID = defaultConfig.id
                     state.infoMessage = nil
-                    return .merge(
-                        updateDefaultConfigurationEffect(defaultID: defaultConfig.id),
-                        triggerFetchLibraryEffect(defaultConfig.id)
-                    )
+                    if state.configurations.filter(\.isDefault).count != 1 {
+                        state.pendingDefaultConfigurationID = defaultConfig.id
+                        return updateDefaultConfigurationEffect(defaultID: defaultConfig.id)
+                    }
+                    return triggerFetchLibraryEffect(defaultConfig.id)
                 } else {
                     state.selectedConfigurationID = nil
                     state.infoMessage = "尚未配置远程媒体库，请创建一个新配置。"
@@ -221,17 +230,31 @@ struct LibraryPresenter {
                 return .none
                 
             case let .selectConfiguration(id):
-                guard state.configurations[id: id] != nil else { return .none }
+                guard let configuration = state.configurations[id: id] else { return .none }
+                guard state.selectedConfigurationID != id || !configuration.isDefault || state.pendingDefaultConfigurationID != nil else {
+                    return .none
+                }
+                state.pendingDefaultConfigurationID = id
+                state.infoMessage = nil
+                return updateDefaultConfigurationEffect(defaultID: id)
+
+            case let .defaultConfigurationUpdated(id, configurations):
+                guard state.pendingDefaultConfigurationID == id else { return .none }
+                state.pendingDefaultConfigurationID = nil
+                state.configurations = IdentifiedArray(uniqueElements: configurations)
+                state.path.removeAll()
+                state.bangumiItems = []
                 state.selectedConfigurationID = id
-                state.configurations = IdentifiedArray(uniqueElements: state.configurations.map { config in
-                    var mutable = config
-                    mutable.isDefault = (config.id == id)
-                    return mutable
-                })
                 return .merge(
-                    updateDefaultConfigurationEffect(defaultID: id),
+                    .send(.delegate(.configurationChanged)),
                     triggerFetchLibraryEffect(id)
                 )
+
+            case let .defaultConfigurationUpdateFailed(id, message):
+                guard state.pendingDefaultConfigurationID == id else { return .none }
+                state.pendingDefaultConfigurationID = nil
+                state.infoMessage = message
+                return .none
                 
             case .refresh:
                 guard let id = state.selectedConfigurationID else { return .none }
@@ -335,7 +358,7 @@ struct LibraryPresenter {
             case .configurationSaved:
                 state.resetForm()
                 state.isShowingForm = false
-                return loadConfigurationsEffect()
+                return .merge(loadConfigurationsEffect(), .send(.delegate(.configurationChanged)))
                 
             case let .configurationSaveFailed(message):
                 state.isCheckingWelcome = false
@@ -362,9 +385,7 @@ struct LibraryPresenter {
         let operation = configurationOperation
         return .run { send in
             do {
-                let records = try await Task { @MainActor in
-                    try operation.fetchAll()
-                }.value
+                let records = try await operation.fetchAll()
                 await send(.configurationsLoaded(records.map(MediaLibraryConfiguration.init(record:))))
             } catch {
                 await send(.configurationsFailed(error.localizedDescription))
@@ -376,12 +397,7 @@ struct LibraryPresenter {
         let operation = configurationOperation
         return .run { send in
             do {
-                let saved = try await Task { @MainActor in
-                    let all = try operation.fetchAll()
-                    for var existing in all where existing.isDefault {
-                        existing.isDefault = false
-                        _ = try operation.updateItem(existing)
-                    }
+                let saved = try await MainActor.run {
                     let record = RemoteLibraryConfigurationOperation.Record(
                         id: UUID(),
                         name: draft.name,
@@ -391,7 +407,7 @@ struct LibraryPresenter {
                         createdAt: Date()
                     )
                     return try operation.addItem(record)
-                }.value
+                }
                 await send(.configurationSaved(.init(record: saved)))
             } catch {
                 await send(.configurationSaveFailed(error.localizedDescription))
@@ -403,20 +419,18 @@ struct LibraryPresenter {
         let operation = configurationOperation
         return .run { send in
             do {
-                _ = try await Task { @MainActor in
-                    let all = try operation.fetchAll()
-                    for var existing in all {
-                        let shouldBeDefault = existing.id == defaultID
-                        if existing.isDefault != shouldBeDefault {
-                            existing.isDefault = shouldBeDefault
-                            _ = try operation.updateItem(existing)
-                        }
-                    }
-                }.value
+                let records = try await MainActor.run {
+                    try Task.checkCancellation()
+                    return try operation.setDefault(defaultID)
+                }
+                try Task.checkCancellation()
+                await send(.defaultConfigurationUpdated(defaultID, records.map(MediaLibraryConfiguration.init(record:))))
             } catch {
-                await send(.configurationsFailed(error.localizedDescription))
+                guard !Task.isCancelled else { return }
+                await send(.defaultConfigurationUpdateFailed(defaultID, error.localizedDescription))
             }
         }
+        .cancellable(id: CancelID.defaultConfiguration, cancelInFlight: true)
     }
     
     private func triggerFetchLibraryEffect(_ id: UUID) -> Effect<Action> {

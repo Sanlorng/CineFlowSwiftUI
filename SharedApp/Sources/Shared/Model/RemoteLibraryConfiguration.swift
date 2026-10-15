@@ -32,7 +32,19 @@ final class RemoteLibraryConfiguration: Equatable, Identifiable {
     }
 }
 
-struct RemoteLibraryConfigurationOperation {
+struct RemoteLibraryConfigurationOperation: Sendable {
+    enum OperationError: LocalizedError, Equatable {
+        case missingRecord
+        case unconfigured
+
+        var errorDescription: String? {
+            switch self {
+            case .missingRecord: "媒体库配置已不存在。"
+            case .unconfigured: "媒体库配置存储尚未注入。"
+            }
+        }
+    }
+
     struct Record: Equatable, Identifiable, Sendable {
         var id: UUID
         var name: String
@@ -70,11 +82,12 @@ struct RemoteLibraryConfigurationOperation {
         }
     }
     
-    var addItem: @MainActor (Record) throws -> Record
-    var updateItem: @MainActor (Record) throws -> Record
-    var deleteItem: @MainActor (UUID) throws -> Void
-    var fetchAll: @MainActor () throws -> [Record]
-    var fetchDefault: @MainActor () throws -> Record?
+    var addItem: @MainActor @Sendable (Record) throws -> Record
+    var updateItem: @MainActor @Sendable (Record) throws -> Record
+    var setDefault: @MainActor @Sendable (UUID) throws -> [Record]
+    var deleteItem: @MainActor @Sendable (UUID) throws -> Void
+    var fetchAll: @MainActor @Sendable () throws -> [Record]
+    var fetchDefault: @MainActor @Sendable () throws -> Record?
 }
 
 extension RemoteLibraryConfigurationOperation {
@@ -82,6 +95,12 @@ extension RemoteLibraryConfigurationOperation {
         Self(
             addItem: { record in
                 let context = ModelContext(container)
+                context.autosaveEnabled = false
+                if record.isDefault {
+                    for item in try context.fetch(FetchDescriptor<RemoteLibraryConfiguration>()) {
+                        item.isDefault = false
+                    }
+                }
                 let model = RemoteLibraryConfiguration(
                     id: record.id,
                     name: record.name,
@@ -96,13 +115,29 @@ extension RemoteLibraryConfigurationOperation {
             },
             updateItem: { record in
                 let context = ModelContext(container)
+                context.autosaveEnabled = false
                 let descriptor = FetchDescriptor<RemoteLibraryConfiguration>()
                 let items = try context.fetch(descriptor)
-                if let existing = items.first(where: { $0.id == record.id }) {
-                    record.apply(to: existing)
-                    try context.save()
+                guard let existing = items.first(where: { $0.id == record.id }) else {
+                    throw OperationError.missingRecord
                 }
+                if record.isDefault {
+                    for item in items { item.isDefault = false }
+                }
+                record.apply(to: existing)
+                try context.save()
                 return record
+            },
+            setDefault: { id in
+                let context = ModelContext(container)
+                context.autosaveEnabled = false
+                let items = try context.fetch(FetchDescriptor<RemoteLibraryConfiguration>(sortBy: [SortDescriptor(\.createdAt)]))
+                guard items.contains(where: { $0.id == id }) else {
+                    throw OperationError.missingRecord
+                }
+                for item in items { item.isDefault = item.id == id }
+                try context.save()
+                return items.map(Record.init(model:))
             },
             deleteItem: { id in
                 let context = ModelContext(container)
@@ -133,9 +168,15 @@ extension RemoteLibraryConfigurationOperation: DependencyKey {
     static var liveValue: Self {
         fatalError("RemoteLibraryConfigurationOperation dependency must be provided at runtime.")
     }
+    static let testValue = Self(
+        addItem: { _ in throw OperationError.unconfigured },
+        updateItem: { _ in throw OperationError.unconfigured },
+        setDefault: { _ in throw OperationError.unconfigured },
+        deleteItem: { _ in throw OperationError.unconfigured },
+        fetchAll: { throw OperationError.unconfigured },
+        fetchDefault: { throw OperationError.unconfigured }
+    )
 }
-
-extension RemoteLibraryConfigurationOperation: @unchecked Sendable {}
 
 extension DependencyValues {
     var remoteLibraryConfigurationOperation: RemoteLibraryConfigurationOperation {
