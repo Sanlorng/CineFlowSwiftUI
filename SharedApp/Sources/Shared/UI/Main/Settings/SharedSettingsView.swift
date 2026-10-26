@@ -30,6 +30,9 @@ public struct SharedSettingsView: View {
 
     public var body: some View {
         TabView(selection: $selectedTab) {
+            Tab("字幕", systemImage: "captions.bubble", value: SharedSettingsTab.subtitles) {
+                settingsScrollPage { SubtitleLanguageSettingsView() }
+            }
             Tab("弹幕", systemImage: "text.bubble", value: SharedSettingsTab.danmaku) {
                 settingsScrollPage {
                     danmakuSettingsPage
@@ -439,6 +442,7 @@ private func settingsPlaybackRateTitle(_ rate: Double) -> String {
 }
 
 private enum SharedSettingsTab: String, CaseIterable, Identifiable {
+    case subtitles
     case danmaku
     case shortcuts
     case debug

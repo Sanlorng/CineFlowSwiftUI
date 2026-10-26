@@ -8,6 +8,7 @@ struct PlayerSubtitlesPresenter {
     @Dependency(\.remoteMediaLibraryClient) var remoteClient
     @Dependency(\.subtitleExtractionClient) var extractor
     @Dependency(\.uuid) var uuid
+    @Dependency(\.subtitleLanguagePreferences) var languagePreferences
 
     private enum CancelID: CaseIterable { case subtitleList, embeddedTracks, subtitleContent, embeddedWindow }
     private var cancelPlaybackEffects: Effect<Action> {
@@ -19,6 +20,7 @@ struct PlayerSubtitlesPresenter {
         let context: PlaybackAttachmentContext
         var hasLoaded = false
         var hasReceivedBackendTracks = false
+        var hasManualSelection = false
         struct LoadedSubtitle: Equatable, Sendable {
             let fileName: String
             let document: SubtitleDocument
@@ -69,6 +71,11 @@ struct PlayerSubtitlesPresenter {
             guard let selectedEmbeddedSubtitleTrackID else { return nil }
             return availableEmbeddedSubtitles.first { $0.id == selectedEmbeddedSubtitleTrackID }
         }
+
+        var canAutomaticallySelect: Bool {
+            !hasManualSelection && !areSubtitlesSuppressed && !isLoadingSelectedSubtitle
+                && selectedSubtitle == nil && selectedEmbeddedSubtitleTrackID == nil && activeSubtitle == nil
+        }
     }
 
     enum Action: Equatable {
@@ -79,10 +86,12 @@ struct PlayerSubtitlesPresenter {
         case subtitleListResponse(UUID, TaskResult<[RemoteMediaLibraryClient.Subtitle]>)
         case embeddedSubtitleTracksResponse(UUID, TaskResult<[SubtitleTrack]>)
         case subtitleSelected(RemoteMediaLibraryClient.Subtitle)
+        case automaticallySelectExternalSubtitle(RemoteMediaLibraryClient.Subtitle)
         case subtitleContentResponse(UUID, RemoteMediaLibraryClient.Subtitle, TaskResult<State.LoadedSubtitle>)
         case localSubtitleLoaded(fileName: String, content: String)
         case localSubtitleLoadFailed(String)
         case embeddedSubtitleSelected(SubtitleTrack.ID)
+        case automaticallySelectEmbeddedSubtitle(SubtitleTrack.ID)
         case embeddedSubtitleContentResponse(SubtitleTrack.ID, UUID, ClosedRange<TimeInterval>, TaskResult<State.LoadedSubtitle>)
         case subtitleCleared
         case setSubtitlesSuppressed(Bool)
@@ -212,7 +221,12 @@ struct PlayerSubtitlesPresenter {
                 state.subtitleError = error.localizedDescription
                 return autoSelectSubtitleIfNeeded(for: &state)
 
-            case let .subtitleSelected(subtitle):
+            case let .subtitleSelected(subtitle), let .automaticallySelectExternalSubtitle(subtitle):
+                if case .automaticallySelectExternalSubtitle = action {
+                    guard state.canAutomaticallySelect else { return .none }
+                } else {
+                    state.hasManualSelection = true
+                }
                 guard let currentItem = state.currentItem,
                       let fileID = currentItem.file.id,
                       !fileID.isEmpty else {
@@ -284,6 +298,7 @@ struct PlayerSubtitlesPresenter {
                 return .none
 
             case let .localSubtitleLoaded(fileName, content):
+                state.hasManualSelection = true
                 state.areSubtitlesSuppressed = false
                 state.selectedSubtitle = nil
                 state.selectedEmbeddedSubtitleTrackID = nil
@@ -304,7 +319,14 @@ struct PlayerSubtitlesPresenter {
                 state.subtitleError = message
                 return .none
 
-            case let .embeddedSubtitleSelected(trackID):
+            case let .embeddedSubtitleSelected(trackID), let .automaticallySelectEmbeddedSubtitle(trackID):
+                let isAutomatic: Bool
+                if case .automaticallySelectEmbeddedSubtitle = action {
+                    guard state.canAutomaticallySelect else { return .none }
+                    isAutomatic = true
+                } else {
+                    isAutomatic = false
+                }
                 guard state.availableEmbeddedSubtitles.contains(where: { $0.id == trackID }),
                       let currentItem = state.currentItem,
                       let fileID = currentItem.file.id,
@@ -312,6 +334,12 @@ struct PlayerSubtitlesPresenter {
                     return .none
                 }
                 let selectedTrack = state.availableEmbeddedSubtitles.first { $0.id == trackID }
+                if !isAutomatic {
+                    state.hasManualSelection = true
+                    if let selectedTrack, let key = SubtitleLanguagePreferences.key(for: selectedTrack) {
+                        languagePreferences.remember(key)
+                    }
+                }
                 state.areSubtitlesSuppressed = false
                 state.selectedSubtitle = nil
                 state.selectedEmbeddedSubtitleTrackID = trackID
@@ -380,6 +408,7 @@ struct PlayerSubtitlesPresenter {
                 return .none
 
             case .subtitleCleared:
+                state.hasManualSelection = true
                 state.selectedSubtitle = nil
                 state.selectedEmbeddedSubtitleTrackID = nil
                 state.activeSubtitle = nil
@@ -439,12 +468,14 @@ struct PlayerSubtitlesPresenter {
         state.isLoadingSubtitles = state.configuration.baseURL != nil
         state.isLoadingEmbeddedSubtitles = prefersBackendEmbeddedTracks && !state.hasReceivedBackendTracks
         state.availableSubtitles = []
-        state.selectedSubtitle = nil
-        state.selectedEmbeddedSubtitleTrackID = nil
-        state.activeSubtitle = nil
-        state.subtitleError = nil
-        state.areSubtitlesSuppressed = false
-        state.isLoadingSelectedSubtitle = false
+        if !state.hasManualSelection {
+            state.selectedSubtitle = nil
+            state.selectedEmbeddedSubtitleTrackID = nil
+            state.activeSubtitle = nil
+            state.subtitleError = nil
+            state.areSubtitlesSuppressed = false
+            state.isLoadingSelectedSubtitle = false
+        }
         state.currentPlaybackTime = 0
         state.loadedEmbeddedSubtitleWindow = nil
         state.inFlightEmbeddedSubtitleWindowRequest = nil
@@ -588,22 +619,25 @@ struct PlayerSubtitlesPresenter {
     }
 
     private func autoSelectSubtitleIfNeeded(for state: inout State) -> Effect<Action> {
-        guard !state.areSubtitlesSuppressed,
-              !state.isLoadingSelectedSubtitle,
-              state.selectedSubtitle == nil,
-              state.selectedEmbeddedSubtitleTrackID == nil,
-              state.activeSubtitle == nil else {
-            return .none
+        guard state.canAutomaticallySelect else { return .none }
+        let queue = languagePreferences.read()
+        if !queue.isEmpty {
+            // Do not let an earlier external-subtitle response bypass the queue
+            // while the embedded track scan is still in flight.
+            guard !state.isLoadingEmbeddedSubtitles else { return .none }
+            if let track = SubtitleLanguagePreferences.preferredTrack(in: state.availableEmbeddedSubtitles, queue: queue) {
+                return .send(.automaticallySelectEmbeddedSubtitle(track.id))
+            }
         }
 
         if !state.isLoadingEmbeddedSubtitles,
            let embeddedSubtitle = state.availableEmbeddedSubtitles.first {
-            return .send(.embeddedSubtitleSelected(embeddedSubtitle.id))
+            return .send(.automaticallySelectEmbeddedSubtitle(embeddedSubtitle.id))
         }
 
         if !state.isLoadingSubtitles,
            let externalSubtitle = state.availableSubtitles.first {
-            return .send(.subtitleSelected(externalSubtitle))
+            return .send(.automaticallySelectExternalSubtitle(externalSubtitle))
         }
 
         return .none

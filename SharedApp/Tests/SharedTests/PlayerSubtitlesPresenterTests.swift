@@ -26,9 +26,9 @@ struct PlayerSubtitlesPresenterTests {
         await store.send(.playerTracksChanged([
             PlayerTrack(id: "3", kind: .subtitle, displayName: "Chinese", streamIndex: 2)
         ]))
-        await store.receive(.embeddedSubtitleSelected("2"))
+        await store.receive(.automaticallySelectEmbeddedSubtitle("2"))
         let load = await store.send(.load)
-        await store.receive(.embeddedSubtitleSelected("2"))
+        await store.receive(.automaticallySelectEmbeddedSubtitle("2"))
         #expect(store.state.availableEmbeddedSubtitles.map(\.id) == ["2"])
         #expect(!store.state.isLoadingEmbeddedSubtitles)
 
