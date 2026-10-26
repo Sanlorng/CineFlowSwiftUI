@@ -235,7 +235,6 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
     private var isStoppingForSourceChange = false
     private var isPaused = false
     private var isBuffering = false
-    private var defaultFBO: GLint = -1
     private var currentDuration: TimeInterval?
     private var currentPlaybackRate: Double = 1
     private var currentVolume: Double = 1
@@ -278,6 +277,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
 
     func setupContext() {
         autoresizingMask = [.width, .height]
+        wantsBestResolutionOpenGLSurface = true
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         openGLContext?.makeCurrentContext()
@@ -310,6 +310,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         observeProperties(handle: handle)
         guard checkError(mpv_initialize(handle), fallback: "初始化 mpv 失败。") else { return }
 
+        openGLContext?.makeCurrentContext()
         let api = UnsafeMutableRawPointer(mutating: (MPV_RENDER_API_TYPE_OPENGL as NSString).utf8String)
         var initParams = mpv_opengl_init_params(
             get_proc_address: { _, name in
@@ -411,6 +412,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         guard let mpv else { return }
         mpv_set_wakeup_callback(mpv, nil, nil)
         if let mpvGL {
+            openGLContext?.makeCurrentContext()
             mpv_render_context_set_update_callback(mpvGL, nil, nil)
             mpv_render_context_free(mpvGL)
             self.mpvGL = nil
@@ -737,19 +739,47 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
         ))
     }
 
+    override func reshape() {
+        super.reshape()
+        // Resizing can replace the drawable even while playback is paused.
+        needsDisplay = true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        needsDisplay = true
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        guard let mpvGL else { return }
+        guard let mpvGL, let context = openGLContext, window != nil else { return }
+        context.makeCurrentContext()
+
+        // GL_VIEWPORT is mutable renderer state, not the drawable's dimensions.
+        // In particular, fullscreen transitions and mpv's offscreen passes can
+        // leave it at a stale size. Use the current backing pixels every draw.
+        let backingSize = convertToBacking(bounds).size
+        guard backingSize.width > 0, backingSize.height > 0 else { return }
+        let width = GLsizei(backingSize.width.rounded())
+        let height = GLsizei(backingSize.height.rounded())
+        guard width > 0, height > 0 else { return }
+
+        // AppKit owns the layer-backed FBO; it may change on resize. Do not
+        // cache its identifier or assume the window framebuffer is zero.
+        var framebuffer: GLint = 0
+        glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &framebuffer)
+        glViewport(0, 0, width, height)
         glClearColor(0, 0, 0, 0)
         glClear(UInt32(GL_COLOR_BUFFER_BIT))
-        glGetIntegerv(UInt32(GL_FRAMEBUFFER_BINDING), &defaultFBO)
-
-        var dims: [GLint] = [0, 0, 0, 0]
-        glGetIntegerv(GLenum(GL_VIEWPORT), &dims)
 
         var data = mpv_opengl_fbo(
-            fbo: Int32(defaultFBO),
-            w: Int32(dims[2]),
-            h: Int32(dims[3]),
+            fbo: framebuffer,
+            w: width,
+            h: height,
             internal_format: 0
         )
         var flip: CInt = 1
@@ -763,7 +793,7 @@ final class MPVMacOSOpenGLView: NSOpenGLView {
                 mpv_render_context_render(mpvGL, &params)
             }
         }
-        openGLContext?.flushBuffer()
+        context.flushBuffer()
     }
 
     private static func getProcAddress(_ name: UnsafePointer<Int8>?) -> UnsafeMutableRawPointer? {
