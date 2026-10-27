@@ -105,6 +105,7 @@ Agents working in this repository should treat `SharedApp` as the default place 
 - This repository should be verified primarily as a macOS app.
 - Prefer macOS builds over iOS-oriented checks unless the task explicitly targets another platform.
 - After meaningful changes, run a macOS build for verification.
+- For local runnable Debug builds, use `Scripts/build-debug.sh` so signing embeds the sandbox entitlements. Never overwrite the normal runnable app with `CODE_SIGNING_ALLOWED=NO`: an unsigned app reads a different database and preferences outside the existing sandbox container. Use an isolated derived-data directory for any unsigned compile-only checks.
 - Treat build success as the minimum verification bar.
 - Because automated test coverage is currently sparse, do not claim high confidence without build verification.
 
