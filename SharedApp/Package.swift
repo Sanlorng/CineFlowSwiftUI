@@ -62,7 +62,10 @@ let package = Package(
             dependencies: [
                 .product(name: "MPVKit", package: "MPVKit", condition: .when(platforms: [.iOS, .macOS, .tvOS])),
             ],
-            publicHeadersPath: "include"
+            publicHeadersPath: "include",
+            // MPVKit's umbrella modules include optional GPU headers that are not
+            // shipped (e.g. AMF). Consume the public FFmpeg headers textually.
+            cSettings: [.unsafeFlags(["-fno-modules"])]
         ),
         .target(
             name: "SharedDemo",

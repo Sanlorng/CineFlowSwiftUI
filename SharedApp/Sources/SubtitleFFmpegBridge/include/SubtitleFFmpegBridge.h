@@ -2,6 +2,7 @@
 #define SubtitleFFmpegBridge_h
 
 #include <stdint.h>
+#include "MediaPreviewBridge.h"
 
 #ifdef __cplusplus
 extern "C" {

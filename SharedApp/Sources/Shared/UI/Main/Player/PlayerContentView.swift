@@ -497,24 +497,17 @@ private struct PlayerContentMainView: View {
                 .padding(.horizontal, 2)
             }
 
-            Slider(
-                value: Binding(
-                    get: { displayedTime },
-                    set: { scrubPosition = $0 }
-                ),
-                in: 0...effectiveDuration,
-                onEditingChanged: { editing in
-                    if editing {
-                        isScrubbing = true
-                        scrubPosition = playerController.timeline.currentTime
-                    } else {
-                        isScrubbing = false
-                        playerController.seekTo(scrubPosition)
-                    }
-                }
-            )
-            .tint(.white.opacity(0.92))
-            .disabled(duration <= 0)
+            if let stream = viewStore.currentItem?.stream {
+                PlayerSeekBar(
+                    source: .init(url: stream.url, headers: stream.headers),
+                    duration: duration,
+                    currentTime: playerController.timeline.currentTime,
+                    isScrubbing: $isScrubbing,
+                    scrubPosition: $scrubPosition,
+                    seek: { playerController.seekTo($0) }
+                )
+                .id(stream.url)
+            }
 
             HStack(spacing: 14) {
                 Text(formatPlaybackTime(displayedTime))
