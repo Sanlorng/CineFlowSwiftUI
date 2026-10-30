@@ -11,13 +11,16 @@ struct MainContentView: View {
         )) {
             Tab("首页", systemImage: "house", value: MainTabs.Home) {
                 HomeContentView(store: store.scope(state: \.home, action: \.home))
+                    .modifier(PageEntranceTransition(isSelected: store.selectedTab == .Home))
             }
             Tab("媒体库", systemImage: "rectangle.stack", value: MainTabs.Library) {
                 LibraryContentView(store: store.scope(state: \.library, action: \.library))
+                    .modifier(PageEntranceTransition(isSelected: store.selectedTab == .Library))
             }
             Tab("播放器", systemImage: "play.rectangle.on.rectangle", value: MainTabs.Player) {
                 PlayerContentView(store: store.scope(state: \.player, action: \.player))
                     .id(store.player?.id)
+                    .modifier(PageEntranceTransition(isSelected: store.selectedTab == .Player))
             }
         }
         .tabViewStyle(.automatic)

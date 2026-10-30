@@ -74,6 +74,7 @@ struct HomeContentView: View {
                 ),
                 then: HomeBangumiDetailView.init(store:)
             )
+            .modifier(PageEntranceTransition())
         }
     }
 

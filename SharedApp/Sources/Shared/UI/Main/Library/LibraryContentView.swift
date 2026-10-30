@@ -34,6 +34,7 @@ struct LibraryContentView: View {
                 ),
                 then: BangumiDetailView.init(store:)
             )
+            .modifier(PageEntranceTransition())
         }
     }
     
