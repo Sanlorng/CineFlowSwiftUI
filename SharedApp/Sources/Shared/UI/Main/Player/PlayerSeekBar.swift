@@ -69,14 +69,27 @@ struct PlayerSeekBar: View {
                             }
                         }
                     } label: {
-                        Label(PlayerChapter.current(in: chapters, at: displayedTime)?.title ?? "章节", systemImage: "list.bullet.rectangle")
-                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Image(systemName: "list.bullet.rectangle")
+                            Text(PlayerChapter.current(in: chapters, at: displayedTime)?.title ?? "章节")
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.9))
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .controlSize(.small)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("选择章节")
                     Spacer()
-                    Text("\(chapters.count) 个章节").foregroundStyle(.secondary)
+                    Text("\(chapters.count) 个章节")
+                        .foregroundStyle(.white.opacity(0.6))
+                        .fixedSize()
                 }
                 .font(.caption)
             }
