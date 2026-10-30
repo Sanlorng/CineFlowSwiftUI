@@ -882,7 +882,7 @@ private final class DanmakuMetalCompositor {
     private let atlasCache = NSCache<NSString, DanmakuAtlasEntryBox>()
     private var atlasPages: [DanmakuAtlasPage] = []
     private var atlasMap: [String: DanmakuAtlasEntryBox] = [:]
-    private var scheduledPurgeWorkItem: DispatchWorkItem?
+    private var idleSince: CFTimeInterval?
     private let purgeDelay: TimeInterval = 30
 
     init?(device: MTLDevice) {
@@ -1009,10 +1009,16 @@ private final class DanmakuMetalCompositor {
         renderPassDescriptor descriptor: MTLRenderPassDescriptor,
         viewportSize: CGSize
     ) {
+        // Reclaim only on the render thread, never concurrently with encoding.
         if sprites.isEmpty {
-            schedulePurge(after: purgeDelay)
+            let now = CACurrentMediaTime()
+            if let idleSince, now - idleSince >= purgeDelay {
+                purgeAtlas()
+            } else if idleSince == nil {
+                idleSince = now
+            }
         } else {
-            cancelScheduledPurge()
+            idleSince = nil
         }
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             return
@@ -1330,7 +1336,7 @@ private final class DanmakuMetalCompositor {
     }
 
     func purgeAtlas() {
-        cancelScheduledPurge()
+        idleSince = nil
         atlasCache.removeAllObjects()
         atlasMap.removeAll()
         atlasPages.removeAll()
@@ -1344,62 +1350,6 @@ private final class DanmakuMetalCompositor {
         return String(format: "P:%d E:%d %.0fMB", pages, entries, mb)
     }
 
-    private func schedulePurge(after seconds: TimeInterval) {
-        scheduledPurgeWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.purgeUnusedAtlasEntries(olderThan: seconds)
-        }
-        scheduledPurgeWorkItem = work
-        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + seconds, execute: work)
-    }
-
-    private func cancelScheduledPurge() {
-        scheduledPurgeWorkItem?.cancel()
-        scheduledPurgeWorkItem = nil
-    }
-
-    private func purgeUnusedAtlasEntries(olderThan seconds: TimeInterval) {
-        let now = CACurrentMediaTime()
-        // Remove old atlas entries from maps
-        var removeKeys: [String] = []
-        for (key, box) in atlasMap {
-            if now - box.lastUsed >= seconds {
-                removeKeys.append(key)
-            }
-        }
-        for key in removeKeys {
-            atlasCache.removeObject(forKey: key as NSString)
-            atlasMap.removeValue(forKey: key)
-        }
-
-        // Find used pages
-        var usedPages = Set<Int>()
-        for box in atlasMap.values {
-            usedPages.insert(box.value.pageIndex)
-        }
-
-        guard usedPages.count < atlasPages.count else { return }
-
-        // Compact pages and build remapping
-        var newPages: [DanmakuAtlasPage] = []
-        var oldToNew: [Int: Int] = [:]
-        for (index, page) in atlasPages.enumerated() {
-            if usedPages.contains(index) {
-                oldToNew[index] = newPages.count
-                newPages.append(page)
-            }
-        }
-        atlasPages = newPages
-
-        // Remap entries to new page indices
-        for (_, box) in atlasMap {
-            let oldIndex = box.value.pageIndex
-            if let newIndex = oldToNew[oldIndex], newIndex != oldIndex {
-                box.value = DanmakuAtlasEntry(pageIndex: newIndex, uvMin: box.value.uvMin, uvMax: box.value.uvMax)
-            }
-        }
-    }
 
 }
 
@@ -1441,6 +1391,7 @@ private final class DanmakuCanvasRenderer {
     private var preparationGeneration = 0
     private var currentSettings = DanmakuRenderSettings()
     private var pendingRasterizationKeys: Set<String> = []
+    private var visibleImages = DanmakuFrameResourceCache<String, DanmakuRasterImage>()
 
     init(scheduleOnRenderThread: @escaping (@escaping () -> Void) -> Void) {
         self.scheduleOnRenderThread = scheduleOnRenderThread
@@ -1489,11 +1440,13 @@ private final class DanmakuCanvasRenderer {
 
         if previousDocumentID != documentID {
             textCache.purge()
+            visibleImages.removeAll()
             pendingRasterizationKeys.removeAll()
         }
 
         guard let document, viewport.isRenderable else {
             preparedScene = nil
+            visibleImages.removeAll()
             sceneDescriptor = nil
             scheduler.reset(scene: nil, time: clock.currentTime)
             pendingRasterizationKeys.removeAll()
@@ -1512,6 +1465,7 @@ private final class DanmakuCanvasRenderer {
 
         guard descriptor != sceneDescriptor else { return }
         sceneDescriptor = descriptor
+        visibleImages.removeAll()
         preparedScene = nil
         preparationGeneration += 1
         let generation = preparationGeneration
@@ -1551,6 +1505,7 @@ private final class DanmakuCanvasRenderer {
         guard currentSettings.isVisible,
               let preparedScene,
               bounds.isEmpty == false else {
+            visibleImages.removeAll()
             lock.unlock()
             body([], [])
             return
@@ -1591,11 +1546,15 @@ private final class DanmakuCanvasRenderer {
             spriteBuckets[index].removeAll(keepingCapacity: true)
         }
 
+        visibleImages.beginFrame()
         for entry in visibleEntriesScratch {
             let bucketIndex = max(0, min(entry.zIndex, spriteBuckets.count - 1))
             if let renderState = entry.renderState(at: currentTime),
                renderState.frame.intersects(bounds) {
-                if let imageAsset = textCache.cachedImageAsset(for: entry, scale: scale) {
+                let key = textCache.imageCacheKey(for: entry, scale: scale) as String
+                if let imageAsset = visibleImages.resource(for: key, load: {
+                    textCache.cachedImageAsset(for: entry, scale: scale)
+                }) {
                     spriteBuckets[bucketIndex].append(
                         DanmakuSprite(
                             textureKey: imageAsset.key,
@@ -1614,6 +1573,7 @@ private final class DanmakuCanvasRenderer {
             }
         }
 
+        visibleImages.endFrame()
         spriteScratch.removeAll(keepingCapacity: true)
         spriteScratch.reserveCapacity(visibleEntriesScratch.count)
         for bucket in spriteBuckets {
@@ -1657,6 +1617,7 @@ private final class DanmakuCanvasRenderer {
         lock.lock()
         defer { lock.unlock() }
         preparationGeneration += 1
+        visibleImages.removeAll()
         sceneDescriptor = nil
         preparedScene = nil
         scheduler.reset(scene: nil, time: 0)
